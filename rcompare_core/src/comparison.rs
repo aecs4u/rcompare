@@ -147,6 +147,12 @@ impl ComparisonEngine {
         left: &FileEntry,
         right: &FileEntry,
     ) -> Result<DiffStatus, RCompareError> {
+        // Safety check: ensure neither entry is a directory
+        // (catches cases where is_dir flag might be incorrect due to symlinks)
+        if left.is_dir || right.is_dir {
+            return Ok(DiffStatus::Different);
+        }
+
         // Quick size check
         if left.size != right.size {
             return Ok(DiffStatus::Different);
@@ -187,6 +193,15 @@ impl ComparisonEngine {
     /// Compute hash for a file
     pub fn hash_file(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
         let metadata = std::fs::metadata(path)?;
+
+        // Safety check: ensure we're not trying to hash a directory
+        if metadata.is_dir() {
+            return Err(RCompareError::Io(std::io::Error::new(
+                std::io::ErrorKind::IsADirectory,
+                format!("Cannot hash directory: {}", path.display())
+            )));
+        }
+
         let cache_key = CacheKey {
             path: path.to_path_buf(),
             size: metadata.len(),
@@ -253,6 +268,15 @@ impl ComparisonEngine {
 
         let mut file = std::fs::File::open(path)?;
         let metadata = file.metadata()?;
+
+        // Safety check: ensure we're not trying to hash a directory
+        if metadata.is_dir() {
+            return Err(RCompareError::Io(std::io::Error::new(
+                std::io::ErrorKind::IsADirectory,
+                format!("Cannot hash directory: {}", path.display())
+            )));
+        }
+
         let len = metadata.len();
 
         let mut hasher = blake3::Hasher::new();

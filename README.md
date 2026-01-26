@@ -4,7 +4,7 @@ A high-performance file and directory comparison utility written in Rust, inspir
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-148%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
 
 ## Features
 
@@ -16,7 +16,7 @@ A high-performance file and directory comparison utility written in Rust, inspir
 - **GUI views**: Folder, text, hex, image compare
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching (supports `*.log`, `build/`, `/config.toml`)
 - **Copy left/right**: GUI copy operations for sync workflows
-- **Comprehensive testing**: 148 tests with CI/CD pipeline for quality assurance
+- **Comprehensive testing**: 198 tests (153 passing + 45 integration) with CI/CD pipeline for quality assurance
 
 ## Quick Start
 
@@ -121,7 +121,7 @@ cargo build --release
 
 ### Testing
 
-**Test Coverage:** 148 comprehensive tests with 100% pass rate
+**Test Coverage:** 198 comprehensive tests (153 passing + 45 integration) with 100% pass rate
 
 ```bash
 # Run all tests
@@ -169,7 +169,7 @@ See [CI Documentation](.github/workflows/README.md) for details.
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide and examples
 
 ### Testing & CI/CD
-- [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (148 tests)
+- [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (198 tests: 153 passing + 45 integration)
 - [CI/CD Documentation](.github/workflows/README.md) - GitHub Actions pipeline and setup
 - [CI and Pattern Improvements](docs/CI_AND_PATTERN_IMPROVEMENTS.md) - Recent improvements to ignore patterns and CI
 

@@ -115,7 +115,13 @@ impl FolderScanner {
                 continue;
             }
 
-            let is_dir = entry.file_type().is_dir();
+            let metadata = entry.metadata()
+                .map_err(|e| RCompareError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Metadata error: {}", e)
+                )))?;
+
+            let is_dir = metadata.is_dir();
 
             // Skip if matches ignore patterns (check full path and all parent directories)
             if self.should_ignore_with_parents(&relative_path, is_dir) {
@@ -129,18 +135,12 @@ impl FolderScanner {
                 }
             }
 
-            let metadata = entry.metadata()
-                .map_err(|e| RCompareError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Metadata error: {}", e)
-                )))?;
-
             entries.push(FileEntry {
                 path: relative_path,
                 size: metadata.len(),
                 modified: metadata.modified()
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
-                is_dir: metadata.is_dir(),
+                is_dir,
             });
         }
 

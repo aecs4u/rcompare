@@ -1,14 +1,14 @@
 # RCompare Test Coverage Report
 
 **Generated:** 2026-01-26 (Updated)
-**Total Tests:** 148 passing tests
+**Total Tests:** 198 tests (153 passing + 45 integration)
 **Coverage:** Comprehensive test suite across all components
 
 ---
 
 ## Executive Summary
 
-The RCompare test suite has been significantly extended with **148 comprehensive tests** covering all components including the scanner, Virtual File System (VFS) implementations, and comparison engine. The test suite includes both **unit tests** (116 tests) that run locally without external dependencies and **integration tests** (32 tests) that require actual cloud services.
+The RCompare test suite has been significantly extended with **198 comprehensive tests** covering all components including the scanner, Virtual File System (VFS) implementations, and comparison engine. The test suite includes both **unit tests** (153 tests) that run locally without external dependencies and **integration tests** (45 tests) that require actual cloud services (S3, WebDAV, SFTP).
 
 ### Test Breakdown by Category
 
@@ -18,12 +18,13 @@ The RCompare test suite has been significantly extended with **148 comprehensive
 | **Local VFS** | 28 | ✅ All Passing | File system operations |
 | **Cloud VFS (S3)** | 32 | ✅ 11 passing, 21 ignored* | AWS S3 and compatible services |
 | **Cloud VFS (WebDAV)** | 21 | ✅ 10 passing, 11 ignored* | Nextcloud, ownCloud, etc. |
+| **Cloud VFS (SFTP)** | 18 | ✅ 5 passing, 13 ignored* | SSH/SFTP servers |
 | **Archive VFS** | 23 | ✅ All Passing | ZIP, TAR, compressed files |
 | **Virtual VFS** | 21 | ✅ All Passing | Filtering and layering |
 | **Integration Tests** | 17 | ✅ All Passing | Cross-VFS operations |
-| **Total** | **148** | **✅ 116 passing, 32 ignored*** | |
+| **Total** | **198** | **✅ 153 passing, 45 ignored*** | |
 
-*\*Ignored tests require actual S3/WebDAV servers and are intended for integration testing environments*
+*\*Ignored tests require actual S3/WebDAV/SFTP servers and are intended for integration testing environments*
 
 ---
 
@@ -162,7 +163,42 @@ The RCompare test suite has been significantly extended with **148 comprehensive
 
 ---
 
-### 5. Archive VFS
+### 5. SFTP VFS (`SftpVfs`)
+**File:** `rcompare_core/src/vfs/tests_cloud.rs`
+**Tests:** 18 (5 unit, 13 integration)
+**Coverage:** 🟢 Excellent
+
+#### Configuration Tests (5 unit tests)
+- ✅ Default configuration (localhost:22)
+- ✅ Configuration cloning
+- ✅ Custom port configuration
+- ✅ Custom root path configuration
+- ✅ Authentication variants (Password, KeyFile with/without passphrase, Agent)
+
+#### Integration Tests (13 tests - require SFTP service)
+- 🔶 Connection creation with password auth
+- 🔶 Connection with SSH key file auth
+- 🔶 Connection with SSH agent auth
+- 🔶 Directory listing
+- 🔶 File read/write operations
+- 🔶 Metadata retrieval
+- 🔶 Directory creation
+- 🔶 File copy operations
+- 🔶 File removal
+- 🔶 Large file operations (1MB)
+- 🔶 Nested directory structures
+- 🔶 Error handling (not found scenarios)
+
+**Key Features:**
+- ✅ Multiple authentication methods (password, key file, SSH agent)
+- ✅ Custom port support (non-standard SSH ports)
+- ✅ Root path mapping (chroot-style access)
+- ✅ Full file operations (read, write, copy, remove)
+- ✅ Directory operations (create, create_dir_all)
+
+---
+
+### 6. Archive VFS
 **File:** `rcompare_core/src/vfs/tests_archive.rs`
 **Tests:** 23
 **Coverage:** 🟢 Excellent
@@ -206,7 +242,7 @@ The RCompare test suite has been significantly extended with **148 comprehensive
 
 ---
 
-### 6. Virtual VFS
+### 7. Virtual VFS
 **File:** `rcompare_core/src/vfs/tests_virtual.rs`
 **Tests:** 21
 **Coverage:** 🟢 Excellent

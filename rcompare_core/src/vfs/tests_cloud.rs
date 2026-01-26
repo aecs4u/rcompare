@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::vfs::{S3Vfs, S3Config, S3Auth, WebDavVfs, WebDavConfig, WebDavAuth};
+    use crate::vfs::{S3Vfs, S3Config, S3Auth, WebDavVfs, WebDavConfig, WebDavAuth, SftpVfs, SftpConfig, SftpAuth};
     use rcompare_common::Vfs;
     use std::path::PathBuf;
 
-    // Note: These tests require actual S3 and WebDAV services to be available
+    // Note: These tests require actual S3, WebDAV, and SFTP services to be available
     // They are marked as ignored by default and should be run manually
 
     #[test]
@@ -1255,5 +1255,441 @@ mod tests {
 
         // Clean up
         let _ = vfs.remove_file(&path1);
+    }
+
+    // ============================================================================
+    // SFTP VFS Tests
+    // ============================================================================
+
+    #[test]
+    fn test_sftp_config_default() {
+        let config = SftpConfig::default();
+        assert_eq!(config.host, "localhost");
+        assert_eq!(config.port, 22);
+        assert_eq!(config.username, "");
+        assert_eq!(config.root_path, PathBuf::from("/"));
+        assert!(matches!(config.auth, SftpAuth::Agent));
+    }
+
+    #[test]
+    fn test_sftp_auth_variants() {
+        // Test Password auth
+        let auth = SftpAuth::Password("mypassword".to_string());
+        if let SftpAuth::Password(password) = auth {
+            assert_eq!(password, "mypassword");
+        } else {
+            panic!("Expected Password auth");
+        }
+
+        // Test KeyFile auth without passphrase
+        let auth = SftpAuth::KeyFile {
+            private_key: PathBuf::from("/home/user/.ssh/id_rsa"),
+            passphrase: None,
+        };
+        if let SftpAuth::KeyFile { private_key, passphrase } = auth {
+            assert_eq!(private_key, PathBuf::from("/home/user/.ssh/id_rsa"));
+            assert!(passphrase.is_none());
+        } else {
+            panic!("Expected KeyFile auth");
+        }
+
+        // Test KeyFile auth with passphrase
+        let auth = SftpAuth::KeyFile {
+            private_key: PathBuf::from("/home/user/.ssh/id_rsa"),
+            passphrase: Some("keypass".to_string()),
+        };
+        if let SftpAuth::KeyFile { passphrase, .. } = auth {
+            assert_eq!(passphrase, Some("keypass".to_string()));
+        }
+
+        // Test Agent auth
+        let _auth = SftpAuth::Agent;
+    }
+
+    #[test]
+    fn test_sftp_config_clone() {
+        let config1 = SftpConfig {
+            host: "sftp.example.com".to_string(),
+            port: 2222,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("pass123".to_string()),
+            root_path: PathBuf::from("/data"),
+        };
+
+        let config2 = config1.clone();
+        assert_eq!(config1.host, config2.host);
+        assert_eq!(config1.port, config2.port);
+        assert_eq!(config1.username, config2.username);
+        assert_eq!(config1.root_path, config2.root_path);
+    }
+
+    #[test]
+    fn test_sftp_config_with_custom_port() {
+        let config = SftpConfig {
+            host: "sftp.example.com".to_string(),
+            port: 2222,
+            username: "user".to_string(),
+            auth: SftpAuth::Agent,
+            root_path: PathBuf::from("/"),
+        };
+
+        assert_eq!(config.port, 2222);
+        assert_eq!(config.host, "sftp.example.com");
+    }
+
+    #[test]
+    fn test_sftp_config_with_root_path() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth: SftpAuth::Agent,
+            root_path: PathBuf::from("/home/user/files"),
+        };
+
+        assert_eq!(config.root_path, PathBuf::from("/home/user/files"));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_creation() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/"),
+        };
+
+        let result = SftpVfs::new(config);
+        assert!(result.is_ok(), "Failed to create SFTP VFS: {:?}", result.err());
+
+        let vfs = result.unwrap();
+        let instance_id = vfs.instance_id();
+        assert!(instance_id.starts_with("sftp://"));
+        assert!(instance_id.contains("testuser"));
+        assert!(instance_id.contains("localhost"));
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_list_directory() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let entries = vfs.read_dir(&PathBuf::from("/"));
+
+        match entries {
+            Ok(files) => {
+                println!("Found {} entries in SFTP directory", files.len());
+                for file in files {
+                    println!("  - {}: {} bytes (dir: {})",
+                        file.path.display(), file.size, file.is_dir);
+                }
+            }
+            Err(e) => {
+                println!("Error listing SFTP directory: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_read_write() {
+        use std::io::Read;
+
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let test_path = PathBuf::from("test-file.txt");
+        let test_content = b"Hello, SFTP!";
+
+        // Write file
+        let result = vfs.write_file(&test_path, test_content);
+        assert!(result.is_ok(), "Failed to write file: {:?}", result.err());
+
+        // Read file
+        let mut reader = vfs.open_file(&test_path).expect("Failed to open file");
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer).expect("Failed to read file");
+
+        assert_eq!(buffer, test_content);
+
+        // Clean up
+        let _ = vfs.remove_file(&test_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_metadata() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let test_path = PathBuf::from("metadata-test.txt");
+        let test_content = b"Metadata test content";
+
+        // Write file
+        vfs.write_file(&test_path, test_content).expect("Failed to write file");
+
+        // Get metadata
+        let metadata = vfs.metadata(&test_path).expect("Failed to get metadata");
+
+        assert_eq!(metadata.size, test_content.len() as u64);
+        assert!(!metadata.is_dir);
+
+        // Clean up
+        let _ = vfs.remove_file(&test_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_create_directory() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let dir_path = PathBuf::from("test-dir");
+
+        // Create directory
+        let result = vfs.create_dir(&dir_path);
+        assert!(result.is_ok(), "Failed to create directory: {:?}", result.err());
+
+        // Verify it exists
+        let metadata = vfs.metadata(&dir_path);
+        assert!(metadata.is_ok(), "Directory should exist");
+        assert!(metadata.unwrap().is_dir, "Should be a directory");
+
+        // Clean up
+        let _ = vfs.remove_file(&dir_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_copy_file() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let src_path = PathBuf::from("source.txt");
+        let dest_path = PathBuf::from("destination.txt");
+        let test_content = b"Copy test";
+
+        // Create source file
+        vfs.write_file(&src_path, test_content).expect("Failed to write source file");
+
+        // Copy file
+        let result = vfs.copy_file(&src_path, &dest_path);
+        assert!(result.is_ok(), "Failed to copy file: {:?}", result.err());
+
+        // Verify destination exists
+        let metadata = vfs.metadata(&dest_path);
+        assert!(metadata.is_ok(), "Destination file should exist");
+
+        // Clean up
+        let _ = vfs.remove_file(&src_path);
+        let _ = vfs.remove_file(&dest_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_remove_file() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let test_path = PathBuf::from("to-remove.txt");
+
+        // Create file
+        vfs.write_file(&test_path, b"Remove me").expect("Failed to write file");
+
+        // Verify it exists
+        assert!(vfs.metadata(&test_path).is_ok(), "File should exist");
+
+        // Remove file
+        let result = vfs.remove_file(&test_path);
+        assert!(result.is_ok(), "Failed to remove file: {:?}", result.err());
+
+        // Verify it's gone
+        assert!(vfs.metadata(&test_path).is_err(), "File should be removed");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_metadata_not_found() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let result = vfs.metadata(&PathBuf::from("nonexistent-file.txt"));
+
+        assert!(result.is_err(), "Should fail for nonexistent file");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_open_file_not_found() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let result = vfs.open_file(&PathBuf::from("missing.txt"));
+
+        assert!(result.is_err(), "Should fail for nonexistent file");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_with_key_auth() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::KeyFile {
+                private_key: PathBuf::from("/home/testuser/.ssh/id_rsa"),
+                passphrase: None,
+            },
+            root_path: PathBuf::from("/tmp"),
+        };
+
+        let result = SftpVfs::new(config);
+        // This test will fail if the key file doesn't exist or authentication fails
+        // It's mainly to verify the auth method is supported
+        match result {
+            Ok(vfs) => {
+                let instance_id = vfs.instance_id();
+                assert!(instance_id.starts_with("sftp://"));
+            }
+            Err(e) => {
+                println!("KeyFile auth test failed (expected if key doesn't exist): {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_with_agent_auth() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Agent,
+            root_path: PathBuf::from("/tmp"),
+        };
+
+        let result = SftpVfs::new(config);
+        // This test will fail if no SSH agent is running or no keys are loaded
+        match result {
+            Ok(vfs) => {
+                let instance_id = vfs.instance_id();
+                assert!(instance_id.starts_with("sftp://"));
+            }
+            Err(e) => {
+                println!("Agent auth test failed (expected if agent not available): {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_nested_directories() {
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+
+        // Create nested directory structure
+        let nested_dir = PathBuf::from("level1/level2/level3");
+        let result = vfs.create_dir_all(&nested_dir);
+        assert!(result.is_ok(), "Failed to create nested directories");
+
+        // Write a file in the nested directory
+        let file_path = PathBuf::from("level1/level2/level3/test.txt");
+        let result = vfs.write_file(&file_path, b"nested file");
+        assert!(result.is_ok(), "Failed to write file in nested directory");
+
+        // Clean up
+        let _ = vfs.remove_file(&file_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sftp_vfs_large_file() {
+        use std::io::Read;
+
+        let config = SftpConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "testuser".to_string(),
+            auth: SftpAuth::Password("testpass".to_string()),
+            root_path: PathBuf::from("/tmp/rcompare-test"),
+        };
+
+        let vfs = SftpVfs::new(config).expect("Failed to create SFTP VFS");
+        let path = PathBuf::from("large-file.bin");
+
+        // Create 1MB of data
+        let data = vec![0u8; 1024 * 1024];
+
+        // Write large file
+        let result = vfs.write_file(&path, &data);
+        assert!(result.is_ok(), "Failed to write large file");
+
+        // Read it back
+        let mut reader = vfs.open_file(&path).expect("Failed to open large file");
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer).expect("Failed to read large file");
+
+        assert_eq!(buffer.len(), data.len());
+
+        // Clean up
+        let _ = vfs.remove_file(&path);
     }
 }
