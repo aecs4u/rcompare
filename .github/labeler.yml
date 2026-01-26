@@ -1,0 +1,50 @@
+# Automatic PR labeling based on changed files
+
+# Core library changes
+core:
+  - changed-files:
+    - any-glob-to-any-file: 'rcompare_core/**/*'
+
+# CLI changes
+cli:
+  - changed-files:
+    - any-glob-to-any-file: 'rcompare_cli/**/*'
+
+# GUI changes
+gui:
+  - changed-files:
+    - any-glob-to-any-file: 'rcompare_gui/**/*'
+
+# Common/shared changes
+common:
+  - changed-files:
+    - any-glob-to-any-file: 'rcompare_common/**/*'
+
+# Documentation changes
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**/*'
+
+# CI/CD changes
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**/*'
+      - '.gitlab-ci.yml'
+
+# Test changes
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/tests/**/*'
+      - '**/*_test.rs'
+      - '**/*_tests.rs'
+
+# Dependencies
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'

@@ -16,72 +16,11 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-
-    steps:
-      - name: Get version from tag
-        id: get_version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}"
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          release_name: RCompare ${{ steps.get_version.outputs.version }}
-          body: |
-            ## RCompare ${{ steps.get_version.outputs.version }}
-
-            ### Downloads
-            Download the appropriate binary for your platform below:
-
-            - **Linux**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
-            - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
-            - **macOS**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
-
-            ### Installation
-            ```bash
-            # Linux/macOS
-            chmod +x rcompare_cli-*
-            chmod +x rcompare_gui-*
-
-            # Move to PATH (optional)
-            sudo mv rcompare_cli-* /usr/local/bin/rcompare_cli
-            sudo mv rcompare_gui-* /usr/local/bin/rcompare_gui
-            ```
-
-            ### Features
-            - Fast directory comparison with BLAKE3 hashing
-            - Specialized file comparisons (Text, CSV, JSON, Excel, Images, Parquet)
-            - Archive comparison (ZIP, TAR, 7Z)
-            - GUI with auto-comparison and tree view
-            - CLI with colored output and JSON support
-
-            See [README.md](https://github.com/aecs4u/rcompare/blob/main/README.md) for full documentation.
-
-            ### Changelog
-            See the commit history for detailed changes.
-          draft: false
-          prerelease: false
-
   build-release:
     name: Build Release (${{ matrix.target }})
-    needs: create-release
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +38,18 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -147,78 +98,114 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           strip rcompare_cli rcompare_gui || true
-          tar czf rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz rcompare_cli rcompare_gui
-          mv rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz ${{ github.workspace }}/
+
+          # Copy binaries with platform-specific names
+          cp rcompare_cli rcompare_cli-${{ matrix.platform }}-x86_64
+          cp rcompare_gui rcompare_gui-${{ matrix.platform }}-x86_64
+
+          # Create combined archive
+          tar czf rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz rcompare_cli rcompare_gui
+
+          # Move artifacts to workspace
+          mv rcompare_cli-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
+          mv rcompare_gui-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
+          mv rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz ${{ github.workspace }}/
 
       - name: Package binaries (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath ${{ github.workspace }}/rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
 
-      - name: Upload CLI binary to release (Unix)
-        if: runner.os != 'Windows'
-        uses: actions/upload-release-asset@v1
+          # Copy binaries with platform-specific names
+          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-x86_64.exe
+          Copy-Item rcompare_gui.exe -Destination rcompare_gui-${{ matrix.platform }}-x86_64.exe
+
+          # Create combined archive
+          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+
+          # Move artifacts to workspace
+          Move-Item rcompare_cli-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare_gui-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip -Destination ${{ github.workspace }}/
+
+      - name: Create Release Notes
+        id: release_notes
+        shell: bash
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## RCompare ${{ steps.get_version.outputs.version }}
+
+          ### Downloads
+
+          Download the appropriate binary for your platform below:
+
+          - **Linux**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
+          - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
+          - **macOS**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
+
+          Or download the combined archives:
+          - `rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz`
+          - `rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip`
+          - `rcompare-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz`
+
+          ### Installation
+
+          #### Linux/macOS
+          ```bash
+          # Extract archive (Linux)
+          tar xzf rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz
+
+          # Or use standalone binaries
+          chmod +x rcompare_cli-linux-x86_64
+          chmod +x rcompare_gui-linux-x86_64
+
+          # Move to PATH (optional)
+          sudo mv rcompare_cli-linux-x86_64 /usr/local/bin/rcompare_cli
+          sudo mv rcompare_gui-linux-x86_64 /usr/local/bin/rcompare_gui
+          ```
+
+          #### Windows
+          ```powershell
+          # Extract archive
+          Expand-Archive rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip
+
+          # Or use standalone binaries directly
+          # Add to PATH in System Environment Variables
+          ```
+
+          ### Features
+
+          - **Fast Comparison**: BLAKE3 hashing with parallel processing
+          - **Specialized Comparisons**: Text, CSV, JSON, Excel, Images, Parquet
+          - **Archive Support**: ZIP, TAR, 7Z, RAR (read-only)
+          - **Cloud Storage**: S3, SFTP, WebDAV support
+          - **Modern GUI**: Slint-based with tree view and auto-comparison
+          - **Powerful CLI**: Colored output, JSON export, pattern filtering
+          - **WinMerge Parity**: Whitespace handling, case-insensitive, regex rules, EXIF metadata
+
+          ### Documentation
+
+          - [README.md](https://github.com/aecs4u/rcompare/blob/main/README.md) - Getting started guide
+          - [ARCHITECTURE.md](https://github.com/aecs4u/rcompare/blob/main/ARCHITECTURE.md) - Technical architecture
+          - [FEATURE_COMPARISON.md](https://github.com/aecs4u/rcompare/blob/main/FEATURE_COMPARISON.md) - Feature matrix vs competitors
+
+          ### Changelog
+
+          See the [commit history](https://github.com/aecs4u/rcompare/commits/${{ steps.get_version.outputs.version }}) for detailed changes.
+          EOF
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: RCompare ${{ steps.get_version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            rcompare_cli-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare_gui-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/rcompare_cli
-          asset_name: rcompare_cli-${{ matrix.platform }}-x86_64
-          asset_content_type: application/octet-stream
-
-      - name: Upload GUI binary to release (Unix)
-        if: runner.os != 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/rcompare_gui
-          asset_name: rcompare_gui-${{ matrix.platform }}-x86_64
-          asset_content_type: application/octet-stream
-
-      - name: Upload CLI binary to release (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/rcompare_cli.exe
-          asset_name: rcompare_cli-${{ matrix.platform }}-x86_64.exe
-          asset_content_type: application/octet-stream
-
-      - name: Upload GUI binary to release (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/rcompare_gui.exe
-          asset_name: rcompare_gui-${{ matrix.platform }}-x86_64.exe
-          asset_content_type: application/octet-stream
-
-      - name: Upload archive to release (Unix)
-        if: runner.os != 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz
-          asset_name: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz
-          asset_content_type: application/gzip
-
-      - name: Upload archive to release (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
-          asset_name: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
-          asset_content_type: application/zip
