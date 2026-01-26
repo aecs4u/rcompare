@@ -10,7 +10,6 @@ rcompare_cli.exe
 rcompare_gui.exe
 
 # Cargo build artifacts
-Cargo.lock
 **/*.rs.bk
 *.pdb
 
