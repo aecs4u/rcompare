@@ -106,8 +106,16 @@ jobs:
       - name: Run CLI integration tests
         run: cargo test --package rcompare_cli --verbose
 
-      - name: Build CLI binary
+      - name: Build CLI binary (release)
         run: cargo build --package rcompare_cli --release --verbose
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcompare_cli-${{ runner.os }}
+          path: |
+            target/release/rcompare_cli${{ runner.os == 'Windows' && '.exe' || '' }}
+          retention-days: 7
 
   # Code quality checks
   quality:
@@ -197,9 +205,9 @@ jobs:
         run: cargo test --package rcompare_core --lib vfs::tests_cloud -- --include-ignored --nocapture
         continue-on-error: true
 
-  # Build GUI (if applicable)
-  build-gui:
-    name: Build GUI (${{ matrix.os }})
+  # GUI tests and build
+  test-gui:
+    name: GUI Tests & Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -245,14 +253,27 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-target-gui-
 
-      - name: Build GUI
+      - name: Run GUI compile tests
+        run: cargo test --package rcompare_gui --test ui_compile --verbose
+
+      - name: Build GUI binary (debug)
         run: cargo build --package rcompare_gui --verbose
-        continue-on-error: true  # GUI might have platform-specific issues
+
+      - name: Build GUI binary (release)
+        run: cargo build --package rcompare_gui --release --verbose
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcompare_gui-${{ runner.os }}
+          path: |
+            target/release/rcompare_gui${{ runner.os == 'Windows' && '.exe' || '' }}
+          retention-days: 7
 
   # Final gating job - must pass for merge
   ci-success:
     name: CI Success Gate
-    needs: [test-core, test-cli, quality]
+    needs: [test-core, test-cli, test-gui, quality]
     runs-on: ubuntu-latest
     if: always()
 
@@ -265,6 +286,10 @@ jobs:
           fi
           if [ "${{ needs.test-cli.result }}" != "success" ]; then
             echo "CLI tests failed!"
+            exit 1
+          fi
+          if [ "${{ needs.test-gui.result }}" != "success" ]; then
+            echo "GUI tests failed!"
             exit 1
           fi
           if [ "${{ needs.quality.result }}" != "success" ]; then

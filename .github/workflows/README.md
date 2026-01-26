@@ -36,16 +36,78 @@ The main CI pipeline runs on every push to `main` or `develop` branches and on a
    - Requires external services (S3, WebDAV servers)
    - Allowed to fail without blocking PR merges
 
-5. **build-gui** - GUI Build Verification
+5. **test-gui** - GUI Tests & Build
    - Runs on: Linux, Windows, macOS
-   - Tests: GUI builds successfully across platforms
-   - **Not required for merge** ⚠️
-   - May have platform-specific dependencies
+   - Tests: GUI compile tests (`ui_compile`)
+   - Builds: Both debug and release GUI binaries
+   - Artifacts: Uploads binaries with 7-day retention
+   - **Required for merge** ✅
+   - May have platform-specific dependencies (see Troubleshooting section)
 
 6. **ci-success** - Final Gate
    - Runs after all required jobs
    - Blocks merge if any required job fails
-   - Enforces that core tests, CLI tests, and quality checks all pass
+   - Enforces that core tests, CLI tests, GUI tests, and quality checks all pass
+
+### Release Pipeline (`release.yml`)
+
+The release pipeline automates building and publishing release binaries for all platforms.
+
+#### Triggers
+
+- **Tag push**: Automatically triggered when a version tag is pushed (e.g., `v0.1.0`, `v1.2.3`)
+- **Manual dispatch**: Can be manually triggered from GitHub Actions tab with a custom tag
+
+#### Build Matrix
+
+Builds for three platforms:
+- **Linux**: `x86_64-unknown-linux-gnu` (Ubuntu latest)
+- **Windows**: `x86_64-pc-windows-msvc` (Windows latest)
+- **macOS**: `x86_64-apple-darwin` (macOS latest)
+
+#### Build Process
+
+1. **create-release** - Creates GitHub Release
+   - Extracts version from tag
+   - Creates release with changelog template
+   - Provides upload URL for build artifacts
+
+2. **build-release** - Builds Binaries
+   - Compiles CLI and GUI in release mode
+   - Strips binaries (Unix) for smaller size
+   - Packages as `tar.gz` (Unix) or `zip` (Windows)
+   - Uploads individual binaries and archives to release
+
+#### Artifacts
+
+Each release includes:
+- Individual binaries: `rcompare_cli-{platform}-x86_64[.exe]`
+- Individual binaries: `rcompare_gui-{platform}-x86_64[.exe]`
+- Combined archives: `rcompare-{version}-{platform}-x86_64.{tar.gz|zip}`
+
+#### Creating a Release
+
+```bash
+# Tag the release
+git tag v0.1.0
+git push origin v0.1.0
+
+# Or use GitHub CLI
+gh release create v0.1.0 --generate-notes
+
+# The workflow will automatically:
+# 1. Build binaries for all platforms
+# 2. Create GitHub release
+# 3. Upload all artifacts
+```
+
+#### Manual Release
+
+To manually trigger a release:
+1. Go to **Actions** → **Release** workflow
+2. Click **Run workflow**
+3. Enter the tag name (e.g., `v0.1.0`)
+4. Click **Run workflow**
 
 ## Branch Protection
 
@@ -61,6 +123,9 @@ To enable CI gating on GitHub:
    - `CLI Tests (ubuntu-latest)`
    - `CLI Tests (windows-latest)`
    - `CLI Tests (macos-latest)`
+   - `GUI Tests & Build (ubuntu-latest)`
+   - `GUI Tests & Build (windows-latest)`
+   - `GUI Tests & Build (macos-latest)`
    - `Code Quality`
    - `CI Success Gate`
 
@@ -74,6 +139,12 @@ cargo test --package rcompare_core --lib
 
 # CLI tests
 cargo test --package rcompare_cli
+
+# GUI compile tests
+cargo test --package rcompare_gui --test ui_compile
+
+# Build GUI binary
+cargo build --package rcompare_gui --release
 
 # Formatting check
 cargo fmt --all -- --check
@@ -96,8 +167,17 @@ The CI pipeline uses aggressive caching to minimize build times:
 Typical execution times:
 - Core tests: ~2-3 minutes per platform
 - CLI tests: ~3-4 minutes per platform
+- GUI tests: ~4-5 minutes per platform (includes debug and release builds)
 - Quality checks: ~2-3 minutes
-- Total pipeline: ~10-15 minutes (with parallelization)
+- Total pipeline: ~15-20 minutes (with parallelization)
+
+#### Artifacts
+
+The CI pipeline uploads build artifacts with 7-day retention:
+- **CLI binaries**: `rcompare_cli-{Linux|Windows|macOS}`
+- **GUI binaries**: `rcompare_gui-{Linux|Windows|macOS}`
+
+These artifacts are useful for testing PR builds without running the full build locally.
 
 ## Troubleshooting
 
