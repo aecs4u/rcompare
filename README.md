@@ -18,9 +18,9 @@ A high-performance file and directory comparison utility written in Rust, inspir
 - **Copy operations**: GUI copy left/right operations for sync workflows
 
 ### Specialized File Comparisons
-- **Text files**: Line-by-line diff with syntax highlighting (CLI and GUI)
+- **Text files**: Line-by-line diff with syntax highlighting, whitespace handling (5 modes), case-insensitive comparison, regex rules
 - **Binary files**: Hex view with byte-level comparison
-- **Images**: Pixel-by-pixel comparison with multiple modes (exact, threshold, perceptual)
+- **Images**: Pixel-by-pixel comparison with multiple modes, EXIF metadata comparison, configurable tolerance
 - **CSV files**: Row-by-row, column-aware structural comparison
 - **Excel files**: Sheet, row, and cell-level comparison (.xlsx, .xls)
 - **JSON files**: Path-based structural comparison with type checking
@@ -101,6 +101,37 @@ rcompare_cli scan /images/left /images/right --image-diff
 rcompare_cli scan /project/left /project/right --csv-diff --json-diff --excel-diff
 ```
 
+#### Text Comparison Options
+```bash
+# Ignore whitespace when comparing text files
+rcompare_cli scan /code/left /code/right --ignore-whitespace all       # Ignore all whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace leading   # Ignore leading whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace trailing  # Ignore trailing whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace changes   # Ignore whitespace changes
+
+# Case-insensitive comparison
+rcompare_cli scan /sql/left /sql/right --ignore-case
+
+# Apply regex rules for normalization
+rcompare_cli scan /logs/left /logs/right --regex-rule '\d{4}-\d{2}-\d{2}:[DATE]:Normalize dates'
+rcompare_cli scan /configs/left /configs/right --regex-rule 'v\d+\.\d+\.\d+:[VERSION]:Normalize versions'
+
+# Combine text comparison options
+rcompare_cli scan /code/left /code/right --ignore-whitespace all --ignore-case
+```
+
+#### Image Comparison Options
+```bash
+# Compare EXIF metadata (camera settings, GPS, timestamps)
+rcompare_cli scan /photos/left /photos/right --image-diff --image-exif
+
+# Adjust pixel difference tolerance (0-255, default: 1)
+rcompare_cli scan /images/left /images/right --image-diff --image-tolerance 10
+
+# Combine image comparison options
+rcompare_cli scan /photos/left /photos/right --image-diff --image-exif --image-tolerance 5
+```
+
 ## Specialized Comparison Modes
 
 ### CSV Comparison (`--csv-diff`)
@@ -144,6 +175,8 @@ Pixel-level comparison of image files:
 - Dimension validation
 - Pixel difference percentage
 - Mean absolute difference per channel
+- **EXIF metadata comparison** (`--image-exif`): Compare camera settings, GPS coordinates, timestamps, and more
+- **Tolerance adjustment** (`--image-tolerance`): Configure pixel difference threshold (0-255, default: 1)
 
 ## GUI Features
 
