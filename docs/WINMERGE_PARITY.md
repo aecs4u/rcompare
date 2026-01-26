@@ -32,6 +32,12 @@ This document tracks the implementation of WinMerge features in RCompare to achi
 | **Progress indicators** | ✅ Complete | Progress bars with ETA |
 | **GUI interface** | ✅ Complete | Slint-based UI |
 | **CLI interface** | ✅ Complete | Full-featured command-line tool |
+| **Text: Ignore whitespace** | ✅ Complete | 5 whitespace handling modes |
+| **Text: Ignore case** | ✅ Complete | Case-insensitive comparison |
+| **Text: Regex rules** | ✅ Complete | Pattern-based preprocessing |
+| **Text: Line ending normalization** | ✅ Complete | CRLF/LF/CR unification |
+| **Image: EXIF metadata** | ✅ Complete | Compare camera settings, GPS, timestamps |
+| **Image: Tolerance adjustment** | ✅ Complete | Configurable pixel difference threshold |
 
 ### Planned (Already in Roadmap) 🔜
 
@@ -297,11 +303,15 @@ This document tracks the implementation of WinMerge features in RCompare to achi
 
 ## Implementation Roadmap
 
-### Phase 1: Quick Wins (1-2 weeks)
-- [ ] Advanced folder filtering
-- [ ] Whitespace handling options
-- [ ] Line number alignment
-- [ ] Bookmarks and sessions enhancement
+### Phase 1: Quick Wins (1-2 weeks) ✅ **COMPLETED**
+- [ ] Advanced folder filtering (deferred)
+- [x] Whitespace handling options (5 modes implemented)
+- [x] Case-insensitive comparison
+- [x] Regular expression rules
+- [x] EXIF metadata comparison
+- [x] Image tolerance adjustment
+- [ ] Line number alignment (deferred)
+- [ ] Bookmarks and sessions enhancement (deferred)
 
 ### Phase 2: VCS Integration (3-4 weeks)
 - [ ] Git integration (CLI)
@@ -356,6 +366,9 @@ RCompare already has some features that WinMerge lacks or has limited support fo
 5. **Modern UI framework:** Slint vs Win32
 6. **Performance:** Rust + BLAKE3 + parallel processing
 7. **Hash caching:** Persistent cache across sessions
+8. **Advanced text comparison:** 5 whitespace modes, regex rules, case-insensitive
+9. **EXIF metadata comparison:** Full camera metadata analysis for images
+10. **Configurable image tolerance:** Fine-grained pixel difference control
 
 ## Contributing
 
