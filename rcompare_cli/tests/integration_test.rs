@@ -875,7 +875,8 @@ fn test_no_verify_hashes_flag() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Without hash verification, files with same size/mtime appear identical
-    assert!(stdout.contains("Identical:") && stdout.contains("2"));
+    // Count should be 1 (one file on each side, appearing identical)
+    assert!(stdout.contains("Identical:") && stdout.contains("1"));
 }
 
 #[test]
@@ -892,14 +893,13 @@ fn test_right_gitignore_ignored() {
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    let result_lines: Vec<&str> = lines
-        .iter()
-        .skip_while(|l| !l.contains("Comparison Results"))
-        .take_while(|l| !l.contains("Summary"))
-        .copied()
-        .collect();
 
-    let result_text = result_lines.join("\n");
-    assert!(!result_text.contains("skip.txt"));
+    // .gitignore file itself should appear (not ignored)
+    assert!(stdout.contains(".gitignore"));
+
+    // skip.txt should be ignored by gitignore and not appear in results
+    assert!(!stdout.contains("skip.txt"));
+
+    // Should show only 1 right-only file (.gitignore)
+    assert!(stdout.contains("Right only:") && stdout.contains("1"));
 }
