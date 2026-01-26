@@ -6220,6 +6220,7 @@ dependencies = [
  "indicatif",
  "rcompare_common",
  "rcompare_core",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
