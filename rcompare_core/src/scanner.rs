@@ -121,7 +121,16 @@ impl FolderScanner {
                     format!("Metadata error: {}", e)
                 )))?;
 
-            let is_dir = metadata.is_dir();
+            // For symlinks, follow them to determine if they point to a directory
+            // (jwalk's metadata returns false for is_dir on symlinks when follow_links is false)
+            let is_dir = if metadata.file_type().is_symlink() {
+                // Use std::fs::metadata to follow the symlink
+                std::fs::metadata(path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+            } else {
+                metadata.is_dir()
+            };
 
             // Skip if matches ignore patterns (check full path and all parent directories)
             if self.should_ignore_with_parents(&relative_path, is_dir) {
