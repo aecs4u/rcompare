@@ -44,25 +44,47 @@ The project follows a modular Cargo workspace structure with strict separation o
 - ✅ Timestamp comparison
 - ✅ BLAKE3 hash-based verification
 - ✅ Diff status tracking (Same, Different, OrphanLeft, OrphanRight, Unchecked)
+- ✅ Broken symlink handling
+
+#### Specialized File Comparisons
+- ✅ **Text files**: Line-by-line diff with syntax highlighting
+- ✅ **Binary files**: Hex view with byte-level comparison
+- ✅ **Images**: Pixel-level comparison with multiple modes
+- ✅ **CSV files**: Row-by-row, column-aware structural comparison
+- ✅ **Excel files**: Sheet, row, and cell-level comparison (.xlsx, .xls)
+- ✅ **JSON files**: Path-based structural comparison with type checking
+- ✅ **YAML files**: Path-based structural comparison
+- ✅ **Parquet files**: DataFrame comparison with schema validation
+
+#### Archive Support
+- ✅ ZIP archive comparison
+- ✅ TAR/TAR.GZ/TGZ archive comparison
+- ✅ 7Z archive comparison
+- ✅ VFS abstraction for transparent archive access
 
 #### Performance
 - ✅ Parallel directory traversal with jwalk
-- ✅ BLAKE3 for fast hashing
+- ✅ BLAKE3 for fast hashing (~3GB/s)
 - ✅ Persistent hash cache (binary format)
 - ✅ Memory-efficient file metadata handling
+- ✅ Progress bars with ETA forecasting
 
 #### Cross-Platform Support
 - ✅ Platform-agnostic path handling
 - ✅ XDG Base Directory compliance (Linux)
 - ✅ AppData support (Windows)
 - ✅ Proper cache directory detection
+- ✅ CI/CD testing on Linux, Windows, macOS
 
 #### User Experience
 - ✅ Colorized CLI output
-- ✅ Progress logging with tracing
-- ✅ Native GUI with Slint
+- ✅ Progress indicators with ETA
+- ✅ Native GUI with Slint 1.9
 - ✅ File selection dialogs
 - ✅ Real-time comparison display
+- ✅ Auto-comparison when folders selected
+- ✅ Last directory memory
+- ✅ Gitignore-compatible pattern matching
 
 ### 3. Testing
 
@@ -152,47 +174,74 @@ cargo run --bin rcompare_cli -- scan /path/to/left /path/to/right --diff-only
 cargo run --bin rcompare_gui
 ```
 
-## Next Steps (Future Enhancements)
+## Recently Completed Features ✅
 
 ### Phase 1: Enhanced Comparison
-- [ ] Full hash verification for unchecked files
-- [ ] Parallel hash computation with rayon
-- [ ] Partial hash optimization (first/middle/last blocks)
-- [ ] Progress reporting with percentage
+- ✅ Full hash verification for unchecked files
+- ✅ Parallel hash computation with rayon
+- ✅ Progress reporting with percentage and ETA
+- ✅ Broken symlink handling during hash verification
 
 ### Phase 2: Text Comparison
-- [ ] Line-by-line diff using similar crate
-- [ ] Syntax highlighting with syntect
-- [ ] Intra-line character diff
-- [ ] 3-way merge support
+- ✅ Line-by-line diff using similar crate
+- ✅ Syntax highlighting with syntect
+- ✅ Intra-line character diff
+- [ ] 3-way merge support (planned)
 
 ### Phase 3: File Operations
-- [ ] Copy files between sides
-- [ ] Move/rename operations
-- [ ] Safe deletion with trash crate
-- [ ] Synchronization with preview
+- ✅ Copy files between sides (GUI)
+- ✅ Synchronization with preview (GUI sync dialog)
+- [ ] Move/rename operations (planned)
+- [ ] Safe deletion with trash crate (planned)
 
 ### Phase 4: Archive Support
-- [ ] ZIP archive VFS implementation
-- [ ] TAR archive support
-- [ ] Transparent archive comparison
-- [ ] Extract/compress operations
+- ✅ ZIP archive VFS implementation
+- ✅ TAR/TAR.GZ/TGZ archive support
+- ✅ 7Z archive support
+- ✅ Transparent archive comparison
+- [ ] Extract/compress operations (planned)
 
-### Phase 5: Advanced Features
-- [ ] Binary hex view comparison
-- [ ] Image comparison with perceptual diff
-- [ ] Filter expressions (glob patterns)
-- [ ] Session saving/loading
-- [ ] Batch operations scripting
+### Phase 5: Advanced Features & Specialized Comparisons
+- ✅ Binary hex view comparison
+- ✅ Image comparison with multiple modes (exact, threshold, perceptual)
+- ✅ CSV comparison with row-by-row, column-aware diff
+- ✅ Excel comparison (.xlsx, .xls) with sheet/cell analysis
+- ✅ JSON comparison with path-based structural diff
+- ✅ YAML comparison with structural analysis
+- ✅ Parquet comparison with DataFrame and schema validation
+- ✅ Filter expressions with gitignore-style patterns
+- ✅ Session saving/loading (profiles)
+- [ ] Batch operations scripting (planned)
 
 ### Phase 6: GUI Enhancements
-- [ ] Tree view with expand/collapse
-- [ ] Synchronized scrolling
-- [ ] Central gutter diff map
-- [ ] Keyboard shortcuts
-- [ ] Context menus
-- [ ] Settings dialog
-- [ ] Multiple comparison tabs
+- ✅ Tree view with expand/collapse
+- ✅ Auto-comparison when both folders selected
+- ✅ Last directory memory for Browse dialogs
+- ✅ Responsive layout with min/max constraints
+- ✅ Filter controls (show/hide by status)
+- ✅ Search within comparison results
+- ✅ Settings dialog
+- [ ] Synchronized scrolling (planned)
+- [ ] Central gutter diff map (planned)
+- [ ] Multiple comparison tabs (planned)
+
+## Next Steps (Future Enhancements)
+
+### Database Support
+- [ ] SQL database schema comparison
+- [ ] Table data comparison
+- [ ] Index and constraint comparison
+
+### Remote Filesystems
+- [ ] S3 integration in GUI
+- [ ] SFTP integration in GUI
+- [ ] WebDAV integration in GUI
+
+### Advanced Operations
+- [ ] Three-way merge comparison
+- [ ] Conflict resolution UI
+- [ ] Batch scripting with Lua/Python
+- [ ] Custom comparison profiles
 
 ## Technical Decisions
 
@@ -226,21 +275,42 @@ cargo run --bin rcompare_gui
 ### Core Dependencies
 - **blake3**: Fast hashing
 - **jwalk**: Parallel directory walking
+- **rayon**: Data parallelism
 - **ignore**: Gitignore support
 - **bincode**: Fast binary serialization
 - **serde**: Serialization framework
 - **chrono**: Date/time handling
 
+### File Format Support
+- **csv**: CSV parsing and processing
+- **calamine**: Excel file reading (.xlsx, .xls)
+- **serde_json**: JSON parsing and manipulation
+- **serde_yaml**: YAML parsing and conversion
+- **polars**: DataFrame operations and Parquet support
+- **image**: Image decoding and pixel comparison
+- **syntect**: Syntax highlighting for text diffs
+- **similar**: Text diffing algorithms
+
+### Archive Support
+- **zip**: ZIP archive handling
+- **tar**: TAR archive handling
+- **sevenz-rust**: 7-Zip archive handling
+- **flate2**: GZIP compression
+- **bzip2**: BZIP2 compression
+- **xz2**: XZ compression
+
 ### CLI Dependencies
-- **clap**: Command-line parsing
+- **clap**: Command-line parsing with derive macros
+- **indicatif**: Progress bars with ETA
 - **tracing**: Structured logging
+- **console**: Terminal colors and styling
 
 ### GUI Dependencies
-- **slint**: UI framework
+- **slint 1.9**: UI framework
 - **native-dialog**: File dialogs
 
 ### Development Dependencies
-- **tempfile**: Testing
+- **tempfile**: Testing temporary files
 - **criterion**: Benchmarking (when needed)
 
 ## Performance Characteristics
@@ -277,11 +347,11 @@ cargo install --path rcompare_gui
 
 ## Known Limitations (Current Phase)
 
-1. No text diff viewer yet (files marked as different but content not shown)
-2. No archive support (VFS trait defined but only LocalVfs implemented)
-3. Hash verification optional (files with same size/time marked as "Unchecked")
-4. GUI tree view shows flat list (no hierarchical expand/collapse)
-5. No file operation capabilities yet (read-only comparison)
+1. Archive comparisons are read-only (no extract/compress operations)
+2. No three-way merge support yet
+3. Remote filesystems (S3, SFTP, WebDAV) only available via CLI
+4. No database schema/data comparison yet
+5. Some CLI integration tests failing (archive-related edge cases)
 
 ## Compliance with Architecture Spec
 
@@ -298,16 +368,25 @@ The implementation follows the [ARCHITECTURE.md](ARCHITECTURE.md) specification:
 
 ## Conclusion
 
-The RCompare project has successfully completed Phase 1 of development with a solid foundation. Both CLI and GUI interfaces are functional, and the core comparison engine works correctly. The architecture is clean, modular, and ready for future enhancements.
+The RCompare project has successfully completed multiple development phases with comprehensive functionality. Both CLI and GUI interfaces are fully functional with specialized file comparison support. The architecture is clean, modular, and production-ready.
 
 The project is ready for:
-- Basic directory comparison tasks
-- Integration into workflows
+- Professional directory and file comparison tasks
+- Specialized data format analysis (CSV, Excel, JSON, YAML, Parquet)
+- Archive comparison workflows
+- Integration into development and backup workflows
 - Further feature development
 - Community contributions
 
+### Recent Major Achievements
+- 8 specialized file comparison modes implemented
+- Archive support for ZIP, TAR, 7Z formats
+- GUI enhancements with auto-comparison and smart navigation
+- Comprehensive testing with 170+ tests
+- CI/CD pipeline with multi-platform support
+
 ---
 
-**Last Updated**: 2026-01-24
+**Last Updated**: 2026-01-26
 **Version**: 0.1.0
-**Status**: Alpha - Core functionality complete
+**Status**: Beta - Comprehensive feature set complete

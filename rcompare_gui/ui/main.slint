@@ -61,11 +61,10 @@ export struct ProfileItem {
 component ToolButton inherits Rectangle {
     in property <string> label;
     in property <string> icon;
-    in property <length> button-width: 82px;
     in property <bool> primary: false;
     callback clicked();
 
-    width: button-width;
+    min-width: 60px;
     height: 24px;
     border-width: 1px;
     border-color: primary ? #2e6fd1 : #c5ccd6;
@@ -116,11 +115,10 @@ component ToolButton inherits Rectangle {
 
 component SmallButton inherits Rectangle {
     in property <string> label;
-    in property <length> button-width: 64px;
     in property <bool> primary: false;
     callback clicked();
 
-    width: button-width;
+    min-width: 60px;
     height: 22px;
     border-width: 1px;
     border-color: primary ? #2e6fd1 : #c5ccd6;
@@ -143,10 +141,34 @@ component SmallButton inherits Rectangle {
     }
 }
 
+component MenuItem inherits TouchArea {
+    in property <string> text-label;
+    in property <bool> is-active;
+    callback menu-clicked();
+
+    min-width: 50px;
+    height: 24px;
+    clicked => { menu-clicked(); }
+
+    Rectangle {
+        background: is-active ? #e7f0ff : transparent;
+        border-radius: 3px;
+
+        Text {
+            text: text-label;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-size: 12px;
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: "RCompare - File Comparison Tool";
     preferred-width: 1200px;
     preferred-height: 800px;
+    min-width: 800px;
+    min-height: 600px;
     background: #edf1f5;
 
     in-out property <string> app-version: "0.1.0";
@@ -288,123 +310,43 @@ export component MainWindow inherits Window {
 
             HorizontalBox {
                 padding-left: 6px;
-                padding-top: 0px;
-                padding-bottom: 0px;
                 spacing: 0px;
                 alignment: start;
 
-                // File menu
-                TouchArea {
-                    width: 50px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 1 ? 0 : 1; }
-
-                    Rectangle {
-                        background: active-menu == 1 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "File";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "File";
+                    is-active: active-menu == 1;
+                    menu-clicked => { active-menu = active-menu == 1 ? 0 : 1; }
                 }
 
-                // Edit menu
-                TouchArea {
-                    width: 50px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 2 ? 0 : 2; }
-
-                    Rectangle {
-                        background: active-menu == 2 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "Edit";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "Edit";
+                    is-active: active-menu == 2;
+                    menu-clicked => { active-menu = active-menu == 2 ? 0 : 2; }
                 }
 
-                // View menu
-                TouchArea {
-                    width: 55px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 3 ? 0 : 3; }
-
-                    Rectangle {
-                        background: active-menu == 3 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "View";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "View";
+                    is-active: active-menu == 3;
+                    menu-clicked => { active-menu = active-menu == 3 ? 0 : 3; }
                 }
 
-                // Session menu
-                TouchArea {
-                    width: 70px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 4 ? 0 : 4; }
-
-                    Rectangle {
-                        background: active-menu == 4 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "Session";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "Session";
+                    is-active: active-menu == 4;
+                    menu-clicked => { active-menu = active-menu == 4 ? 0 : 4; }
                 }
 
-                // Tools menu
-                TouchArea {
-                    width: 55px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 5 ? 0 : 5; }
-
-                    Rectangle {
-                        background: active-menu == 5 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "Tools";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "Tools";
+                    is-active: active-menu == 5;
+                    menu-clicked => { active-menu = active-menu == 5 ? 0 : 5; }
                 }
 
-                // Help menu
-                TouchArea {
-                    width: 50px;
-                    height: 24px;
-                    clicked => { active-menu = active-menu == 6 ? 0 : 6; }
-
-                    Rectangle {
-                        background: active-menu == 6 ? accent-soft : transparent;
-                        border-radius: 3px;
-
-                        Text {
-                            text: "Help";
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                            font-size: 12px;
-                        }
-                    }
+                MenuItem {
+                    text-label: "Help";
+                    is-active: active-menu == 6;
+                    menu-clicked => { active-menu = active-menu == 6 ? 0 : 6; }
                 }
             }
         }
@@ -417,22 +359,19 @@ export component MainWindow inherits Window {
             border-color: #d0d5db;
 
             HorizontalBox {
-                padding-left: 6px;
-                padding-right: 6px;
+                padding: 6px;
                 spacing: 6px;
-                alignment: center;
+                alignment: start;
 
                 ToolButton {
                     label: "New";
                     icon: "N";
-                    button-width: 66px;
                     clicked => { new-session(); }
                 }
 
                 ToolButton {
                     label: "Refresh";
                     icon: "R";
-                    button-width: 74px;
                     clicked => { refresh-clicked(); }
                 }
 
@@ -440,21 +379,19 @@ export component MainWindow inherits Window {
                     label: "Compare";
                     icon: "C";
                     primary: true;
-                    button-width: 90px;
                     clicked => { compare-clicked(); }
                 }
 
                 ToolButton {
                     label: "Cancel";
                     icon: "X";
-                    button-width: 68px;
                     clicked => { cancel-clicked(); }
                 }
 
                 Rectangle { width: 1px; height: 20px; background: #b7c0cc; }
 
                 TouchArea {
-                    width: 60px;
+                    min-width: 60px;
                     height: 22px;
                     clicked => { toggle-three-way-mode(); }
 
@@ -480,14 +417,12 @@ export component MainWindow inherits Window {
                 ToolButton {
                     label: "Expand";
                     icon: "+";
-                    button-width: 72px;
                     clicked => { expand-all(); }
                 }
 
                 ToolButton {
                     label: "Collapse";
                     icon: "-";
-                    button-width: 80px;
                     clicked => { collapse-all(); }
                 }
 
@@ -496,21 +431,18 @@ export component MainWindow inherits Window {
                 ToolButton {
                     label: "L>R";
                     icon: "LR";
-                    button-width: 62px;
                     clicked => { copy-left-to-right(); }
                 }
 
                 ToolButton {
                     label: "R>L";
                     icon: "RL";
-                    button-width: 62px;
                     clicked => { copy-right-to-left(); }
                 }
 
                 ToolButton {
                     label: "Sync";
                     icon: "S";
-                    button-width: 66px;
                     clicked => { open-sync-dialog(); }
                 }
 
@@ -519,16 +451,16 @@ export component MainWindow inherits Window {
                 ToolButton {
                     label: "Profiles";
                     icon: "P";
-                    button-width: 78px;
                     clicked => { open-profiles(); }
                 }
 
                 ToolButton {
                     label: "Options";
                     icon: "Cfg";
-                    button-width: 82px;
                     clicked => { open-settings(); }
                 }
+
+                Rectangle { horizontal-stretch: 1; }
             }
         }
 
@@ -540,8 +472,7 @@ export component MainWindow inherits Window {
             border-color: #d0d5db;
 
             HorizontalBox {
-                padding-left: 6px;
-                padding-right: 6px;
+                padding: 6px;
                 spacing: 6px;
                 alignment: center;
 
@@ -554,7 +485,14 @@ export component MainWindow inherits Window {
                     border-color: #4285cc;
                     border-radius: 2px;
                 }
-                Text { text: "Left"; font-size: 10px; font-weight: 700; color: #3875c4; vertical-alignment: center; }
+
+                Text {
+                    text: "Left";
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #3875c4;
+                    vertical-alignment: center;
+                }
 
                 Rectangle {
                     background: #ffffff;
@@ -584,7 +522,10 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                SmallButton { label: "Browse"; button-width: 60px; clicked => { select-left-path(); } }
+                SmallButton {
+                    label: "Browse";
+                    clicked => { select-left-path(); }
+                }
 
                 // Right path
                 Rectangle {
@@ -595,7 +536,14 @@ export component MainWindow inherits Window {
                     border-color: #b04552;
                     border-radius: 2px;
                 }
-                Text { text: "Right"; font-size: 10px; font-weight: 700; color: #b04552; vertical-alignment: center; }
+
+                Text {
+                    text: "Right";
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #b04552;
+                    vertical-alignment: center;
+                }
 
                 Rectangle {
                     background: #ffffff;
@@ -625,7 +573,10 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                SmallButton { label: "Browse"; button-width: 60px; clicked => { select-right-path(); } }
+                SmallButton {
+                    label: "Browse";
+                    clicked => { select-right-path(); }
+                }
             }
         }
 
@@ -637,21 +588,22 @@ export component MainWindow inherits Window {
             border-color: #d0d5db;
 
             HorizontalBox {
-                padding-left: 6px;
-                padding-right: 6px;
+                padding: 6px;
                 spacing: 4px;
                 alignment: center;
 
                 // Compact view switcher
                 TouchArea {
-                    width: 96px;
+                    min-width: 96px;
                     height: 20px;
                     clicked => { active-view = 0; }
+
                     Rectangle {
                         background: active-view == 0 ? #ffffff : transparent;
                         border-width: active-view == 0 ? 1px : 0px;
                         border-color: #b0b8c0;
                         border-radius: 2px;
+
                         Text {
                             text: "Folder Compare";
                             vertical-alignment: center;
@@ -664,14 +616,16 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 88px;
+                    min-width: 88px;
                     height: 20px;
                     clicked => { active-view = 1; }
+
                     Rectangle {
                         background: active-view == 1 ? #ffffff : transparent;
                         border-width: active-view == 1 ? 1px : 0px;
                         border-color: #b0b8c0;
                         border-radius: 2px;
+
                         Text {
                             text: "Text Compare";
                             vertical-alignment: center;
@@ -684,14 +638,16 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 82px;
+                    min-width: 82px;
                     height: 20px;
                     clicked => { active-view = 2; }
+
                     Rectangle {
                         background: active-view == 2 ? #ffffff : transparent;
                         border-width: active-view == 2 ? 1px : 0px;
                         border-color: #b0b8c0;
                         border-radius: 2px;
+
                         Text {
                             text: "Hex Compare";
                             vertical-alignment: center;
@@ -704,14 +660,16 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 96px;
+                    min-width: 96px;
                     height: 20px;
                     clicked => { active-view = 3; }
+
                     Rectangle {
                         background: active-view == 3 ? #ffffff : transparent;
                         border-width: active-view == 3 ? 1px : 0px;
                         border-color: #b0b8c0;
                         border-radius: 2px;
+
                         Text {
                             text: "Image Compare";
                             vertical-alignment: center;
@@ -736,24 +694,27 @@ export component MainWindow inherits Window {
 
                 // Compact filter chips
                 TouchArea {
-                    width: 50px;
+                    min-width: 50px;
                     height: 18px;
                     clicked => { show-identical = !show-identical; filter-changed(); }
+
                     Rectangle {
                         background: show-identical ? #ffffff : transparent;
                         border-width: 1px;
                         border-color: show-identical ? #6ba3d8 : #c0c7d0;
                         border-radius: 2px;
+
                         HorizontalBox {
-                            padding-left: 4px;
-                            padding-right: 4px;
+                            padding: 4px;
                             spacing: 2px;
+
                             Rectangle {
                                 width: 12px;
                                 height: 12px;
                                 background: show-identical ? #6ba3d8 : #ffffff;
                                 border-width: 1px;
                                 border-color: #a0b0c0;
+
                                 if show-identical: Text {
                                     text: "✓";
                                     color: #ffffff;
@@ -763,6 +724,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
+
                             Text {
                                 text: "Same";
                                 vertical-alignment: center;
@@ -775,24 +737,27 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 46px;
+                    min-width: 46px;
                     height: 18px;
                     clicked => { show-different = !show-different; filter-changed(); }
+
                     Rectangle {
                         background: show-different ? #ffffff : transparent;
                         border-width: 1px;
                         border-color: show-different ? #d85a6a : #c0c7d0;
                         border-radius: 2px;
+
                         HorizontalBox {
-                            padding-left: 4px;
-                            padding-right: 4px;
+                            padding: 4px;
                             spacing: 2px;
+
                             Rectangle {
                                 width: 12px;
                                 height: 12px;
                                 background: show-different ? #d85a6a : #ffffff;
                                 border-width: 1px;
                                 border-color: #a0b0c0;
+
                                 if show-different: Text {
                                     text: "✓";
                                     color: #ffffff;
@@ -802,6 +767,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
+
                             Text {
                                 text: "Diff";
                                 vertical-alignment: center;
@@ -814,24 +780,27 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 45px;
+                    min-width: 45px;
                     height: 18px;
                     clicked => { show-left-only = !show-left-only; filter-changed(); }
+
                     Rectangle {
                         background: show-left-only ? #ffffff : transparent;
                         border-width: 1px;
                         border-color: show-left-only ? #6ba3d8 : #c0c7d0;
                         border-radius: 2px;
+
                         HorizontalBox {
-                            padding-left: 4px;
-                            padding-right: 4px;
+                            padding: 4px;
                             spacing: 2px;
+
                             Rectangle {
                                 width: 12px;
                                 height: 12px;
                                 background: show-left-only ? #6ba3d8 : #ffffff;
                                 border-width: 1px;
                                 border-color: #a0b0c0;
+
                                 if show-left-only: Text {
                                     text: "✓";
                                     color: #ffffff;
@@ -841,6 +810,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
+
                             Text {
                                 text: "Left";
                                 vertical-alignment: center;
@@ -853,24 +823,27 @@ export component MainWindow inherits Window {
                 }
 
                 TouchArea {
-                    width: 50px;
+                    min-width: 50px;
                     height: 18px;
                     clicked => { show-right-only = !show-right-only; filter-changed(); }
+
                     Rectangle {
                         background: show-right-only ? #ffffff : transparent;
                         border-width: 1px;
                         border-color: show-right-only ? #d85a6a : #c0c7d0;
                         border-radius: 2px;
+
                         HorizontalBox {
-                            padding-left: 4px;
-                            padding-right: 4px;
+                            padding: 4px;
                             spacing: 2px;
+
                             Rectangle {
                                 width: 12px;
                                 height: 12px;
                                 background: show-right-only ? #d85a6a : #ffffff;
                                 border-width: 1px;
                                 border-color: #a0b0c0;
+
                                 if show-right-only: Text {
                                     text: "✓";
                                     color: #ffffff;
@@ -880,6 +853,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
+
                             Text {
                                 text: "Right";
                                 vertical-alignment: center;
@@ -903,7 +877,8 @@ export component MainWindow inherits Window {
                     background: #ffffff;
                     border-width: 1px;
                     border-color: #c0c7d0;
-                    width: 120px;
+                    preferred-width: 120px;
+                    min-width: 80px;
                     height: 18px;
 
                     TextInput {
@@ -923,9 +898,17 @@ export component MainWindow inherits Window {
 
             // Base panel (only shown in three-way mode)
             if three-way-mode: VerticalBox {
-                Text { text: "Base"; font-weight: 700; font-size: 12px; color: #0d2340; }
+                horizontal-stretch: 1;
+
+                Text {
+                    text: "Base";
+                    font-weight: 700;
+                    font-size: 12px;
+                    color: #0d2340;
+                }
 
                 Rectangle {
+                    vertical-stretch: 1;
                     border-width: 1px;
                     border-color: panel-border;
                     background: panel-bg;
@@ -1112,9 +1095,17 @@ export component MainWindow inherits Window {
 
             // Left panel
             VerticalBox {
-                Text { text: "Left"; font-weight: 700; font-size: 12px; color: #0d2340; }
+                horizontal-stretch: 1;
+
+                Text {
+                    text: "Left";
+                    font-weight: 700;
+                    font-size: 12px;
+                    color: #0d2340;
+                }
 
                 Rectangle {
+                    vertical-stretch: 1;
                     border-width: 1px;
                     border-color: panel-border;
                     background: panel-bg;
@@ -1301,9 +1292,17 @@ export component MainWindow inherits Window {
 
             // Right panel
             VerticalBox {
-                Text { text: "Right"; font-weight: 700; font-size: 12px; color: #0d2340; }
+                horizontal-stretch: 1;
+
+                Text {
+                    text: "Right";
+                    font-weight: 700;
+                    font-size: 12px;
+                    color: #0d2340;
+                }
 
                 Rectangle {
+                    vertical-stretch: 1;
                     border-width: 1px;
                     border-color: panel-border;
                     background: panel-bg;
@@ -1479,7 +1478,8 @@ export component MainWindow inherits Window {
             Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                width: 450px;
+                preferred-width: 450px;
+                min-width: 300px;
                 height: 200px;
                 background: #ffffff;
                 border-radius: 8px;
@@ -1542,7 +1542,12 @@ export component MainWindow inherits Window {
         if active-view == 1: VerticalBox {
             spacing: 4px;
 
-            Text { text: "Text Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+            Text {
+                text: "Text Compare";
+                font-weight: 700;
+                font-size: 12px;
+                color: #1f3f6b;
+            }
 
             HorizontalBox {
                 spacing: 6px;
@@ -1558,6 +1563,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1570,6 +1576,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1579,9 +1586,9 @@ export component MainWindow inherits Window {
             }
 
             Rectangle {
+                vertical-stretch: 1;
                 border-width: 1px;
                 border-color: panel-border;
-                height: 240px;
                 background: panel-bg;
 
                 VerticalBox {
@@ -1597,11 +1604,12 @@ export component MainWindow inherits Window {
                             Rectangle { width: 1px; background: #cfd6de; }
                             Text { text: "R"; width: 36px; horizontal-alignment: right; font-size: 11px; font-weight: 600; }
                             Rectangle { width: 1px; background: #cfd6de; }
-                            Text { text: "Text"; font-size: 11px; font-weight: 600; }
+                            Text { text: "Text"; font-size: 11px; font-weight: 600; horizontal-stretch: 1; }
                         }
                     }
 
                     if text-lines.length == 0: VerticalBox {
+                        vertical-stretch: 1;
                         padding: 40px;
                         alignment: center;
 
@@ -1652,6 +1660,8 @@ export component MainWindow inherits Window {
                                 Rectangle { width: 1px; background: #d3d9e0; }
 
                                 HorizontalBox {
+                                    horizontal-stretch: 1;
+
                                     for segment in line.segments: Text {
                                         text: segment.text;
                                         color: segment.color;
@@ -1671,7 +1681,12 @@ export component MainWindow inherits Window {
         if active-view == 2: VerticalBox {
             spacing: 4px;
 
-            Text { text: "Hex Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+            Text {
+                text: "Hex Compare";
+                font-weight: 700;
+                font-size: 12px;
+                color: #1f3f6b;
+            }
 
             HorizontalBox {
                 spacing: 6px;
@@ -1687,6 +1702,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1699,6 +1715,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1709,9 +1726,9 @@ export component MainWindow inherits Window {
             }
 
             Rectangle {
+                vertical-stretch: 1;
                 border-width: 1px;
                 border-color: panel-border;
-                vertical-stretch: 1;
                 background: panel-bg;
 
                 VerticalBox {
@@ -1725,17 +1742,18 @@ export component MainWindow inherits Window {
 
                             Text { text: "Offset"; width: 80px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
                             Rectangle { width: 1px; background: #cfd6de; }
-                            Text { text: "Left Hex"; width: 390px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Text { text: "Left Hex"; horizontal-stretch: 1; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
                             Rectangle { width: 1px; background: #cfd6de; }
                             Text { text: "Left ASCII"; width: 140px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
                             Rectangle { width: 1px; background: #cfd6de; }
-                            Text { text: "Right Hex"; width: 390px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Text { text: "Right Hex"; horizontal-stretch: 1; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
                             Rectangle { width: 1px; background: #cfd6de; }
                             Text { text: "Right ASCII"; width: 140px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
                         }
                     }
 
                     if hex-lines.length == 0: VerticalBox {
+                        vertical-stretch: 1;
                         padding: 40px;
                         alignment: center;
 
@@ -1778,7 +1796,7 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: line.left-hex;
-                                    width: 390px;
+                                    horizontal-stretch: 1;
                                     vertical-alignment: center;
                                     font-family: "JetBrains Mono";
                                     font-size: 12px;
@@ -1799,7 +1817,7 @@ export component MainWindow inherits Window {
 
                                 Text {
                                     text: line.right-hex;
-                                    width: 390px;
+                                    horizontal-stretch: 1;
                                     vertical-alignment: center;
                                     font-family: "JetBrains Mono";
                                     font-size: 12px;
@@ -1826,7 +1844,12 @@ export component MainWindow inherits Window {
         if active-view == 3: VerticalBox {
             spacing: 4px;
 
-            Text { text: "Image Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+            Text {
+                text: "Image Compare";
+                font-weight: 700;
+                font-size: 12px;
+                color: #1f3f6b;
+            }
 
             HorizontalBox {
                 spacing: 6px;
@@ -1842,6 +1865,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1854,6 +1878,7 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     overflow: elide;
                     font-size: 12px;
+                    horizontal-stretch: 1;
                 }
 
                 Button {
@@ -1864,9 +1889,9 @@ export component MainWindow inherits Window {
 
             // Image comparison results panel
             Rectangle {
+                vertical-stretch: 1;
                 border-width: 1px;
                 border-color: panel-border;
-                vertical-stretch: 1;
                 background: panel-bg;
 
                 VerticalBox {
@@ -2020,8 +2045,7 @@ export component MainWindow inherits Window {
             border-color: #d0d5db;
 
             HorizontalBox {
-                padding-left: 6px;
-                padding-right: 6px;
+                padding: 6px;
                 spacing: 8px;
                 alignment: center;
 
@@ -2149,8 +2173,10 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 550px;
-            height: 450px;
+            preferred-width: 550px;
+            min-width: 400px;
+            preferred-height: 450px;
+            min-height: 300px;
             background: #ffffff;
             border-radius: 8px;
             drop-shadow-blur: 20px;
@@ -2366,7 +2392,8 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 450px;
+            preferred-width: 450px;
+            min-width: 350px;
             height: 350px;
             background: #ffffff;
             border-radius: 8px;
@@ -2611,7 +2638,8 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 500px;
+            preferred-width: 500px;
+            min-width: 400px;
             height: 420px;
             background: #ffffff;
             border-radius: 8px;
@@ -2814,7 +2842,8 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 400px;
+            preferred-width: 400px;
+            min-width: 300px;
             height: 180px;
             background: #ffffff;
             border-radius: 8px;
@@ -2880,7 +2909,7 @@ export component MainWindow inherits Window {
     if active-menu == 1: Rectangle {
         x: 12px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 200px;
         background: #ffffff;
         border-width: 1px;
@@ -2895,8 +2924,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { new-session(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "New Session"; vertical-alignment: center; font-size: 12px; }
@@ -2907,8 +2938,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { compare-clicked(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Compare"; vertical-alignment: center; font-size: 12px; }
@@ -2919,8 +2952,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { refresh-clicked(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Refresh"; vertical-alignment: center; font-size: 12px; }
@@ -2933,8 +2968,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { open-profiles(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Load Profile..."; vertical-alignment: center; font-size: 12px; }
@@ -2947,8 +2984,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { exit-application(); }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Exit"; vertical-alignment: center; font-size: 12px; }
@@ -2962,7 +3001,7 @@ export component MainWindow inherits Window {
     if active-menu == 2: Rectangle {
         x: 68px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 130px;
         background: #ffffff;
         border-width: 1px;
@@ -2977,8 +3016,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { copy-left-to-right(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Copy Left to Right"; vertical-alignment: center; font-size: 12px; }
@@ -2989,8 +3030,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { copy-right-to-left(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Copy Right to Left"; vertical-alignment: center; font-size: 12px; }
@@ -3003,8 +3046,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { expand-all(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Expand All"; vertical-alignment: center; font-size: 12px; }
@@ -3015,8 +3060,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { collapse-all(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Collapse All"; vertical-alignment: center; font-size: 12px; }
@@ -3030,7 +3077,7 @@ export component MainWindow inherits Window {
     if active-menu == 3: Rectangle {
         x: 118px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 130px;
         background: #ffffff;
         border-width: 1px;
@@ -3045,8 +3092,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { active-view = 0; active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Folder Compare"; vertical-alignment: center; font-size: 12px; }
@@ -3057,8 +3106,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { active-view = 1; active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Text Compare"; vertical-alignment: center; font-size: 12px; }
@@ -3069,8 +3120,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { active-view = 2; active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Hex Compare"; vertical-alignment: center; font-size: 12px; }
@@ -3081,8 +3134,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { active-view = 3; active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Image Compare"; vertical-alignment: center; font-size: 12px; }
@@ -3095,8 +3150,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { toggle-three-way-mode(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: three-way-mode ? "Disable 3-Way Mode" : "Enable 3-Way Mode"; vertical-alignment: center; font-size: 12px; }
@@ -3110,7 +3167,7 @@ export component MainWindow inherits Window {
     if active-menu == 4: Rectangle {
         x: 173px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 100px;
         background: #ffffff;
         border-width: 1px;
@@ -3125,8 +3182,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { open-profiles(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Manage Profiles..."; vertical-alignment: center; font-size: 12px; }
@@ -3139,8 +3198,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { open-sync-dialog(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Synchronize..."; vertical-alignment: center; font-size: 12px; }
@@ -3154,7 +3215,7 @@ export component MainWindow inherits Window {
     if active-menu == 5: Rectangle {
         x: 243px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 60px;
         background: #ffffff;
         border-width: 1px;
@@ -3169,8 +3230,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { open-settings(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "Settings..."; vertical-alignment: center; font-size: 12px; }
@@ -3184,7 +3247,7 @@ export component MainWindow inherits Window {
     if active-menu == 6: Rectangle {
         x: 298px;
         y: 32px;
-        width: 180px;
+        min-width: 180px;
         height: 60px;
         background: #ffffff;
         border-width: 1px;
@@ -3199,8 +3262,10 @@ export component MainWindow inherits Window {
             TouchArea {
                 height: 26px;
                 clicked => { show-about(); active-menu = 0; }
+
                 Rectangle {
                     background: parent.has-hover ? accent-soft : transparent;
+
                     HorizontalBox {
                         padding-left: 12px;
                         Text { text: "About RCompare"; vertical-alignment: center; font-size: 12px; }

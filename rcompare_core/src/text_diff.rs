@@ -1,10 +1,11 @@
 use rcompare_common::RCompareError;
+use regex::Regex;
 use similar::{ChangeTag, TextDiff};
-use std::path::Path;
 use std::fs;
-use syntect::parsing::SyntaxSet;
-use syntect::highlighting::ThemeSet;
+use std::path::Path;
 use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 /// Represents a line in a text diff
@@ -38,10 +39,81 @@ pub struct HighlightStyle {
     pub italic: bool,
 }
 
+/// Whitespace handling options for text comparison
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhitespaceMode {
+    /// Compare whitespace exactly
+    Exact,
+    /// Ignore all whitespace changes
+    IgnoreAll,
+    /// Ignore leading whitespace
+    IgnoreLeading,
+    /// Ignore trailing whitespace
+    IgnoreTrailing,
+    /// Ignore changes in amount of whitespace
+    IgnoreChanges,
+}
+
+impl Default for WhitespaceMode {
+    fn default() -> Self {
+        Self::Exact
+    }
+}
+
+/// Regular expression rule for filtering or transforming lines before comparison
+#[derive(Debug, Clone)]
+pub struct RegexRule {
+    pub pattern: Regex,
+    pub replacement: String,
+    pub description: String,
+}
+
+/// Configuration for text comparison
+#[derive(Debug, Clone, Default)]
+pub struct TextDiffConfig {
+    /// Ignore case when comparing
+    pub ignore_case: bool,
+    /// Whitespace handling mode
+    pub whitespace_mode: WhitespaceMode,
+    /// Regular expression rules to apply before comparison
+    pub regex_rules: Vec<RegexRule>,
+    /// Normalize line endings (CRLF vs LF)
+    pub normalize_line_endings: bool,
+    /// Tab width for expanding tabs to spaces
+    pub tab_width: usize,
+}
+
+impl TextDiffConfig {
+    pub fn new() -> Self {
+        Self {
+            ignore_case: false,
+            whitespace_mode: WhitespaceMode::Exact,
+            regex_rules: Vec::new(),
+            normalize_line_endings: true,
+            tab_width: 4,
+        }
+    }
+
+    pub fn ignore_all_whitespace() -> Self {
+        Self {
+            whitespace_mode: WhitespaceMode::IgnoreAll,
+            ..Default::default()
+        }
+    }
+
+    pub fn ignore_case() -> Self {
+        Self {
+            ignore_case: true,
+            ..Default::default()
+        }
+    }
+}
+
 /// Text diff engine with syntax highlighting support
 pub struct TextDiffEngine {
     syntax_set: SyntaxSet,
     theme_set: ThemeSet,
+    config: TextDiffConfig,
 }
 
 impl TextDiffEngine {
@@ -49,11 +121,83 @@ impl TextDiffEngine {
         Self {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
+            config: TextDiffConfig::new(),
+        }
+    }
+
+    pub fn with_config(config: TextDiffConfig) -> Self {
+        Self {
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
+            config,
+        }
+    }
+
+    pub fn set_config(&mut self, config: TextDiffConfig) {
+        self.config = config;
+    }
+
+    pub fn config(&self) -> &TextDiffConfig {
+        &self.config
+    }
+
+    /// Preprocess text according to configuration options
+    fn preprocess_text(&self, text: &str) -> String {
+        let mut result = text.to_string();
+
+        // Normalize line endings if requested
+        if self.config.normalize_line_endings {
+            result = result.replace("\r\n", "\n").replace('\r', "\n");
+        }
+
+        // Apply case folding if requested
+        if self.config.ignore_case {
+            result = result.to_lowercase();
+        }
+
+        // Apply regex rules
+        for rule in &self.config.regex_rules {
+            result = rule.pattern.replace_all(&result, &rule.replacement).to_string();
+        }
+
+        // Apply whitespace handling
+        match self.config.whitespace_mode {
+            WhitespaceMode::Exact => result,
+            WhitespaceMode::IgnoreAll => {
+                result.lines()
+                    .map(|line| line.chars().filter(|c| !c.is_whitespace()).collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            WhitespaceMode::IgnoreLeading => {
+                result.lines()
+                    .map(|line| line.trim_start())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            WhitespaceMode::IgnoreTrailing => {
+                result.lines()
+                    .map(|line| line.trim_end())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            WhitespaceMode::IgnoreChanges => {
+                result.lines()
+                    .map(|line| {
+                        line.split_whitespace().collect::<Vec<_>>().join(" ")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
         }
     }
 
     /// Compare two text files and generate a diff
-    pub fn compare_files(&self, left_path: &Path, right_path: &Path) -> Result<Vec<DiffLine>, RCompareError> {
+    pub fn compare_files(
+        &self,
+        left_path: &Path,
+        right_path: &Path,
+    ) -> Result<Vec<DiffLine>, RCompareError> {
         let left_content = fs::read_to_string(left_path)?;
         let right_content = fs::read_to_string(right_path)?;
 
@@ -61,15 +205,25 @@ impl TextDiffEngine {
     }
 
     /// Compare two text strings with Myers algorithm
-    pub fn compare_text(&self, left: &str, right: &str, file_path: &Path) -> Result<Vec<DiffLine>, RCompareError> {
-        let diff = TextDiff::from_lines(left, right);
+    pub fn compare_text(
+        &self,
+        left: &str,
+        right: &str,
+        file_path: &Path,
+    ) -> Result<Vec<DiffLine>, RCompareError> {
+        // Preprocess text according to configuration
+        let left_processed = self.preprocess_text(left);
+        let right_processed = self.preprocess_text(right);
+
+        let diff = TextDiff::from_lines(&left_processed, &right_processed);
         let mut result = Vec::new();
 
         let mut left_line_num = 1;
         let mut right_line_num = 1;
 
         // Detect syntax for highlighting
-        let syntax = self.syntax_set
+        let syntax = self
+            .syntax_set
             .find_syntax_for_file(file_path)
             .ok()
             .flatten()
@@ -118,7 +272,12 @@ impl TextDiffEngine {
     }
 
     /// Compare with Patience algorithm (better for code)
-    pub fn compare_text_patience(&self, left: &str, right: &str, file_path: &Path) -> Result<Vec<DiffLine>, RCompareError> {
+    pub fn compare_text_patience(
+        &self,
+        left: &str,
+        right: &str,
+        file_path: &Path,
+    ) -> Result<Vec<DiffLine>, RCompareError> {
         // Use patience algorithm from similar crate
         let diff = TextDiff::configure()
             .algorithm(similar::Algorithm::Patience)
@@ -128,7 +287,8 @@ impl TextDiffEngine {
         let mut left_line_num = 1;
         let mut right_line_num = 1;
 
-        let syntax = self.syntax_set
+        let syntax = self
+            .syntax_set
             .find_syntax_for_file(file_path)
             .ok()
             .flatten()
@@ -189,18 +349,24 @@ impl TextDiffEngine {
         result
     }
 
-    fn highlight_line(&self, line: &str, syntax: Option<&syntect::parsing::SyntaxReference>) -> Vec<HighlightedSegment> {
+    fn highlight_line(
+        &self,
+        line: &str,
+        syntax: Option<&syntect::parsing::SyntaxReference>,
+    ) -> Vec<HighlightedSegment> {
         let syntax = match syntax {
             Some(s) => s,
-            None => return vec![HighlightedSegment {
-                text: line.to_string(),
-                style: HighlightStyle {
-                    foreground: (200, 200, 200),
-                    background: None,
-                    bold: false,
-                    italic: false,
-                },
-            }],
+            None => {
+                return vec![HighlightedSegment {
+                    text: line.to_string(),
+                    style: HighlightStyle {
+                        foreground: (200, 200, 200),
+                        background: None,
+                        bold: false,
+                        italic: false,
+                    },
+                }]
+            }
         };
 
         let theme = &self.theme_set.themes["base16-ocean.dark"];
@@ -213,10 +379,18 @@ impl TextDiffEngine {
                     segments.push(HighlightedSegment {
                         text: text.to_string(),
                         style: HighlightStyle {
-                            foreground: (style.foreground.r, style.foreground.g, style.foreground.b),
+                            foreground: (
+                                style.foreground.r,
+                                style.foreground.g,
+                                style.foreground.b,
+                            ),
                             background: None,
-                            bold: style.font_style.contains(syntect::highlighting::FontStyle::BOLD),
-                            italic: style.font_style.contains(syntect::highlighting::FontStyle::ITALIC),
+                            bold: style
+                                .font_style
+                                .contains(syntect::highlighting::FontStyle::BOLD),
+                            italic: style
+                                .font_style
+                                .contains(syntect::highlighting::FontStyle::ITALIC),
                         },
                     });
                 }
@@ -257,7 +431,9 @@ mod tests {
         let left = "line1\nline2\nline3\n";
         let right = "line1\nline2_modified\nline3\n";
 
-        let diff = engine.compare_text(left, right, Path::new("test.txt")).unwrap();
+        let diff = engine
+            .compare_text(left, right, Path::new("test.txt"))
+            .unwrap();
         assert!(diff.len() > 0);
     }
 
@@ -277,7 +453,9 @@ mod tests {
         let left = "fn main() {\n    println!(\"Hello\");\n}\n";
         let right = "fn main() {\n    println!(\"World\");\n}\n";
 
-        let diff = engine.compare_text_patience(left, right, Path::new("test.rs")).unwrap();
+        let diff = engine
+            .compare_text_patience(left, right, Path::new("test.rs"))
+            .unwrap();
         assert!(diff.len() > 0);
     }
 }

@@ -35,6 +35,19 @@ syntect.workspace = true
 # Image processing
 image.workspace = true
 
+# CSV processing
+csv.workspace = true
+
+# Excel processing
+calamine.workspace = true
+
+# JSON/YAML processing
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# DataFrame/Parquet processing
+polars.workspace = true
+
 # Archive handling
 zip.workspace = true
 tar.workspace = true

@@ -1,7 +1,7 @@
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use jwalk::WalkDir;
 use rcompare_common::{AppConfig, FileEntry, RCompareError, Vfs};
 use std::path::Path;
-use jwalk::WalkDir;
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::debug;
 
@@ -39,7 +39,10 @@ impl FolderScanner {
 
         match builder.build() {
             Ok(ignore) => {
-                debug!("Built custom ignore with {} patterns", config.ignore_patterns.len());
+                debug!(
+                    "Built custom ignore with {} patterns",
+                    config.ignore_patterns.len()
+                );
                 Some(ignore)
             }
             Err(e) => {
@@ -55,23 +58,23 @@ impl FolderScanner {
         let mut found_any = false;
 
         // Recursively find all .gitignore files in the directory tree
-        for entry in WalkDir::new(root) {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
-                    if let Some(e) = builder.add(&path) {
-                        debug!("Failed to add .gitignore from {:?}: {}", path, e);
-                    } else {
-                        debug!("Added .gitignore from {:?}", path);
-                        found_any = true;
-                    }
+        for entry in WalkDir::new(root).into_iter().flatten() {
+            let path = entry.path();
+            if path.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
+                if let Some(e) = builder.add(&path) {
+                    debug!("Failed to add .gitignore from {:?}: {}", path, e);
+                } else {
+                    debug!("Added .gitignore from {:?}", path);
+                    found_any = true;
                 }
             }
         }
 
         if found_any {
-            self.gitignore = Some(builder.build()
-                .map_err(|e| RCompareError::Config(format!("Failed to build gitignore: {}", e)))?);
+            self.gitignore =
+                Some(builder.build().map_err(|e| {
+                    RCompareError::Config(format!("Failed to build gitignore: {}", e))
+                })?);
             debug!("Built gitignore with nested .gitignore files");
         }
 
@@ -96,17 +99,19 @@ impl FolderScanner {
             .skip_hidden(false);
 
         for entry in walker {
-            if cancel.map_or(false, |flag| flag.load(Ordering::Relaxed)) {
+            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison("Scan cancelled".to_string()));
             }
 
-            let entry = entry.map_err(|e| RCompareError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Walk error: {}", e)
-            )))?;
+            let entry = entry.map_err(|e| {
+                RCompareError::Io(std::io::Error::other(
+                    format!("Walk error: {}", e),
+                ))
+            })?;
 
             let path = entry.path();
-            let relative_path = path.strip_prefix(root)
+            let relative_path = path
+                .strip_prefix(root)
                 .map_err(|e| RCompareError::Path(e.to_string()))?
                 .to_path_buf();
 
@@ -115,19 +120,17 @@ impl FolderScanner {
                 continue;
             }
 
-            let metadata = entry.metadata()
-                .map_err(|e| RCompareError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Metadata error: {}", e)
-                )))?;
+            let metadata = entry.metadata().map_err(|e| {
+                RCompareError::Io(std::io::Error::other(
+                    format!("Metadata error: {}", e),
+                ))
+            })?;
 
             // For symlinks, follow them to determine if they point to a directory
             // (jwalk's metadata returns false for is_dir on symlinks when follow_links is false)
             let is_dir = if metadata.file_type().is_symlink() {
                 // Use std::fs::metadata to follow the symlink
-                std::fs::metadata(path)
-                    .map(|m| m.is_dir())
-                    .unwrap_or(false)
+                std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
             } else {
                 metadata.is_dir()
             };
@@ -147,7 +150,8 @@ impl FolderScanner {
             entries.push(FileEntry {
                 path: relative_path,
                 size: metadata.len(),
-                modified: metadata.modified()
+                modified: metadata
+                    .modified()
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                 is_dir,
             });
@@ -182,20 +186,22 @@ impl FolderScanner {
         entries: &mut Vec<FileEntry>,
         cancel: Option<&AtomicBool>,
     ) -> Result<(), RCompareError> {
-        if cancel.map_or(false, |flag| flag.load(Ordering::Relaxed)) {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err(RCompareError::Comparison("Scan cancelled".to_string()));
         }
 
-        let dir_entries = vfs.read_dir(current)
+        let dir_entries = vfs
+            .read_dir(current)
             .map_err(|e| RCompareError::Vfs(e.to_string()))?;
 
         for entry in dir_entries {
-            if cancel.map_or(false, |flag| flag.load(Ordering::Relaxed)) {
+            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison("Scan cancelled".to_string()));
             }
 
             let vfs_path = entry.path.clone();
-            let relative_path = vfs_path.strip_prefix(root)
+            let relative_path = vfs_path
+                .strip_prefix(root)
                 .unwrap_or(&vfs_path)
                 .to_path_buf();
 
@@ -240,11 +246,10 @@ impl FolderScanner {
             // Check all parent directories
             let mut current = path;
             while let Some(parent) = current.parent() {
-                if !parent.as_os_str().is_empty() {
-                    if custom_ignore.matched(parent, true).is_ignore() {
+                if !parent.as_os_str().is_empty()
+                    && custom_ignore.matched(parent, true).is_ignore() {
                         return true;
                     }
-                }
                 current = parent;
             }
         }
@@ -252,7 +257,12 @@ impl FolderScanner {
     }
 
     /// Check if a path or any of its parent directories match gitignore
-    fn gitignore_matches_with_parents(&self, gitignore: &Gitignore, path: &Path, is_dir: bool) -> bool {
+    fn gitignore_matches_with_parents(
+        &self,
+        gitignore: &Gitignore,
+        path: &Path,
+        is_dir: bool,
+    ) -> bool {
         // Check the path itself
         if gitignore.matched(path, is_dir).is_ignore() {
             return true;
@@ -261,11 +271,10 @@ impl FolderScanner {
         // Check all parent directories
         let mut current = path;
         while let Some(parent) = current.parent() {
-            if !parent.as_os_str().is_empty() {
-                if gitignore.matched(parent, true).is_ignore() {
+            if !parent.as_os_str().is_empty()
+                && gitignore.matched(parent, true).is_ignore() {
                     return true;
                 }
-            }
             current = parent;
         }
         false
@@ -292,12 +301,19 @@ mod tests {
 
         // Should have exactly 4 entries: file1.txt, file2.txt, subdir, subdir/file3.txt
         // Root directory itself should NOT be included
-        assert_eq!(entries.len(), 4, "Expected 4 entries, got {}", entries.len());
+        assert_eq!(
+            entries.len(),
+            4,
+            "Expected 4 entries, got {}",
+            entries.len()
+        );
 
         // Verify no entry has an empty path (which would indicate root directory)
         for entry in &entries {
-            assert!(!entry.path.as_os_str().is_empty(),
-                    "Found entry with empty path (root directory should be excluded)");
+            assert!(
+                !entry.path.as_os_str().is_empty(),
+                "Found entry with empty path (root directory should be excluded)"
+            );
         }
     }
 
@@ -313,7 +329,9 @@ mod tests {
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
 
-        assert!(entries.iter().all(|e| !e.path.to_string_lossy().ends_with(".o")));
+        assert!(entries
+            .iter()
+            .all(|e| !e.path.to_string_lossy().ends_with(".o")));
     }
 
     #[test]
@@ -331,26 +349,40 @@ mod tests {
 
         let mut config = AppConfig::default();
         config.ignore_patterns = vec![
-            "*.log".to_string(),     // Ignore all .log files at any depth
-            "build/".to_string(),    // Ignore build directory
+            "*.log".to_string(),  // Ignore all .log files at any depth
+            "build/".to_string(), // Ignore build directory
         ];
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
 
         // Should not contain any .log files
-        assert!(entries.iter().all(|e| !e.path.to_string_lossy().ends_with(".log")),
-                "Found .log file that should be ignored");
+        assert!(
+            entries
+                .iter()
+                .all(|e| !e.path.to_string_lossy().ends_with(".log")),
+            "Found .log file that should be ignored"
+        );
 
         // Should not contain the build directory or its contents
-        assert!(entries.iter().all(|e| !e.path.starts_with("build")),
-                "Found file in build directory that should be ignored");
+        assert!(
+            entries.iter().all(|e| !e.path.starts_with("build")),
+            "Found file in build directory that should be ignored"
+        );
 
         // Should contain .txt files outside build directory
-        assert!(entries.iter().any(|e| e.path.to_string_lossy().ends_with("root.txt")),
-                "Missing root.txt");
-        assert!(entries.iter().any(|e| e.path.to_string_lossy().ends_with("nested.txt")),
-                "Missing nested.txt");
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().ends_with("root.txt")),
+            "Missing root.txt"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().ends_with("nested.txt")),
+            "Missing nested.txt"
+        );
     }
 
     #[test]
@@ -364,20 +396,28 @@ mod tests {
 
         let mut config = AppConfig::default();
         config.ignore_patterns = vec![
-            "/config.toml".to_string(),  // Ignore only in root
+            "/config.toml".to_string(), // Ignore only in root
         ];
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
 
         // Should not contain root config.toml
-        assert!(entries.iter().all(|e| e.path.to_str() != Some("config.toml")),
-                "Found root config.toml that should be ignored");
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.path.to_str() != Some("config.toml")),
+            "Found root config.toml that should be ignored"
+        );
 
         // Should contain nested config.toml
-        assert!(entries.iter().any(|e| e.path.to_string_lossy().contains("subdir")
-                                    && e.path.to_string_lossy().ends_with("config.toml")),
-                "Missing subdir/config.toml");
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().contains("subdir")
+                    && e.path.to_string_lossy().ends_with("config.toml")),
+            "Missing subdir/config.toml"
+        );
     }
 
     #[test]
@@ -387,23 +427,29 @@ mod tests {
         // Create test structure
         fs::create_dir(temp.path().join("temp")).unwrap();
         fs::write(temp.path().join("temp/file.txt"), b"test").unwrap();
-        fs::write(temp.path().join("temp.txt"), b"test").unwrap();  // File named "temp.txt"
+        fs::write(temp.path().join("temp.txt"), b"test").unwrap(); // File named "temp.txt"
 
         let mut config = AppConfig::default();
         config.ignore_patterns = vec![
-            "temp/".to_string(),  // Ignore only directories named "temp"
+            "temp/".to_string(), // Ignore only directories named "temp"
         ];
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
 
         // Should not contain temp directory or its contents
-        assert!(entries.iter().all(|e| !e.path.starts_with("temp") || e.path.extension().is_some()),
-                "Found temp directory that should be ignored");
+        assert!(
+            entries
+                .iter()
+                .all(|e| !e.path.starts_with("temp") || e.path.extension().is_some()),
+            "Found temp directory that should be ignored"
+        );
 
         // Should contain temp.txt file
-        assert!(entries.iter().any(|e| e.path.to_str() == Some("temp.txt")),
-                "Missing temp.txt file");
+        assert!(
+            entries.iter().any(|e| e.path.to_str() == Some("temp.txt")),
+            "Missing temp.txt file"
+        );
     }
 
     #[test]
@@ -420,14 +466,22 @@ mod tests {
 
         // Verify no empty paths (root directory)
         for entry in &entries {
-            assert!(!entry.path.as_os_str().is_empty(),
-                    "Scanner included root directory entry with empty path");
-            assert!(entry.path != std::path::PathBuf::from(""),
-                    "Scanner included root directory with empty PathBuf");
+            assert!(
+                !entry.path.as_os_str().is_empty(),
+                "Scanner included root directory entry with empty path"
+            );
+            assert!(
+                entry.path != std::path::PathBuf::from(""),
+                "Scanner included root directory with empty PathBuf"
+            );
         }
 
         // Should have exactly 2 entries: test.txt and subdir
-        assert_eq!(entries.len(), 2,
-                   "Expected 2 entries (excluding root), got {}", entries.len());
+        assert_eq!(
+            entries.len(),
+            2,
+            "Expected 2 entries (excluding root), got {}",
+            entries.len()
+        );
     }
 }

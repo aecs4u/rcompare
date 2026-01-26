@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::vfs::{
-        ZipVfs, WritableZipVfs, TarVfs,
-        CompressedFileVfs, WritableCompressedFileVfs,
+        CompressedFileVfs, TarVfs, WritableCompressedFileVfs, WritableZipVfs, ZipVfs,
     };
     use rcompare_common::Vfs;
     use std::fs;
@@ -24,7 +23,8 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::FileOptions::default();
 
-        zip.start_file("test.txt", options).expect("Failed to start file");
+        zip.start_file("test.txt", options)
+            .expect("Failed to start file");
         zip.write_all(b"Hello, ZIP!").expect("Failed to write");
         zip.finish().expect("Failed to finish ZIP");
 
@@ -51,13 +51,17 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::FileOptions::default();
 
-        zip.start_file("data.txt", options).expect("Failed to start file");
-        zip.write_all(b"Test data content").expect("Failed to write");
+        zip.start_file("data.txt", options)
+            .expect("Failed to start file");
+        zip.write_all(b"Test data content")
+            .expect("Failed to write");
         zip.finish().expect("Failed to finish ZIP");
 
         // Read through VFS
         let vfs = ZipVfs::new(zip_path).expect("Failed to create ZipVfs");
-        let mut reader = vfs.open_file(&PathBuf::from("data.txt")).expect("Failed to open file");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("data.txt"))
+            .expect("Failed to open file");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -74,20 +78,25 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::FileOptions::default();
 
-        zip.start_file("file1.txt", options).expect("Failed to start file");
+        zip.start_file("file1.txt", options)
+            .expect("Failed to start file");
         zip.write_all(b"File 1").expect("Failed to write");
 
-        zip.start_file("file2.txt", options).expect("Failed to start file");
+        zip.start_file("file2.txt", options)
+            .expect("Failed to start file");
         zip.write_all(b"File 2").expect("Failed to write");
 
         zip.finish().expect("Failed to finish ZIP");
 
         // Read directory
         let vfs = ZipVfs::new(zip_path).expect("Failed to create ZipVfs");
-        let entries = vfs.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = vfs
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 2);
-        let names: Vec<String> = entries.iter()
+        let names: Vec<String> = entries
+            .iter()
             .map(|e| e.path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
 
@@ -106,13 +115,16 @@ mod tests {
         let options = zip::write::FileOptions::default();
 
         let content = b"Test content for metadata";
-        zip.start_file("meta.txt", options).expect("Failed to start file");
+        zip.start_file("meta.txt", options)
+            .expect("Failed to start file");
         zip.write_all(content).expect("Failed to write");
         zip.finish().expect("Failed to finish ZIP");
 
         // Get metadata
         let vfs = ZipVfs::new(zip_path).expect("Failed to create ZipVfs");
-        let meta = vfs.metadata(&PathBuf::from("meta.txt")).expect("Failed to get metadata");
+        let meta = vfs
+            .metadata(&PathBuf::from("meta.txt"))
+            .expect("Failed to get metadata");
 
         assert_eq!(meta.size, content.len() as u64);
         assert!(!meta.is_dir);
@@ -181,17 +193,21 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let _ = zip.finish().expect("Failed to finish ZIP");
 
-        let mut vfs = WritableZipVfs::new(zip_path.clone()).expect("Failed to create WritableZipVfs");
+        let mut vfs =
+            WritableZipVfs::new(zip_path.clone()).expect("Failed to create WritableZipVfs");
 
         // Write a file
-        vfs.write_file(&PathBuf::from("new.txt"), b"New content").expect("Failed to write");
+        vfs.write_file(&PathBuf::from("new.txt"), b"New content")
+            .expect("Failed to write");
 
         // Flush changes
         vfs.flush().expect("Failed to flush");
 
         // Read back from new instance
         let read_vfs = ZipVfs::new(zip_path).expect("Failed to open ZIP");
-        let mut reader = read_vfs.open_file(&PathBuf::from("new.txt")).expect("Failed to open file");
+        let mut reader = read_vfs
+            .open_file(&PathBuf::from("new.txt"))
+            .expect("Failed to open file");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -233,7 +249,8 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_size(data.len() as u64);
         header.set_cksum();
-        tar.append_data(&mut header, "test.txt", &data[..]).expect("Failed to append");
+        tar.append_data(&mut header, "test.txt", &data[..])
+            .expect("Failed to append");
         tar.finish().expect("Failed to finish TAR");
 
         // Create VFS
@@ -254,12 +271,15 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_size(data.len() as u64);
         header.set_cksum();
-        tar.append_data(&mut header, "data.txt", &data[..]).expect("Failed to append");
+        tar.append_data(&mut header, "data.txt", &data[..])
+            .expect("Failed to append");
         tar.finish().expect("Failed to finish TAR");
 
         // Read through VFS
         let vfs = TarVfs::new(tar_path).expect("Failed to create TarVfs");
-        let mut reader = vfs.open_file(&PathBuf::from("data.txt")).expect("Failed to open file");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("data.txt"))
+            .expect("Failed to open file");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -298,14 +318,17 @@ mod tests {
         // Create gzipped file
         let file = fs::File::create(&gz_path).expect("Failed to create file");
         let mut encoder = GzEncoder::new(file, Compression::default());
-        encoder.write_all(b"Compressed content").expect("Failed to write");
+        encoder
+            .write_all(b"Compressed content")
+            .expect("Failed to write");
         encoder.finish().expect("Failed to finish");
 
         // Read through VFS (compression type detected from .gz extension)
-        let vfs = CompressedFileVfs::new(gz_path)
-            .expect("Failed to create CompressedFileVfs");
+        let vfs = CompressedFileVfs::new(gz_path).expect("Failed to create CompressedFileVfs");
 
-        let mut reader = vfs.open_file(&PathBuf::from("test.txt")).expect("Failed to open");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("test.txt"))
+            .expect("Failed to open");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -323,14 +346,17 @@ mod tests {
         // Create bzip2 file
         let file = fs::File::create(&bz2_path).expect("Failed to create file");
         let mut encoder = BzEncoder::new(file, Compression::default());
-        encoder.write_all(b"Bzip2 content").expect("Failed to write");
+        encoder
+            .write_all(b"Bzip2 content")
+            .expect("Failed to write");
         encoder.finish().expect("Failed to finish");
 
         // Read through VFS (compression type detected from .bz2 extension)
-        let vfs = CompressedFileVfs::new(bz2_path)
-            .expect("Failed to create CompressedFileVfs");
+        let vfs = CompressedFileVfs::new(bz2_path).expect("Failed to create CompressedFileVfs");
 
-        let mut reader = vfs.open_file(&PathBuf::from("test.txt")).expect("Failed to open");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("test.txt"))
+            .expect("Failed to open");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -351,10 +377,11 @@ mod tests {
         encoder.finish().expect("Failed to finish");
 
         // Read through VFS (compression type detected from .xz extension)
-        let vfs = CompressedFileVfs::new(xz_path)
-            .expect("Failed to create CompressedFileVfs");
+        let vfs = CompressedFileVfs::new(xz_path).expect("Failed to create CompressedFileVfs");
 
-        let mut reader = vfs.open_file(&PathBuf::from("test.txt")).expect("Failed to open");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("test.txt"))
+            .expect("Failed to open");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -374,12 +401,14 @@ mod tests {
         encoder.write_all(b"test").expect("Failed to write");
         encoder.finish().expect("Failed to finish");
 
-        let vfs = CompressedFileVfs::new(gz_path)
-            .expect("Failed to create CompressedFileVfs");
+        let vfs = CompressedFileVfs::new(gz_path).expect("Failed to create CompressedFileVfs");
         let caps = vfs.capabilities();
 
         assert!(caps.read, "Compressed file should support reading");
-        assert!(!caps.write, "Compressed file (read-only) should not support writing");
+        assert!(
+            !caps.write,
+            "Compressed file (read-only) should not support writing"
+        );
     }
 
     // ============================================================================
@@ -419,7 +448,10 @@ mod tests {
             .expect("Failed to create WritableCompressedFileVfs");
         let caps = vfs.capabilities();
 
-        assert!(caps.write, "Writable compressed file should support writing");
+        assert!(
+            caps.write,
+            "Writable compressed file should support writing"
+        );
         assert!(caps.read, "Writable compressed file should support reading");
     }
 
@@ -438,7 +470,9 @@ mod tests {
         let _ = zip.finish().expect("Failed to finish ZIP");
 
         let vfs = ZipVfs::new(zip_path).expect("Failed to create ZipVfs");
-        let entries = vfs.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = vfs
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 0);
     }
@@ -453,8 +487,10 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::FileOptions::default();
 
-        zip.add_directory("dir1/", options).expect("Failed to add dir");
-        zip.start_file("dir1/file.txt", options).expect("Failed to start file");
+        zip.add_directory("dir1/", options)
+            .expect("Failed to add dir");
+        zip.start_file("dir1/file.txt", options)
+            .expect("Failed to start file");
         zip.write_all(b"Nested file").expect("Failed to write");
 
         let _ = zip.finish().expect("Failed to finish ZIP");
@@ -462,7 +498,9 @@ mod tests {
         let vfs = ZipVfs::new(zip_path).expect("Failed to create ZipVfs");
 
         // Read file from nested directory
-        let mut reader = vfs.open_file(&PathBuf::from("dir1/file.txt")).expect("Failed to open");
+        let mut reader = vfs
+            .open_file(&PathBuf::from("dir1/file.txt"))
+            .expect("Failed to open");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -499,9 +537,10 @@ mod tests {
         tar.finish().expect("Failed to finish TAR");
 
         let vfs = TarVfs::new(tar_path).expect("Failed to create TarVfs");
-        let entries = vfs.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = vfs
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 0);
     }
-
 }
