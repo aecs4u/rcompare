@@ -356,6 +356,191 @@ The Rust ecosystem has two major tools for grammar-aware diffing:
 
 ---
 
+#### 12. Editable Hex Mode 🟡 **DEFERRED** (Phase 7)
+
+**Description:** Allow users to edit binary files directly in the hex view, similar to dedicated hex editors like HxD or 010 Editor.
+
+**Goals:**
+- In-place hex byte editing
+- Insert/delete bytes
+- Copy/paste hex data
+- Undo/redo operations
+- Save modified files
+- Search and replace in hex
+- Highlight edited bytes
+
+**Research Findings (2026-01-26):**
+
+The Rust ecosystem has several hex editor crates:
+
+1. **[hex-patch](https://crates.io/crates/hex-patch)** - Terminal hex editor (v1.12.4)
+   - Binary patcher and editor with TUI
+   - Disassembles instructions and assembles patches
+   - Supports various architectures and file formats
+   - Can edit remote files via SSH
+   - Most feature-rich option
+
+2. **[rex](https://github.com/dbrodie/rex)** - Terminal hex editor
+   - Focuses on insert/delete in the middle of files
+   - Easy selection and copy/paste
+   - Alpha stage, requires backups
+
+3. **[hexdino](https://crates.io/crates/hexdino)** - Vim-like hex editor
+   - Vim keybindings
+   - Terminal-based
+
+**Current RCompare Status:**
+- Hex viewing is read-only (see `rcompare_core/src/binary_diff.rs`)
+- GUI displays hex in `HexDiffLine` structures (Slint UI)
+- No editing capabilities
+
+**Implementation Requirements:**
+- **Core Functionality:**
+  - Add byte modification tracking to `BinaryDiffEngine`
+  - Implement edit buffer with undo/redo stack
+  - File write operations with backup
+  - Validation of hex input (0x00-0xFF)
+
+- **GUI Changes:**
+  - Convert `HexDiffLine` text displays to editable fields
+  - Add edit mode toggle (view vs edit)
+  - Highlight modified bytes in different color
+  - Show unsaved changes indicator
+  - Add save/save-as/revert buttons
+  - Implement hex input validation in Slint
+
+- **Safety Features:**
+  - Automatic backup before editing
+  - Confirmation dialogs for saves
+  - File locking to prevent concurrent edits
+  - Maximum file size limits (prevent editing huge files)
+
+**Challenges:**
+- **GUI Complexity:** Slint doesn't have built-in hex editor widgets
+  - Would need custom text input widgets with hex validation
+  - Complex keyboard navigation (arrow keys, tab, etc.)
+  - Selection and copy/paste in hex format
+
+- **Performance:** Large file editing requires careful memory management
+  - Need efficient edit buffer (gap buffer or piece table)
+  - Lazy loading for large files
+
+- **File Safety:** Risk of corrupting binary files
+  - Must implement robust backup mechanism
+  - Validate all operations before writing
+
+**Decision:** Defer to Phase 7. The current read-only hex view is sufficient for comparison purposes. Editing is a power-user feature that requires significant GUI work and safety mechanisms.
+
+**Alternative Approach:** Add "Open in External Hex Editor" button that launches a dedicated hex editor (HxD, 010 Editor, ImHex, etc.) for files that need editing.
+
+**References:**
+- [hex-patch crate](https://crates.io/crates/hex-patch) - Full-featured binary patcher
+- [rex](https://github.com/dbrodie/rex) - Lightweight hex editor
+- [hex-editor keyword on crates.io](https://crates.io/keywords/hex-editor)
+
+**Estimated Effort:** 2-3 weeks for basic implementation
+
+---
+
+#### 13. Structure Viewer for Binary Files 🟡 **DEFERRED** (Phase 7)
+
+**Description:** Display structured representation of common binary file formats (executables, object files, databases) showing headers, sections, symbols, and metadata.
+
+**Goals:**
+- Parse and display ELF file structure (Linux executables)
+- Parse and display PE file structure (Windows executables)
+- Parse and display Mach-O file structure (macOS executables)
+- Show file headers, sections, symbols, imports/exports
+- Compare structures side-by-side
+- Navigate to specific sections/offsets
+
+**Research Findings (2026-01-26):**
+
+The Rust ecosystem has excellent binary format parsers:
+
+1. **[goblin](https://github.com/m4b/goblin)** - Cross-platform binary parser
+   - "An impish, cross-platform binary parsing crate"
+   - Supports ELF (32/64-bit), PE (32/64-bit), Mach-O
+   - Unix/BSD archive parser
+   - Core, std-free `#[repr(C)]` structs
+   - Compile-time switch between 32/64-bit
+   - Extensively fuzzed (100 million runs)
+   - Actively maintained (October 2025)
+
+**Supported Formats:**
+- **ELF** (Executable and Linkable Format) - Linux/Unix
+  - Program headers, section headers
+  - Symbol tables, dynamic symbols
+  - Relocations, notes
+
+- **PE** (Portable Executable) - Windows
+  - DOS header, PE header, optional header
+  - Section table, import/export tables
+  - Resource directory
+
+- **Mach-O** (Mach Object) - macOS/iOS
+  - Load commands, segments, sections
+  - Symbol table, dynamic symbol table
+
+**Implementation Requirements:**
+- **Core Functionality:**
+  - Add `goblin` crate dependency
+  - Create `StructuredBinaryView` module
+  - Parse files using goblin
+  - Extract structure information (headers, sections, symbols)
+  - Compare structures between left/right files
+
+- **GUI Changes:**
+  - New view mode: "Structure View" (add to active-view enum)
+  - Tree widget showing hierarchical structure
+  - Expandable/collapsible sections
+  - Details panel for selected structure element
+  - Highlight differences between left/right structures
+
+- **Display Information:**
+  - **Headers:** File type, architecture, entry point, flags
+  - **Sections:** Name, offset, size, permissions, alignment
+  - **Symbols:** Name, address, size, type, binding
+  - **Imports/Exports:** Library dependencies, exported functions
+  - **Metadata:** Build ID, debug info, version info
+
+**Use Cases:**
+- **Binary Comparison:** Compare compiled versions of same code
+- **Library Updates:** Check symbol compatibility
+- **Debug Info:** Verify debug symbols in release builds
+- **Security Analysis:** Examine executable structure
+- **Reverse Engineering:** Understand binary layout
+
+**Challenges:**
+- **Format Complexity:** Binary formats are complex with many edge cases
+  - PE files have dozens of structures
+  - ELF has multiple versions and extensions
+
+- **GUI Design:** Displaying hierarchical binary structures is complex
+  - Need tree view widget in Slint
+  - Side-by-side comparison with alignment
+  - Highlighting differences in structures
+
+- **Performance:** Large binaries with thousands of symbols
+  - Need lazy loading and pagination
+  - Efficient diff algorithm for structures
+
+**Decision:** Defer to Phase 7. This is a specialized feature mainly useful for developers comparing compiled binaries. The current hex view provides basic binary comparison capabilities.
+
+**Alternative Approach:**
+- Add "Analyze with External Tool" that exports to JSON
+- Users can use dedicated tools like `readelf`, `objdump`, `dumpbin`
+- Focus on core comparison features first
+
+**References:**
+- [goblin crate](https://github.com/m4b/goblin) - Cross-platform binary parser
+- [goblin documentation](https://docs.rs/goblin)
+- [lib.rs/crates/goblin](https://lib.rs/crates/goblin)
+
+**Estimated Effort:** 2-3 weeks for basic implementation with ELF/PE/Mach-O support
+
+---
+
 ## Implementation Roadmap
 
 ### Phase 1: Quick Wins (1-2 weeks) ✅ **COMPLETED**
