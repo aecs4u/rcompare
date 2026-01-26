@@ -279,39 +279,95 @@ This document tracks the implementation of WinMerge features in RCompare to achi
 
 ---
 
-#### 10. Whitespace Handling 🟡 Medium Priority
+#### 10. Whitespace Handling ✅ **COMPLETED**
 
 **Description:** Options for ignoring various whitespace differences.
 
-**Options:**
-- Ignore all whitespace
-- Ignore leading whitespace
-- Ignore trailing whitespace
-- Ignore whitespace changes
-- Normalize line endings
-- Treat tabs as spaces (with configurable width)
+**Implemented Options:**
+- ✅ Ignore all whitespace (`WhitespaceMode::IgnoreAll`)
+- ✅ Ignore leading whitespace (`WhitespaceMode::IgnoreLeading`)
+- ✅ Ignore trailing whitespace (`WhitespaceMode::IgnoreTrailing`)
+- ✅ Ignore whitespace changes (`WhitespaceMode::IgnoreChanges`)
+- ✅ Normalize line endings (CRLF/LF/CR → LF)
+- ✅ Tab width configuration (configurable, default: 4)
 
-**Implementation Notes:**
-- Add whitespace normalization to TextDiffEngine
-- GUI settings panel for whitespace options
-- CLI flags: `--ignore-whitespace`, `--ignore-leading-ws`, etc.
-- Update comparison engine
+**Implementation:** [rcompare_core/src/text_diff.rs](../rcompare_core/src/text_diff.rs)
 
-**Estimated Effort:** 3-4 days
+**Status:** Completed in Phase 1
+
+---
+
+#### 11. Grammar-Aware Text Comparison 🔴 **DEFERRED** (Phase 3+)
+
+**Description:** AST-based (Abstract Syntax Tree) comparison that understands programming language syntax and semantics rather than comparing text line-by-line.
+
+**Goals:**
+- Recognize equivalent code that differs only in formatting
+- Detect moved functions/methods
+- Understand refactorings (e.g., variable renames)
+- Ignore syntactically irrelevant changes (e.g., comment reformatting)
+- Provide semantic diff output
+
+**Research Findings (2026-01-26):**
+
+The Rust ecosystem has two major tools for grammar-aware diffing:
+
+1. **[Diffsitter](https://github.com/afnanenayet/diffsitter)** - Tree-sitter based AST difftool
+   - Uses tree-sitter parsers for 13+ languages
+   - Leaf-node filtering with include/exclude rules
+   - Standalone CLI tool, not designed as a library
+
+2. **[Difftastic](https://github.com/Wilfred/difftastic)** - Structural diff tool
+   - Uses Dijkstra's algorithm for structural diffing
+   - Supports 30+ languages via tree-sitter
+   - Handles syntax, ignores insignificant whitespace
+   - Written in Rust but primarily a CLI tool
+
+**Implementation Requirements:**
+- Add `tree-sitter` crate (core parsing library)
+- Add language-specific grammar crates:
+  - `tree-sitter-rust` for Rust
+  - `tree-sitter-python` for Python
+  - `tree-sitter-javascript` for JS/TS
+  - Additional grammars as needed (30+ available)
+- Implement AST diffing algorithm (e.g., Dijkstra's approach)
+- Create AST node mapping and comparison logic
+- Add UI for displaying structural diffs
+- CLI flags for enabling grammar-aware mode
+
+**Challenges:**
+- **Complexity:** Requires full AST parsing and structural diff algorithms
+- **Language Support:** Each language needs its own grammar
+- **Performance:** AST parsing is 2-3x slower than lexical parsing
+- **Integration:** diffsitter/difftastic are standalone tools, not libraries
+- **Development Time:** Estimated 4-6 weeks for initial implementation
+
+**Decision:** Defer to Phase 3 or later due to complexity. Phase 1 focused on simpler preprocessing options (whitespace, case, regex) that provide significant value with minimal complexity.
+
+**Alternative Approach:** Consider integrating difftastic as an external tool via CLI wrapper for grammar-aware comparisons, similar to how Git integrates external diff tools.
+
+**References:**
+- [diffsitter](https://github.com/afnanenayet/diffsitter) - Tree-sitter based AST difftool
+- [difftastic](https://github.com/Wilfred/difftastic) - Structural diff with Dijkstra's algorithm
+- [tree-sitter crate](https://crates.io/crates/tree-sitter) - Rust bindings
+- [Using Tree-sitter Parsers in Rust](https://rfdonnelly.github.io/posts/using-tree-sitter-parsers-in-rust/)
+
+**Estimated Effort:** 4-6 weeks for initial implementation with 5-10 language support
 
 ---
 
 ## Implementation Roadmap
 
 ### Phase 1: Quick Wins (1-2 weeks) ✅ **COMPLETED**
-- [ ] Advanced folder filtering (deferred)
+- [ ] Advanced folder filtering (deferred to Phase 5)
 - [x] Whitespace handling options (5 modes implemented)
 - [x] Case-insensitive comparison
 - [x] Regular expression rules
 - [x] EXIF metadata comparison
 - [x] Image tolerance adjustment
-- [ ] Line number alignment (deferred)
-- [ ] Bookmarks and sessions enhancement (deferred)
+- [ ] Line number alignment (deferred to Phase 6)
+- [ ] Bookmarks and sessions enhancement (deferred to Phase 6)
+- [ ] Grammar-aware text comparison (deferred to Phase 7 - requires AST parsing)
 
 ### Phase 2: VCS Integration (3-4 weeks)
 - [ ] Git integration (CLI)
@@ -338,6 +394,16 @@ This document tracks the implementation of WinMerge features in RCompare to achi
 - [ ] Plugin API implementation
 - [ ] Example plugins
 - [ ] Plugin documentation
+
+### Phase 7: Advanced Text & Binary Comparison (4-6 weeks)
+- [ ] Grammar-aware text comparison with tree-sitter
+  - [ ] Rust language support
+  - [ ] Python language support
+  - [ ] JavaScript/TypeScript support
+  - [ ] Additional languages as needed
+- [ ] Editable hex mode for binary comparison
+- [ ] Structure viewer for binary files
+- [ ] AST-based diff visualization
 
 ## Priority Legend
 
