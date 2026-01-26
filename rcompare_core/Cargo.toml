@@ -34,6 +34,7 @@ syntect.workspace = true
 
 # Image processing
 image.workspace = true
+kamadak-exif.workspace = true
 
 # CSV processing
 csv.workspace = true
@@ -59,6 +60,7 @@ unrar.workspace = true
 
 # Pattern matching
 glob.workspace = true
+regex.workspace = true
 
 # Temp extraction for 7z
 tempfile.workspace = true
