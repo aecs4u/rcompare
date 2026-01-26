@@ -237,9 +237,7 @@ impl ParquetDiffEngine {
         // Get common columns for comparison
         let common_cols: Vec<_> = columns
             .iter()
-            .filter(|col| {
-                left.column(col).is_ok() && right.column(col).is_ok()
-            })
+            .filter(|col| left.column(col).is_ok() && right.column(col).is_ok())
             .cloned()
             .collect();
 
@@ -321,7 +319,8 @@ impl ParquetDiffEngine {
         let left_keys = self.build_key_map(left)?;
         let right_keys = self.build_key_map(right)?;
 
-        let mut all_keys: Vec<String> = left_keys.keys().chain(right_keys.keys()).cloned().collect();
+        let mut all_keys: Vec<String> =
+            left_keys.keys().chain(right_keys.keys()).cloned().collect();
         all_keys.sort();
         all_keys.dedup();
 
@@ -469,7 +468,6 @@ pub fn is_parquet_file(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use polars::prelude::*;
 
     fn create_test_dataframe() -> DataFrame {
         df! {

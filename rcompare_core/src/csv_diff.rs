@@ -60,8 +60,7 @@ pub struct ColumnDiff {
 }
 
 /// Comparison mode for CSV files
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CsvCompareMode {
     /// Compare row by row in order
     #[default]
@@ -69,7 +68,6 @@ pub enum CsvCompareMode {
     /// Compare by key column(s) - rows can be in different order
     ByKey,
 }
-
 
 /// Engine for comparing CSV files
 pub struct CsvDiffEngine {

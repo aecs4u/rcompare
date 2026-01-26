@@ -168,8 +168,8 @@ impl Vfs for ZipVfs {
 impl WritableZipVfs {
     /// Create a writable ZIP VFS from an existing archive
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
@@ -197,8 +197,8 @@ impl WritableZipVfs {
 
     /// Create a new empty writable ZIP archive
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("zip-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -219,11 +219,10 @@ impl WritableZipVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock temp dir",
-            ))
-        })?;
+        let temp_dir = self
+            .temp_dir
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
         let file = File::create(&self.archive_path)?;
         let mut zip = ZipWriter::new(file);
@@ -248,11 +247,9 @@ fn add_directory_to_zip(
     for entry in std::fs::read_dir(current_path)? {
         let entry = entry?;
         let path = entry.path();
-        let relative_path = path.strip_prefix(base_path).map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Path strip failed",
-            ))
-        })?;
+        let relative_path = path
+            .strip_prefix(base_path)
+            .map_err(|_| VfsError::Io(std::io::Error::other("Path strip failed")))?;
 
         if path.is_dir() {
             // Add directory entry
@@ -341,11 +338,10 @@ impl Vfs for WritableZipVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock modified flag",
-            ))
-        })?;
+        let modified = self
+            .modified
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock modified flag")))?;
 
         if *modified {
             drop(modified); // Release lock before rebuilding
@@ -489,8 +485,8 @@ impl WritableTarVfs {
     /// Create a writable TAR VFS from an existing archive
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
         let compress_gzip = is_gzip_archive(&archive_path);
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
@@ -521,8 +517,8 @@ impl WritableTarVfs {
     /// Create a new empty writable TAR archive
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
         let compress_gzip = is_gzip_archive(&archive_path);
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("tar-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -544,11 +540,10 @@ impl WritableTarVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock temp dir",
-            ))
-        })?;
+        let temp_dir = self
+            .temp_dir
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
         let file = File::create(&self.archive_path)?;
 
@@ -635,11 +630,10 @@ impl Vfs for WritableTarVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock modified flag",
-            ))
-        })?;
+        let modified = self
+            .modified
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock modified flag")))?;
 
         if *modified {
             drop(modified);
@@ -684,8 +678,8 @@ impl SevenZVfs {
             return Err(VfsError::NotFound(archive_path.display().to_string()));
         }
 
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         decompress_file(&archive_path, temp_dir.path()).map_err(|e| {
             VfsError::Io(std::io::Error::new(
@@ -742,8 +736,8 @@ impl Vfs for SevenZVfs {
 impl Writable7zVfs {
     /// Create a writable 7Z VFS from an existing archive
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
@@ -769,8 +763,8 @@ impl Writable7zVfs {
 
     /// Create a new empty writable 7Z archive
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("7z-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -791,18 +785,14 @@ impl Writable7zVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock temp dir",
-            ))
-        })?;
+        let temp_dir = self
+            .temp_dir
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
         // Use sevenz_rust to compress the directory
-        sevenz_rust::compress_to_path(temp_dir.path(), &self.archive_path).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                e.to_string(),
-            ))
-        })?;
+        sevenz_rust::compress_to_path(temp_dir.path(), &self.archive_path)
+            .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
 
         Ok(())
     }
@@ -876,11 +866,10 @@ impl Vfs for Writable7zVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock modified flag",
-            ))
-        })?;
+        let modified = self
+            .modified
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock modified flag")))?;
 
         if *modified {
             drop(modified);
@@ -902,8 +891,8 @@ impl RarVfs {
             return Err(VfsError::NotFound(archive_path.display().to_string()));
         }
 
-        let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+        let temp_dir =
+            tempfile::TempDir::new().map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract RAR archive to temp directory
         let mut archive = Archive::new(&archive_path).open_for_processing().map_err(
@@ -919,18 +908,14 @@ impl RarVfs {
         while let Some(header) = archive
             .read_header()
             .map_err(|e: unrar::error::UnrarError| {
-                VfsError::Io(std::io::Error::other(
-                    e.to_string(),
-                ))
+                VfsError::Io(std::io::Error::other(e.to_string()))
             })?
         {
             archive =
                 header
                     .extract_to(temp_dir.path())
                     .map_err(|e: unrar::error::UnrarError| {
-                        VfsError::Io(std::io::Error::other(
-                            e.to_string(),
-                        ))
+                        VfsError::Io(std::io::Error::other(e.to_string()))
                     })?;
         }
 
@@ -1263,11 +1248,10 @@ impl WritableCompressedFileVfs {
     }
 
     fn compress_and_write(&self) -> Result<(), VfsError> {
-        let content = self.content.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock content",
-            ))
-        })?;
+        let content = self
+            .content
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock content")))?;
 
         let file = File::create(&self.archive_path)?;
 
@@ -1310,11 +1294,10 @@ impl Vfs for WritableCompressedFileVfs {
         }
 
         if path_str == self.inner_filename || path == Path::new(&self.inner_filename) {
-            let content = self.content.lock().map_err(|_| {
-                VfsError::Io(std::io::Error::other(
-                    "Failed to lock content",
-                ))
-            })?;
+            let content = self
+                .content
+                .lock()
+                .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock content")))?;
 
             return Ok(FileMetadata {
                 size: content.len() as u64,
@@ -1333,11 +1316,10 @@ impl Vfs for WritableCompressedFileVfs {
             return Err(VfsError::NotADirectory(path.display().to_string()));
         }
 
-        let content = self.content.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock content",
-            ))
-        })?;
+        let content = self
+            .content
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock content")))?;
 
         Ok(vec![FileEntry {
             path: PathBuf::from(&self.inner_filename),
@@ -1353,11 +1335,10 @@ impl Vfs for WritableCompressedFileVfs {
             return Err(VfsError::NotFound(path.display().to_string()));
         }
 
-        let content = self.content.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock content",
-            ))
-        })?;
+        let content = self
+            .content
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock content")))?;
 
         Ok(Box::new(Cursor::new(content.clone())))
     }
@@ -1415,11 +1396,10 @@ impl Vfs for WritableCompressedFileVfs {
 
         self.mark_modified();
 
-        let mut content = self.content.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock content",
-            ))
-        })?;
+        let mut content = self
+            .content
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock content")))?;
 
         content.clear();
         content.extend_from_slice(new_content);
@@ -1428,11 +1408,10 @@ impl Vfs for WritableCompressedFileVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock modified flag",
-            ))
-        })?;
+        let modified = self
+            .modified
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock modified flag")))?;
 
         if *modified {
             drop(modified);
@@ -1454,9 +1433,10 @@ struct ContentWriter {
 
 impl Write for ContentWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut content = self.content.lock().map_err(|_| {
-            std::io::Error::other("Failed to lock content")
-        })?;
+        let mut content = self
+            .content
+            .lock()
+            .map_err(|_| std::io::Error::other("Failed to lock content"))?;
         content.extend_from_slice(buf);
 
         if let Ok(mut modified) = self.modified.lock() {

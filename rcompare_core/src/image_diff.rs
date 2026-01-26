@@ -126,37 +126,59 @@ impl ImageDiffEngine {
         let mut metadata = ExifMetadata::default();
 
         // Extract common EXIF tags
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::Make, kamadak_exif::In::PRIMARY) {
+        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::Make, kamadak_exif::In::PRIMARY)
+        {
             metadata.make = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::Model, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::Model, kamadak_exif::In::PRIMARY)
+        {
             metadata.model = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::DateTime, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::DateTime, kamadak_exif::In::PRIMARY)
+        {
             metadata.datetime = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::ExposureTime, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::ExposureTime, kamadak_exif::In::PRIMARY)
+        {
             metadata.exposure_time = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::FNumber, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::FNumber, kamadak_exif::In::PRIMARY)
+        {
             metadata.f_number = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::PhotographicSensitivity, kamadak_exif::In::PRIMARY) {
+        if let Some(field) = exif_data.get_field(
+            kamadak_exif::Tag::PhotographicSensitivity,
+            kamadak_exif::In::PRIMARY,
+        ) {
             metadata.iso = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::FocalLength, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::FocalLength, kamadak_exif::In::PRIMARY)
+        {
             metadata.focal_length = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::GPSLatitude, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::GPSLatitude, kamadak_exif::In::PRIMARY)
+        {
             metadata.gps_latitude = Some(field.display_value().to_string());
         }
-        if let Some(field) = exif_data.get_field(kamadak_exif::Tag::GPSLongitude, kamadak_exif::In::PRIMARY) {
+        if let Some(field) =
+            exif_data.get_field(kamadak_exif::Tag::GPSLongitude, kamadak_exif::In::PRIMARY)
+        {
             metadata.gps_longitude = Some(field.display_value().to_string());
         }
-        if let Some(orient_field) = exif_data.get_field(kamadak_exif::Tag::Orientation, kamadak_exif::In::PRIMARY) {
+        if let Some(orient_field) =
+            exif_data.get_field(kamadak_exif::Tag::Orientation, kamadak_exif::In::PRIMARY)
+        {
             metadata.orientation = Some(orient_field.display_value().to_string());
         }
-        if let Some(sw_field) = exif_data.get_field(kamadak_exif::Tag::Software, kamadak_exif::In::PRIMARY) {
+        if let Some(sw_field) =
+            exif_data.get_field(kamadak_exif::Tag::Software, kamadak_exif::In::PRIMARY)
+        {
             metadata.software = Some(sw_field.display_value().to_string());
         }
 
@@ -164,9 +186,7 @@ impl ImageDiffEngine {
         for field in exif_data.fields() {
             let tag_name = format!("{:?}", field.tag);
             let tag_value = field.display_value().to_string();
-            if !metadata.other_tags.contains_key(&tag_name) {
-                metadata.other_tags.insert(tag_name, tag_value);
-            }
+            metadata.other_tags.entry(tag_name).or_insert(tag_value);
         }
 
         Some(metadata)
@@ -698,15 +718,19 @@ mod tests {
     #[test]
     fn test_exif_comparison() {
         // Create two ExifMetadata instances
-        let mut left_exif = ExifMetadata::default();
-        left_exif.make = Some("Canon".to_string());
-        left_exif.model = Some("EOS 5D Mark IV".to_string());
-        left_exif.iso = Some("400".to_string());
+        let left_exif = ExifMetadata {
+            make: Some("Canon".to_string()),
+            model: Some("EOS 5D Mark IV".to_string()),
+            iso: Some("400".to_string()),
+            ..Default::default()
+        };
 
-        let mut right_exif = ExifMetadata::default();
-        right_exif.make = Some("Canon".to_string());
-        right_exif.model = Some("EOS 5D Mark IV".to_string());
-        right_exif.iso = Some("800".to_string()); // Different ISO
+        let right_exif = ExifMetadata {
+            make: Some("Canon".to_string()),
+            model: Some("EOS 5D Mark IV".to_string()),
+            iso: Some("800".to_string()), // Different ISO
+            ..Default::default()
+        };
 
         let engine = ImageDiffEngine::new().with_exif_compare(true);
         let diffs = engine.compare_exif_metadata(&Some(left_exif), &Some(right_exif));
@@ -720,8 +744,10 @@ mod tests {
 
     #[test]
     fn test_exif_missing() {
-        let mut left_exif = ExifMetadata::default();
-        left_exif.make = Some("Canon".to_string());
+        let left_exif = ExifMetadata {
+            make: Some("Canon".to_string()),
+            ..Default::default()
+        };
 
         let engine = ImageDiffEngine::new().with_exif_compare(true);
         let diffs = engine.compare_exif_metadata(&Some(left_exif), &None);

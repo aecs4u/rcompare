@@ -193,7 +193,7 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let _ = zip.finish().expect("Failed to finish ZIP");
 
-        let mut vfs =
+        let vfs =
             WritableZipVfs::new(zip_path.clone()).expect("Failed to create WritableZipVfs");
 
         // Write a file
@@ -423,7 +423,7 @@ mod tests {
         let gz_path = temp_dir.path().join("output.txt.gz");
 
         // Write through VFS (compression type detected from .gz extension)
-        let mut vfs = WritableCompressedFileVfs::new(gz_path.clone())
+        let vfs = WritableCompressedFileVfs::new(gz_path.clone())
             .expect("Failed to create WritableCompressedFileVfs");
 
         vfs.write_file(&PathBuf::from("output.txt"), b"Writable content")

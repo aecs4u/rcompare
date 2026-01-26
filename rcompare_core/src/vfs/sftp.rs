@@ -81,9 +81,10 @@ impl SftpVfs {
             .map_err(VfsError::Io)?;
 
         let mut session = Session::new().map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to create SSH session: {}", e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to create SSH session: {}",
+                e
+            )))
         })?;
 
         session.set_tcp_stream(tcp);
@@ -126,21 +127,24 @@ impl SftpVfs {
             }
             SftpAuth::Agent => {
                 let mut agent = session.agent().map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to connect to SSH agent: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to connect to SSH agent: {}",
+                        e
+                    )))
                 })?;
 
                 agent.connect().map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to connect to SSH agent: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to connect to SSH agent: {}",
+                        e
+                    )))
                 })?;
 
                 agent.list_identities().map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to list SSH agent identities: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to list SSH agent identities: {}",
+                        e
+                    )))
                 })?;
 
                 let mut authenticated = false;
@@ -171,16 +175,16 @@ impl SftpVfs {
     }
 
     fn get_sftp(&self) -> Result<Sftp, VfsError> {
-        let session = self.session.lock().map_err(|_| {
-            VfsError::Io(std::io::Error::other(
-                "Failed to lock session mutex",
-            ))
-        })?;
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock session mutex")))?;
 
         session.sftp().map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to create SFTP channel: {}", e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to create SFTP channel: {}",
+                e
+            )))
         })
     }
 
@@ -275,9 +279,11 @@ impl Vfs for SftpVfs {
         // Read entire file into memory (SFTP files don't implement Send)
         let mut contents = Vec::new();
         file.read_to_end(&mut contents).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to read {}: {}", full_path.display(), e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to read {}: {}",
+                full_path.display(),
+                e
+            )))
         })?;
 
         Ok(Box::new(Cursor::new(contents)))
@@ -288,9 +294,11 @@ impl Vfs for SftpVfs {
         let full_path = self.full_path(path);
 
         sftp.unlink(&full_path).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to remove {}: {}", full_path.display(), e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to remove {}: {}",
+                full_path.display(),
+                e
+            )))
         })?;
 
         Ok(())
@@ -312,26 +320,28 @@ impl Vfs for SftpVfs {
 
         let mut contents = Vec::new();
         src_file.read_to_end(&mut contents).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to read source {}: {}", src_full.display(), e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to read source {}: {}",
+                src_full.display(),
+                e
+            )))
         })?;
 
         // Write to destination
         let mut dest_file = sftp.create(&dest_full).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!(
-                    "Failed to create destination {}: {}",
-                    dest_full.display(),
-                    e
-                ),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to create destination {}: {}",
+                dest_full.display(),
+                e
+            )))
         })?;
 
         std::io::Write::write_all(&mut dest_file, &contents).map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to write destination {}: {}", dest_full.display(), e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to write destination {}: {}",
+                dest_full.display(),
+                e
+            )))
         })?;
 
         Ok(())

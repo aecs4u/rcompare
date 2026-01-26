@@ -178,9 +178,7 @@ impl FileOperations {
 
         if self.use_trash {
             debug!("Moving {} to trash", path.display());
-            trash::delete(path).map_err(|e| {
-                RCompareError::Io(io::Error::other(e.to_string()))
-            })?;
+            trash::delete(path).map_err(|e| RCompareError::Io(io::Error::other(e.to_string())))?;
             info!("Moved {} to trash", path.display());
         } else {
             debug!("Permanently deleting {}", path.display());
@@ -326,7 +324,6 @@ impl FileOperations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     #[test]

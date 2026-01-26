@@ -181,13 +181,12 @@ impl JsonDiffEngine {
                     } else {
                         different_paths += 1;
                         if path_diffs.len() < self.max_path_diffs {
-                            let diff_type = if std::mem::discriminant(left)
-                                != std::mem::discriminant(right)
-                            {
-                                PathDiffType::TypeDifferent
-                            } else {
-                                PathDiffType::ValueDifferent
-                            };
+                            let diff_type =
+                                if std::mem::discriminant(left) != std::mem::discriminant(right) {
+                                    PathDiffType::TypeDifferent
+                                } else {
+                                    PathDiffType::ValueDifferent
+                                };
 
                             path_diffs.push(PathDiff {
                                 path: path.clone(),
@@ -307,15 +306,15 @@ fn yaml_to_json(yaml: YamlValue) -> JsonValue {
             } else if let Some(u) = n.as_u64() {
                 JsonValue::Number(serde_json::Number::from(u))
             } else if let Some(f) = n.as_f64() {
-                JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0)))
+                JsonValue::Number(
+                    serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0)),
+                )
             } else {
                 JsonValue::Null
             }
         }
         YamlValue::String(s) => JsonValue::String(s),
-        YamlValue::Sequence(seq) => {
-            JsonValue::Array(seq.into_iter().map(yaml_to_json).collect())
-        }
+        YamlValue::Sequence(seq) => JsonValue::Array(seq.into_iter().map(yaml_to_json).collect()),
         YamlValue::Mapping(map) => {
             let mut obj = serde_json::Map::new();
             for (k, v) in map {
