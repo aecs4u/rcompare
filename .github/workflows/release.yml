@@ -1,0 +1,224 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          release_name: RCompare ${{ steps.get_version.outputs.version }}
+          body: |
+            ## RCompare ${{ steps.get_version.outputs.version }}
+
+            ### Downloads
+            Download the appropriate binary for your platform below:
+
+            - **Linux**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
+            - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
+            - **macOS**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
+
+            ### Installation
+            ```bash
+            # Linux/macOS
+            chmod +x rcompare_cli-*
+            chmod +x rcompare_gui-*
+
+            # Move to PATH (optional)
+            sudo mv rcompare_cli-* /usr/local/bin/rcompare_cli
+            sudo mv rcompare_gui-* /usr/local/bin/rcompare_gui
+            ```
+
+            ### Features
+            - Fast directory comparison with BLAKE3 hashing
+            - Specialized file comparisons (Text, CSV, JSON, Excel, Images, Parquet)
+            - Archive comparison (ZIP, TAR, 7Z)
+            - GUI with auto-comparison and tree view
+            - CLI with colored output and JSON support
+
+            See [README.md](https://github.com/aecs4u/rcompare/blob/main/README.md) for full documentation.
+
+            ### Changelog
+            See the commit history for detailed changes.
+          draft: false
+          prerelease: false
+
+  build-release:
+    name: Build Release (${{ matrix.target }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-release-
+
+      - name: Build CLI (release)
+        run: cargo build --package rcompare_cli --release --target ${{ matrix.target }} --verbose
+
+      - name: Build GUI (release)
+        run: cargo build --package rcompare_gui --release --target ${{ matrix.target }} --verbose
+
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          strip rcompare_cli rcompare_gui || true
+          tar czf rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz rcompare_cli rcompare_gui
+          mv rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz ${{ github.workspace }}/
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath ${{ github.workspace }}/rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+
+      - name: Upload CLI binary to release (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/rcompare_cli
+          asset_name: rcompare_cli-${{ matrix.platform }}-x86_64
+          asset_content_type: application/octet-stream
+
+      - name: Upload GUI binary to release (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/rcompare_gui
+          asset_name: rcompare_gui-${{ matrix.platform }}-x86_64
+          asset_content_type: application/octet-stream
+
+      - name: Upload CLI binary to release (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/rcompare_cli.exe
+          asset_name: rcompare_cli-${{ matrix.platform }}-x86_64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload GUI binary to release (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: target/${{ matrix.target }}/release/rcompare_gui.exe
+          asset_name: rcompare_gui-${{ matrix.platform }}-x86_64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload archive to release (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz
+          asset_name: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload archive to release (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+          asset_name: rcompare-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+          asset_content_type: application/zip
