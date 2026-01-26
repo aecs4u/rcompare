@@ -2,10 +2,9 @@
 # See https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# Deny security vulnerabilities
-vulnerability = "deny"
+# All advisories (vulnerability, notice, unsound) now emit errors by default
+# Use 'ignore' list to suppress specific advisories from transitive dependencies
 yanked = "deny"
-notice = "warn"
 # Ignore unmaintained/unsound crate warnings from transitive dependencies
 # These are indirect dependencies from slint, syntect, image, aws-sdk-s3, etc.
 ignore = [
@@ -17,8 +16,8 @@ ignore = [
 ]
 
 [licenses]
-# Allow common open-source licenses
-unlicensed = "deny"
+# All licenses are denied by default unless explicitly allowed
+# This is the new cargo-deny model (replaces old unlicensed/copyleft/default fields)
 allow = [
     "MIT",
     "Apache-2.0",
@@ -29,10 +28,6 @@ allow = [
     "Unicode-DFS-2016",
     "Zlib",
 ]
-deny = []
-copyleft = "warn"
-allow-osi-fsf-free = "both"
-default = "deny"
 confidence-threshold = 0.8
 
 [bans]
