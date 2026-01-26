@@ -24,9 +24,18 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",                      # Boost Software License (clipboard-win)
+    "CC0-1.0",                      # Creative Commons Zero (constant_time_eq)
     "ISC",
+    "MPL-2.0",                      # Mozilla Public License 2.0
+    "NCSA",                         # NCSA Open Source License
+    "Unicode-3.0",                  # Unicode License v3
     "Unicode-DFS-2016",
     "Zlib",
+    # Slint GUI framework licensing (offers choice of GPL, royalty-free, or commercial)
+    "GPL-3.0-only",
+    "LicenseRef-Slint-Royalty-free-2.0",
+    "LicenseRef-Slint-Software-3.0",
 ]
 confidence-threshold = 0.8
 
