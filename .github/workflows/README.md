@@ -110,6 +110,90 @@ Automated dependency updates for Rust crates and GitHub Actions.
 #### Configuration
 Dependabot settings in [.github/dependabot.yml](../dependabot.yml)
 
+### Security Audit Pipeline (`security.yml`)
+
+Comprehensive security scanning for dependencies and licenses.
+
+#### Triggers
+- Push to `main` or `develop` (when Cargo files change)
+- Pull requests (when Cargo files change)
+- Daily schedule (00:00 UTC)
+- Manual workflow dispatch
+
+#### Jobs
+
+**1. cargo-audit** - Security Vulnerability Scanner
+- Scans dependencies for known security vulnerabilities
+- Uses RustSec Advisory Database
+- Denies builds with known vulnerabilities
+- Runs daily to catch new advisories
+
+**2. cargo-deny** - License and Dependency Policy
+- Enforces license compliance (MIT, Apache-2.0, BSD, etc.)
+- Detects multiple versions of same crate
+- Blocks dependencies from untrusted sources
+- Warns about copyleft licenses
+- Configuration in [deny.toml](../../deny.toml)
+
+**3. cargo-outdated** - Dependency Update Check (scheduled only)
+- Identifies outdated dependencies
+- Only runs on scheduled builds (not PRs)
+- Issues warnings but doesn't fail build
+
+#### Configuration
+
+**deny.toml** configures cargo-deny policies:
+```toml
+[advisories]
+vulnerability = "deny"    # Block known vulnerabilities
+yanked = "deny"          # Block yanked crates
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-2-Clause", ...]
+copyleft = "warn"        # Warn about GPL-like licenses
+
+[bans]
+multiple-versions = "warn"  # Warn about duplicate deps
+```
+
+#### Local Security Testing
+```bash
+# Install tools
+cargo install cargo-audit cargo-deny cargo-outdated
+
+# Run security checks
+cargo audit
+cargo deny check
+cargo outdated
+```
+
+### Scheduled Builds (`scheduled.yml`)
+
+Weekly builds to catch issues with dependencies and newer Rust versions.
+
+#### Schedule
+- Every Monday at 02:00 UTC
+
+#### Jobs
+
+**1. scheduled-build** - Multi-platform/Rust Version Build
+- Tests on: Linux, Windows, macOS
+- Rust versions: stable, beta
+- Runs full test suite with all features
+- Checks documentation generation
+- Helps catch issues before they affect development
+
+**2. minimum-rust-version** - MSRV Check
+- Tests compilation with Rust 1.70 (MSRV)
+- Ensures project stays compatible with declared MSRV
+- Non-blocking (informational)
+
+#### Purpose
+- Catch breaking changes in dependencies early
+- Test compatibility with upcoming Rust releases (beta)
+- Verify MSRV remains valid
+- Ensure documentation builds correctly
+
 ### Release Pipeline (`release.yml`)
 
 The release pipeline automates building and publishing release binaries for all platforms.
