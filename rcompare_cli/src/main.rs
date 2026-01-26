@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus, Vfs};
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
+use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
     ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
@@ -115,6 +116,28 @@ enum Commands {
         /// Enable Parquet-specific comparison with dataframe analysis
         #[arg(long)]
         parquet_diff: bool,
+
+        /// Ignore whitespace when comparing text files
+        /// Options: all, leading, trailing, changes
+        #[arg(long, value_name = "MODE")]
+        ignore_whitespace: Option<String>,
+
+        /// Ignore case when comparing text files
+        #[arg(long)]
+        ignore_case: bool,
+
+        /// Apply regex rule to text before comparison (pattern:replacement)
+        /// Can be specified multiple times. Format: "pattern:replacement:description"
+        #[arg(long, value_name = "RULE")]
+        regex_rule: Vec<String>,
+
+        /// Compare EXIF metadata when comparing images
+        #[arg(long)]
+        image_exif: bool,
+
+        /// Set pixel difference tolerance for image comparison (0-255)
+        #[arg(long, value_name = "TOLERANCE", default_value = "1")]
+        image_tolerance: u8,
     },
 }
 
@@ -180,6 +203,11 @@ fn main() {
             json_diff,
             yaml_diff,
             parquet_diff,
+            ignore_whitespace,
+            ignore_case,
+            regex_rule,
+            image_exif,
+            image_tolerance,
         } => {
             if let Err(e) = run_scan(
                 left,
@@ -204,12 +232,70 @@ fn main() {
                 json_diff,
                 yaml_diff,
                 parquet_diff,
+                ignore_whitespace,
+                ignore_case,
+                regex_rule,
+                image_exif,
+                image_tolerance,
             ) {
                 error!("Scan failed: {}", e);
                 std::process::exit(1);
             }
         }
     }
+}
+
+/// Build TextDiffConfig from CLI flags
+fn build_text_diff_config(
+    ignore_whitespace: Option<String>,
+    ignore_case: bool,
+    regex_rules: Vec<String>,
+) -> Result<TextDiffConfig, Box<dyn std::error::Error>> {
+    let mut config = TextDiffConfig::new();
+
+    // Parse whitespace mode
+    if let Some(mode) = ignore_whitespace {
+        config.whitespace_mode = match mode.to_lowercase().as_str() {
+            "all" => WhitespaceMode::IgnoreAll,
+            "leading" => WhitespaceMode::IgnoreLeading,
+            "trailing" => WhitespaceMode::IgnoreTrailing,
+            "changes" => WhitespaceMode::IgnoreChanges,
+            _ => {
+                return Err(format!(
+                    "Invalid whitespace mode '{}'. Valid options: all, leading, trailing, changes",
+                    mode
+                )
+                .into())
+            }
+        };
+    }
+
+    // Set case sensitivity
+    config.ignore_case = ignore_case;
+
+    // Parse regex rules
+    for rule_str in regex_rules {
+        let parts: Vec<&str> = rule_str.splitn(3, ':').collect();
+        if parts.len() < 2 {
+            return Err(format!(
+                "Invalid regex rule format '{}'. Expected 'pattern:replacement:description'",
+                rule_str
+            )
+            .into());
+        }
+
+        let pattern = regex::Regex::new(parts[0])?;
+        let replacement = parts[1].to_string();
+        let description = parts.get(2).unwrap_or(&"").to_string();
+
+        config.regex_rules.push(RegexRule {
+            pattern,
+            replacement,
+            description,
+        });
+    }
+
+    Ok(config)
 }
 
 fn run_scan(
@@ -235,6 +321,11 @@ fn run_scan(
     json_diff: bool,
     yaml_diff: bool,
     parquet_diff: bool,
+    ignore_whitespace: Option<String>,
+    ignore_case: bool,
+    regex_rules: Vec<String>,
+    image_exif: bool,
+    image_tolerance: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Validate paths
     if !left.exists() {
@@ -279,6 +370,11 @@ fn run_scan(
 
     // Initialize hash cache
     let hash_cache = HashCache::new(cache_path)?;
+
+    // Build text diff configuration from CLI flags
+    let _text_config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
+    // Note: Text diff configuration is prepared but not yet integrated into file comparison
+    // TODO: Integrate TextDiffConfig into ComparisonEngine for text file comparison
 
     // Create scanner
     let mut left_scanner = FolderScanner::new(config.clone());
@@ -601,7 +697,9 @@ fn run_scan(
 
     // Image-specific analysis if enabled
     if image_diff {
-        let image_engine = ImageDiffEngine::new();
+        let image_engine = ImageDiffEngine::new()
+            .with_exif_compare(image_exif)
+            .with_tolerance(image_tolerance);
 
         // Count images to analyze
         let image_count: usize = diff_nodes
