@@ -8,7 +8,7 @@ use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
     ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
-    JsonDiffEngine, ParquetDiffEngine,
+    JsonDiffEngine, ParquetDiffEngine, TextDiffEngine,
 };
 use serde::Serialize;
 use std::io::IsTerminal;
@@ -117,6 +117,10 @@ enum Commands {
         #[arg(long)]
         parquet_diff: bool,
 
+        /// Enable text-specific comparison with line-by-line diff
+        #[arg(long)]
+        text_diff: bool,
+
         /// Ignore whitespace when comparing text files
         /// Options: all, leading, trailing, changes
         #[arg(long, value_name = "MODE")]
@@ -203,6 +207,7 @@ fn main() {
             json_diff,
             yaml_diff,
             parquet_diff,
+            text_diff,
             ignore_whitespace,
             ignore_case,
             regex_rule,
@@ -232,6 +237,7 @@ fn main() {
                 json_diff,
                 yaml_diff,
                 parquet_diff,
+                text_diff,
                 ignore_whitespace,
                 ignore_case,
                 regex_rule,
@@ -321,6 +327,7 @@ fn run_scan(
     json_diff: bool,
     yaml_diff: bool,
     parquet_diff: bool,
+    text_diff: bool,
     ignore_whitespace: Option<String>,
     ignore_case: bool,
     regex_rules: Vec<String>,
@@ -372,9 +379,7 @@ fn run_scan(
     let hash_cache = HashCache::new(cache_path)?;
 
     // Build text diff configuration from CLI flags
-    let _text_config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
-    // Note: Text diff configuration is prepared but not yet integrated into file comparison
-    // TODO: Integrate TextDiffConfig into ComparisonEngine for text file comparison
+    let text_config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
 
     // Create scanner
     let mut left_scanner = FolderScanner::new(config.clone());
@@ -1734,7 +1739,156 @@ fn run_scan(
         }
     }
 
+    // Text-specific analysis if enabled
+    if text_diff {
+        let text_engine = TextDiffEngine::with_config(text_config);
+
+        // Count text files to analyze
+        let text_count: usize = diff_nodes
+            .iter()
+            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
+            .filter(|node| {
+                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
+                    is_text_file(&left_entry.path) && is_text_file(&right_entry.path)
+                } else {
+                    false
+                }
+            })
+            .count();
+
+        let pb_texts = if show_progress && text_count > 0 {
+            let pb = ProgressBar::new(text_count as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} Analyzing text files... [{elapsed_precise}<{eta_precise}] ({per_sec})")
+                    .unwrap()
+                    .progress_chars("#>-")
+            );
+            Some(pb)
+        } else {
+            None
+        };
+
+        println!("\n{}", "=".repeat(80));
+        println!("Text Comparison Details");
+        println!("{}", "=".repeat(80));
+
+        let mut text_comparisons = 0;
+        for node in &diff_nodes {
+            // Only analyze text files that exist on both sides and are different/unchecked
+            if matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked) {
+                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
+                    if is_text_file(&left_entry.path) && is_text_file(&right_entry.path) {
+                        if let Some(pb) = &pb_texts {
+                            pb.inc(1);
+                        }
+
+                        let left_path = left.join(&left_entry.path);
+                        let right_path = right.join(&right_entry.path);
+
+                        // Read file contents
+                        match (std::fs::read_to_string(&left_path), std::fs::read_to_string(&right_path)) {
+                            (Ok(left_content), Ok(right_content)) => {
+                                match text_engine.compare_text_patience(&left_content, &right_content, &left_path) {
+                                    Ok(diff_lines) => {
+                                        text_comparisons += 1;
+
+                                        // Count different line types
+                                        let mut inserted = 0;
+                                        let mut deleted = 0;
+                                        let mut equal = 0;
+                                        for line in &diff_lines {
+                                            match line.change_type {
+                                                rcompare_core::text_diff::DiffChangeType::Insert => inserted += 1,
+                                                rcompare_core::text_diff::DiffChangeType::Delete => deleted += 1,
+                                                rcompare_core::text_diff::DiffChangeType::Equal => equal += 1,
+                                            }
+                                        }
+
+                                        println!("\n{}", node.relative_path.display());
+                                        println!("  Total lines: {}", diff_lines.len());
+                                        println!(
+                                            "  {}Equal lines:{} {}",
+                                            if use_color { "\x1b[90m" } else { "" },
+                                            if use_color { "\x1b[0m" } else { "" },
+                                            equal
+                                        );
+
+                                        if inserted > 0 {
+                                            println!(
+                                                "  {}Inserted lines:{} {}",
+                                                if use_color { "\x1b[32m" } else { "" },
+                                                if use_color { "\x1b[0m" } else { "" },
+                                                inserted
+                                            );
+                                        }
+                                        if deleted > 0 {
+                                            println!(
+                                                "  {}Deleted lines:{} {}",
+                                                if use_color { "\x1b[31m" } else { "" },
+                                                if use_color { "\x1b[0m" } else { "" },
+                                                deleted
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!(
+                                            "\n{}: Failed to compare - {}",
+                                            node.relative_path.display(),
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                println!(
+                                    "\n{}: Failed to read - {}",
+                                    node.relative_path.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(pb) = &pb_texts {
+            pb.finish_and_clear();
+        }
+
+        if text_comparisons > 0 {
+            println!("\n{}", "=".repeat(80));
+            println!(
+                "Analyzed {} text file{}",
+                text_comparisons,
+                if text_comparisons == 1 { "" } else { "s" }
+            );
+            println!("{}", "=".repeat(80));
+        } else {
+            println!("\nNo different text files found to analyze.");
+            println!("{}", "=".repeat(80));
+        }
+    }
+
     Ok(())
+}
+
+/// Check if a file is likely a text file based on extension
+fn is_text_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_lowercase().as_str(),
+                "txt" | "md" | "markdown" | "rst" | "log"
+                | "rs" | "toml" | "yaml" | "yml" | "json" | "xml" | "html" | "htm" | "css" | "js" | "ts" | "tsx" | "jsx"
+                | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" | "hxx" | "cs" | "java" | "py" | "rb" | "go" | "php" | "pl" | "sh" | "bash" | "zsh" | "fish"
+                | "sql" | "conf" | "cfg" | "ini" | "properties"
+                | "cmake" | "make" | "dockerfile" | "gitignore" | "gitattributes"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Serialize)]
