@@ -924,9 +924,9 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 alignment: center;
 
-                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Type"; width: 50px; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
-                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Name"; min-width: 200px; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
                                 Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
@@ -1035,6 +1035,7 @@ export component MainWindow inherits Window {
                                         Text {
                                             text: item.name;
                                             vertical-alignment: center;
+                                            min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
                                             color: item.path == selected-path ? selected-text : #000000;
@@ -1121,9 +1122,9 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 alignment: center;
 
-                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Type"; width: 50px; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
-                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Name"; min-width: 200px; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
                                 Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
@@ -1232,6 +1233,7 @@ export component MainWindow inherits Window {
                                         Text {
                                             text: item.name;
                                             vertical-alignment: center;
+                                            min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
                                             color: item.path == selected-path ? selected-text : #000000;
@@ -1318,9 +1320,9 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 alignment: center;
 
-                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Type"; width: 50px; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
-                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Text { text: "Name"; min-width: 200px; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
                                 Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
                                 Rectangle { width: 1px; height: 12px; background: #d0d5db; }
@@ -1428,6 +1430,7 @@ export component MainWindow inherits Window {
                                         Text {
                                             text: item.name;
                                             vertical-alignment: center;
+                                            min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
                                             color: item.path == selected-path ? selected-text : #000000;
