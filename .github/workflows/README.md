@@ -49,6 +49,67 @@ The main CI pipeline runs on every push to `main` or `develop` branches and on a
    - Blocks merge if any required job fails
    - Enforces that core tests, CLI tests, GUI tests, and quality checks all pass
 
+### Code Coverage Pipeline (`coverage.yml`)
+
+Measures code coverage and uploads reports to Codecov.
+
+#### Triggers
+- Push to `main` or `develop` branches
+- Pull requests targeting `main` or `develop`
+
+#### Features
+- Uses `cargo-tarpaulin` for accurate Rust code coverage
+- Generates both XML (Codecov) and HTML (human-readable) reports
+- Excludes test files and examples from coverage calculation
+- Uploads reports to Codecov for tracking over time
+- Archives HTML reports as artifacts (30-day retention)
+
+#### Local Coverage Testing
+```bash
+# Install tarpaulin
+cargo install cargo-tarpaulin
+
+# Run coverage locally
+cargo tarpaulin --workspace --out Html --out Xml
+
+# Open HTML report
+firefox tarpaulin-report.html
+```
+
+### PR Labeler (`labeler.yml`)
+
+Automatically labels pull requests based on changed files.
+
+#### Labels Applied
+- **core**: Changes to `rcompare_core/`
+- **cli**: Changes to `rcompare_cli/`
+- **gui**: Changes to `rcompare_gui/`
+- **common**: Changes to `rcompare_common/`
+- **documentation**: Changes to `.md` files or `docs/`
+- **ci**: Changes to `.github/workflows/`
+- **tests**: Changes to test files
+- **dependencies**: Changes to `Cargo.toml` or `Cargo.lock`
+
+#### Configuration
+Labels are defined in [.github/labeler.yml](../labeler.yml)
+
+### Dependabot (`dependabot.yml`)
+
+Automated dependency updates for Rust crates and GitHub Actions.
+
+#### Update Schedule
+- **Cargo dependencies**: Weekly (Mondays)
+- **GitHub Actions**: Weekly (Mondays)
+
+#### Features
+- Groups minor and patch updates together
+- Limits open PRs (10 for Cargo, 5 for Actions)
+- Automatic labeling (dependencies, rust, github-actions)
+- Conventional commit messages (chore: for deps, ci: for actions)
+
+#### Configuration
+Dependabot settings in [.github/dependabot.yml](../dependabot.yml)
+
 ### Release Pipeline (`release.yml`)
 
 The release pipeline automates building and publishing release binaries for all platforms.
@@ -67,16 +128,13 @@ Builds for three platforms:
 
 #### Build Process
 
-1. **create-release** - Creates GitHub Release
-   - Extracts version from tag
-   - Creates release with changelog template
-   - Provides upload URL for build artifacts
-
-2. **build-release** - Builds Binaries
-   - Compiles CLI and GUI in release mode
-   - Strips binaries (Unix) for smaller size
-   - Packages as `tar.gz` (Unix) or `zip` (Windows)
-   - Uploads individual binaries and archives to release
+**build-release** - Builds and Releases Binaries (parallel across platforms)
+- Compiles CLI and GUI in release mode for all platforms
+- Strips binaries (Unix) for smaller size
+- Packages as `tar.gz` (Unix) or `zip` (Windows)
+- Creates GitHub release (if it doesn't exist)
+- Uploads individual binaries and combined archives
+- Uses modern `softprops/action-gh-release` action (v1)
 
 #### Artifacts
 
