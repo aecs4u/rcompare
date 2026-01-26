@@ -1,0 +1,22 @@
+# Code Owners
+# This file defines who is automatically requested for review on PRs
+# that modify specific parts of the codebase.
+#
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything
+* @aecs4u
+
+# CI/CD workflows
+/.github/ @aecs4u
+
+# Core library - requires careful review
+/rcompare_core/ @aecs4u
+
+# Documentation
+/docs/ @aecs4u
+*.md @aecs4u
+
+# Security-sensitive files
+/deny.toml @aecs4u
+/Cargo.lock @aecs4u
