@@ -359,7 +359,12 @@ rcompare_cli scan /images/left /images/right --image-diff --tolerance 10
 ## Known Limitations
 
 ### Text Comparison
-1. **Grammar-aware comparison** not implemented (requires AST parsing)
+1. **Grammar-aware comparison** - Deferred to Phase 7
+   - Requires tree-sitter integration for AST parsing
+   - Would need language-specific grammars (rust, python, js, etc.)
+   - Research shows two major Rust tools: diffsitter and difftastic
+   - Estimated effort: 4-6 weeks for initial implementation
+   - Decision: Focus on simpler preprocessing options first (completed in Phase 1)
 2. **Moved lines detection** not implemented
 3. **Manual alignment** not implemented
 
@@ -383,6 +388,7 @@ rcompare_cli scan /images/left /images/right --image-diff --tolerance 10
 - **Phase 4:** Interactive merge mode
 - **Phase 5:** Advanced folder sync and reports
 - **Phase 6:** Plugin system
+- **Phase 7:** Advanced text & binary comparison (grammar-aware, editable hex, structure viewer)
 
 ---
 
