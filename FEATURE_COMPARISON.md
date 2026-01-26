@@ -68,10 +68,10 @@
 | Editable comparison | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
 | 3-way merge | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Conflict resolution UI | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Ignore whitespace | ⏳ Future | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
-| Ignore case | ⏳ Future | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
-| Regular expression rules | ⏳ Future | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
-| Grammar-aware comparison | ❌ No | ✅ Yes (Pro) | ❌ No | ❌ No | ❌ No | ❌ No |
+| Ignore whitespace | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+| Ignore case | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+| Regular expression rules | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
+| Grammar-aware comparison | ⏳ Planned | ✅ Yes (Pro) | ❌ No | ❌ No | ❌ No | ❌ No |
 
 **Notes:**
 - RCompare's Patience diff algorithm produces better diffs for code with moved blocks
@@ -104,8 +104,8 @@
 | Swipe comparison | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
 | Perceptual hashing | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No |
 | Pixel-level diff | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| EXIF metadata compare | ⏳ Future | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
-| Tolerance adjustment | ⏳ Future | ✅ Yes | ⏳ Limited | ❌ No | ❌ No | ❌ No |
+| EXIF metadata compare | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
+| Tolerance adjustment | ✅ Yes | ✅ Yes | ⏳ Limited | ❌ No | ❌ No | ❌ No |
 
 **Notes:**
 - P4Merge is known for its strong image comparison capabilities
