@@ -1,0 +1,3212 @@
+import { Button, VerticalBox, HorizontalBox, ListView, StandardButton } from "std-widgets.slint";
+
+// File item structure for display
+export struct FileItem {
+    name: string,
+    path: string,
+    status-code: int,
+    size: string,
+    date: string,
+    status: string,
+    color: color,
+    depth: int,
+    is-dir: bool,
+    expanded: bool,
+}
+
+export struct TextSegment {
+    text: string,
+    color: color,
+    bold: bool,
+    italic: bool,
+}
+
+export struct TextDiffLine {
+    line-left: string,
+    line-right: string,
+    change: int,
+    segments: [TextSegment],
+}
+
+export struct HexDiffLine {
+    offset: string,
+    left-hex: string,
+    right-hex: string,
+    left-ascii: string,
+    right-ascii: string,
+    has-diff: bool,
+}
+
+export struct ImageDiffResult {
+    total-pixels: int,
+    different-pixels: int,
+    difference-percentage: float,
+    mean-diff: float,
+    same-dimensions: bool,
+    left-width: int,
+    left-height: int,
+    right-width: int,
+    right-height: int,
+    left-path: string,
+    right-path: string,
+}
+
+export struct ProfileItem {
+    name: string,
+    left-path: string,
+    right-path: string,
+    last-used: string,
+}
+
+component ToolButton inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <length> button-width: 82px;
+    in property <bool> primary: false;
+    callback clicked();
+
+    width: button-width;
+    height: 24px;
+    border-width: 1px;
+    border-color: primary ? #2e6fd1 : #c5ccd6;
+    border-radius: 2px;
+    background: touch.has-hover
+        ? (primary ? #2f78e2 : #e9edf2)
+        : (primary ? #2e6fd1 : #f7f8fa);
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+
+        HorizontalBox {
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 5px;
+            alignment: center;
+
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                background: primary ? #ffffff : #e3e7ee;
+                border-width: 1px;
+                border-color: primary ? #ffffff : #c2c9d4;
+                border-radius: 2px;
+
+                Text {
+                    text: icon;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: primary ? #2e6fd1 : #2b3a4a;
+                }
+            }
+
+            Text {
+                text: label;
+                vertical-alignment: center;
+                font-size: 10px;
+                font-weight: 600;
+                color: primary ? #ffffff : #1c2d3a;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+}
+
+component SmallButton inherits Rectangle {
+    in property <string> label;
+    in property <length> button-width: 64px;
+    in property <bool> primary: false;
+    callback clicked();
+
+    width: button-width;
+    height: 22px;
+    border-width: 1px;
+    border-color: primary ? #2e6fd1 : #c5ccd6;
+    border-radius: 4px;
+    background: touch.has-hover
+        ? (primary ? #2f78e2 : #e9edf2)
+        : (primary ? #2e6fd1 : #f7f8fa);
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+
+        Text {
+            text: label;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: primary ? #ffffff : #1c2d3a;
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "RCompare - File Comparison Tool";
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    background: #edf1f5;
+
+    in-out property <string> app-version: "0.1.0";
+    in-out property <[FileItem]> left-items: [];
+    in-out property <[FileItem]> right-items: [];
+    in-out property <string> status-text: "Ready";
+    in-out property <string> left-path: "";
+    in-out property <string> right-path: "";
+    in-out property <string> selected-path: "";
+    in-out property <[TextDiffLine]> text-lines: [];
+    in-out property <[HexDiffLine]> hex-lines: [];
+    in-out property <string> left-text-path: "";
+    in-out property <string> right-text-path: "";
+    in-out property <int> active-view: 0;  // 0=folder, 1=text, 2=hex, 3=image
+    in-out property <ImageDiffResult> image-diff-result;
+    in-out property <bool> show-settings: false;
+    in-out property <string> settings-ignore-patterns: "";
+    in-out property <bool> settings-follow-symlinks: false;
+    in-out property <bool> settings-hash-verification: true;
+    in-out property <string> settings-cache-dir: "";
+    in-out property <bool> show-identical: true;
+    in-out property <bool> show-different: true;
+    in-out property <bool> show-left-only: true;
+    in-out property <bool> show-right-only: true;
+    in-out property <string> search-text: "";
+
+    // Three-way comparison properties
+    in-out property <bool> three-way-mode: false;
+    in-out property <string> base-path: "";
+    in-out property <[FileItem]> base-items: [];
+
+    // Sync dialog properties
+    in-out property <bool> show-sync-dialog: false;
+    in-out property <int> sync-mode: 0;  // 0=left->right, 1=right->left, 2=bidirectional
+    in-out property <bool> sync-dry-run: true;
+    in-out property <bool> sync-use-trash: true;
+
+    // Menu state: 0=none, 1=File, 2=Edit, 3=View, 4=Session, 5=Tools, 6=Help
+    in-out property <int> active-menu: 0;
+
+    callback compare-clicked();
+    callback select-left-path();
+    callback select-right-path();
+    callback select-base-path();
+    callback select-left-archive();
+    callback select-right-archive();
+    callback select-base-archive();
+    callback toggle-three-way-mode();
+    callback open-base-item(path: string, is_dir: bool);
+    callback refresh-clicked();
+    callback cancel-clicked();
+    callback open-left-item(path: string, is_dir: bool);
+    callback open-right-item(path: string, is_dir: bool);
+    callback select-left-text();
+    callback select-right-text();
+    callback select-left-binary();
+    callback select-right-binary();
+    callback select-left-image();
+    callback select-right-image();
+    callback compare-text-clicked();
+    callback compare-image-clicked();
+    callback compare-binary-clicked();
+    callback new-session();
+    callback open-settings();
+    callback expand-all();
+    callback collapse-all();
+    callback copy-left-to-right();
+    callback copy-right-to-left();
+    callback show-about();
+    callback filter-changed();
+    callback save-settings();
+    callback cancel-settings();
+    callback select-cache-dir();
+
+    // Profile management
+    in-out property <[ProfileItem]> profiles: [];
+    in-out property <bool> show-profiles: false;
+    in-out property <string> new-profile-name: "";
+    in-out property <int> selected-profile-index: -1;
+    in-out property <string> profile-error-message: "";
+    in-out property <bool> show-delete-confirm: false;
+
+    callback open-profiles();
+    callback close-profiles();
+    callback save-current-profile(name: string) -> bool;
+    callback load-profile(index: int);
+    callback delete-profile(index: int);
+    callback validate-profile-name(name: string) -> string;
+
+    // Sync callbacks
+    callback open-sync-dialog();
+    callback close-sync-dialog();
+    callback execute-sync();
+    callback exit-application();
+
+    property <color> panel-bg: #ffffff;
+    property <color> panel-border: #c5ccd6;
+    property <color> header-bg: #edf1f5;
+    property <color> toolbar-bg: #f4f6f8;
+    property <color> chrome-bg: #f6f7f9;
+    property <color> accent: #3a78d6;
+    property <color> accent-soft: #e7f0ff;
+    property <color> status-bg: #eef2f7;
+    property <color> row-alt: #fafbfc;
+    property <color> diff-add: #e8f4ea;
+    property <color> diff-del: #ffe1e1;
+    property <color> diff-same: #ffffff;
+    property <color> diff-left: #dbe8ff;
+    property <color> diff-right: #ffd2d9;
+    property <color> diff-unknown: #f1f4f8;
+    property <color> hover-same: #e8eef7;
+    property <color> hover-diff: #f7d2d2;
+    property <color> hover-left: #cfe0ff;
+    property <color> hover-right: #ffc5cf;
+    property <color> hover-unknown: #e6ebf1;
+    property <color> selected-bg: #cfe1f7;
+    property <color> selected-border: #6d96d6;
+    property <color> selected-text: #0b2346;
+    property <color> row-divider: #e6e9ee;
+    property <color> status-same: #b9c3cf;
+    property <color> status-diff: #e05a5a;
+    property <color> status-left: #5b85dd;
+    property <color> status-right: #d85a6a;
+    property <color> status-unknown: #98a3af;
+    property <color> session-bg: #e9eff7;
+    property <color> session-border: #c4cfdc;
+
+    VerticalBox {
+        padding: 5px;
+        spacing: 3px;
+
+        // Menu bar
+        Rectangle {
+            height: 24px;
+            background: chrome-bg;
+            border-width: 1px;
+            border-color: panel-border;
+            clip: false;
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-top: 0px;
+                padding-bottom: 0px;
+                spacing: 0px;
+                alignment: start;
+
+                // File menu
+                TouchArea {
+                    width: 50px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 1 ? 0 : 1; }
+
+                    Rectangle {
+                        background: active-menu == 1 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "File";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // Edit menu
+                TouchArea {
+                    width: 50px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 2 ? 0 : 2; }
+
+                    Rectangle {
+                        background: active-menu == 2 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "Edit";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // View menu
+                TouchArea {
+                    width: 55px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 3 ? 0 : 3; }
+
+                    Rectangle {
+                        background: active-menu == 3 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "View";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // Session menu
+                TouchArea {
+                    width: 70px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 4 ? 0 : 4; }
+
+                    Rectangle {
+                        background: active-menu == 4 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "Session";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // Tools menu
+                TouchArea {
+                    width: 55px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 5 ? 0 : 5; }
+
+                    Rectangle {
+                        background: active-menu == 5 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "Tools";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // Help menu
+                TouchArea {
+                    width: 50px;
+                    height: 24px;
+                    clicked => { active-menu = active-menu == 6 ? 0 : 6; }
+
+                    Rectangle {
+                        background: active-menu == 6 ? accent-soft : transparent;
+                        border-radius: 3px;
+
+                        Text {
+                            text: "Help";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Toolbar
+        Rectangle {
+            height: 28px;
+            background: #f2f4f7;
+            border-width: 1px;
+            border-color: #d0d5db;
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 6px;
+                alignment: center;
+
+                ToolButton {
+                    label: "New";
+                    icon: "N";
+                    button-width: 66px;
+                    clicked => { new-session(); }
+                }
+
+                ToolButton {
+                    label: "Refresh";
+                    icon: "R";
+                    button-width: 74px;
+                    clicked => { refresh-clicked(); }
+                }
+
+                ToolButton {
+                    label: "Compare";
+                    icon: "C";
+                    primary: true;
+                    button-width: 90px;
+                    clicked => { compare-clicked(); }
+                }
+
+                ToolButton {
+                    label: "Cancel";
+                    icon: "X";
+                    button-width: 68px;
+                    clicked => { cancel-clicked(); }
+                }
+
+                Rectangle { width: 1px; height: 20px; background: #b7c0cc; }
+
+                TouchArea {
+                    width: 60px;
+                    height: 22px;
+                    clicked => { toggle-three-way-mode(); }
+
+                    Rectangle {
+                        background: three-way-mode ? accent : #ffffff;
+                        border-width: 1px;
+                        border-color: three-way-mode ? accent : #c8d2dd;
+                        border-radius: 2px;
+
+                        Text {
+                            text: "3-Way";
+                            color: three-way-mode ? #ffffff : #333333;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-weight: 600;
+                            font-size: 10px;
+                        }
+                    }
+                }
+
+                Rectangle { width: 1px; height: 20px; background: #b7c0cc; }
+
+                ToolButton {
+                    label: "Expand";
+                    icon: "+";
+                    button-width: 72px;
+                    clicked => { expand-all(); }
+                }
+
+                ToolButton {
+                    label: "Collapse";
+                    icon: "-";
+                    button-width: 80px;
+                    clicked => { collapse-all(); }
+                }
+
+                Rectangle { width: 1px; height: 20px; background: #b7c0cc; }
+
+                ToolButton {
+                    label: "L>R";
+                    icon: "LR";
+                    button-width: 62px;
+                    clicked => { copy-left-to-right(); }
+                }
+
+                ToolButton {
+                    label: "R>L";
+                    icon: "RL";
+                    button-width: 62px;
+                    clicked => { copy-right-to-left(); }
+                }
+
+                ToolButton {
+                    label: "Sync";
+                    icon: "S";
+                    button-width: 66px;
+                    clicked => { open-sync-dialog(); }
+                }
+
+                Rectangle { width: 1px; height: 20px; background: #b7c0cc; }
+
+                ToolButton {
+                    label: "Profiles";
+                    icon: "P";
+                    button-width: 78px;
+                    clicked => { open-profiles(); }
+                }
+
+                ToolButton {
+                    label: "Options";
+                    icon: "Cfg";
+                    button-width: 82px;
+                    clicked => { open-settings(); }
+                }
+            }
+        }
+
+        // Combined path and view switcher bar
+        Rectangle {
+            height: 26px;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #d0d5db;
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 6px;
+                alignment: center;
+
+                // Left path
+                Rectangle {
+                    width: 24px;
+                    height: 20px;
+                    background: #5a9ed8;
+                    border-width: 1px;
+                    border-color: #4285cc;
+                    border-radius: 2px;
+                }
+                Text { text: "Left"; font-size: 10px; font-weight: 700; color: #3875c4; vertical-alignment: center; }
+
+                Rectangle {
+                    background: #ffffff;
+                    border-width: 1px;
+                    border-color: #c0c7d0;
+                    horizontal-stretch: 1;
+                    height: 20px;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                                select-left-archive();
+                            }
+                        }
+
+                        HorizontalBox {
+                            padding-left: 6px;
+                            Text {
+                                text: left-path;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                font-size: 10px;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+
+                SmallButton { label: "Browse"; button-width: 60px; clicked => { select-left-path(); } }
+
+                // Right path
+                Rectangle {
+                    width: 24px;
+                    height: 20px;
+                    background: #d85a6a;
+                    border-width: 1px;
+                    border-color: #b04552;
+                    border-radius: 2px;
+                }
+                Text { text: "Right"; font-size: 10px; font-weight: 700; color: #b04552; vertical-alignment: center; }
+
+                Rectangle {
+                    background: #ffffff;
+                    border-width: 1px;
+                    border-color: #c0c7d0;
+                    horizontal-stretch: 1;
+                    height: 20px;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                                select-right-archive();
+                            }
+                        }
+
+                        HorizontalBox {
+                            padding-left: 6px;
+                            Text {
+                                text: right-path;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                font-size: 10px;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+
+                SmallButton { label: "Browse"; button-width: 60px; clicked => { select-right-path(); } }
+            }
+        }
+
+        // View switcher and filter bar
+        Rectangle {
+            height: 24px;
+            background: #f2f4f7;
+            border-width: 1px;
+            border-color: #d0d5db;
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 4px;
+                alignment: center;
+
+                // Compact view switcher
+                TouchArea {
+                    width: 96px;
+                    height: 20px;
+                    clicked => { active-view = 0; }
+                    Rectangle {
+                        background: active-view == 0 ? #ffffff : transparent;
+                        border-width: active-view == 0 ? 1px : 0px;
+                        border-color: #b0b8c0;
+                        border-radius: 2px;
+                        Text {
+                            text: "Folder Compare";
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            font-weight: active-view == 0 ? 700 : 500;
+                            font-size: 10px;
+                            color: active-view == 0 ? #000000 : #5a6472;
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 88px;
+                    height: 20px;
+                    clicked => { active-view = 1; }
+                    Rectangle {
+                        background: active-view == 1 ? #ffffff : transparent;
+                        border-width: active-view == 1 ? 1px : 0px;
+                        border-color: #b0b8c0;
+                        border-radius: 2px;
+                        Text {
+                            text: "Text Compare";
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            font-weight: active-view == 1 ? 700 : 500;
+                            font-size: 10px;
+                            color: active-view == 1 ? #000000 : #5a6472;
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 82px;
+                    height: 20px;
+                    clicked => { active-view = 2; }
+                    Rectangle {
+                        background: active-view == 2 ? #ffffff : transparent;
+                        border-width: active-view == 2 ? 1px : 0px;
+                        border-color: #b0b8c0;
+                        border-radius: 2px;
+                        Text {
+                            text: "Hex Compare";
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            font-weight: active-view == 2 ? 700 : 500;
+                            font-size: 10px;
+                            color: active-view == 2 ? #000000 : #5a6472;
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 96px;
+                    height: 20px;
+                    clicked => { active-view = 3; }
+                    Rectangle {
+                        background: active-view == 3 ? #ffffff : transparent;
+                        border-width: active-view == 3 ? 1px : 0px;
+                        border-color: #b0b8c0;
+                        border-radius: 2px;
+                        Text {
+                            text: "Image Compare";
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            font-weight: active-view == 3 ? 700 : 500;
+                            font-size: 10px;
+                            color: active-view == 3 ? #000000 : #5a6472;
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                // Compact filter section
+                Text {
+                    text: "Show:";
+                    vertical-alignment: center;
+                    font-weight: 600;
+                    font-size: 10px;
+                    color: #3a4654;
+                }
+
+                // Compact filter chips
+                TouchArea {
+                    width: 50px;
+                    height: 18px;
+                    clicked => { show-identical = !show-identical; filter-changed(); }
+                    Rectangle {
+                        background: show-identical ? #ffffff : transparent;
+                        border-width: 1px;
+                        border-color: show-identical ? #6ba3d8 : #c0c7d0;
+                        border-radius: 2px;
+                        HorizontalBox {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            spacing: 2px;
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                background: show-identical ? #6ba3d8 : #ffffff;
+                                border-width: 1px;
+                                border-color: #a0b0c0;
+                                if show-identical: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: "Same";
+                                vertical-alignment: center;
+                                font-size: 9px;
+                                font-weight: 600;
+                                color: #3a4654;
+                            }
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 46px;
+                    height: 18px;
+                    clicked => { show-different = !show-different; filter-changed(); }
+                    Rectangle {
+                        background: show-different ? #ffffff : transparent;
+                        border-width: 1px;
+                        border-color: show-different ? #d85a6a : #c0c7d0;
+                        border-radius: 2px;
+                        HorizontalBox {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            spacing: 2px;
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                background: show-different ? #d85a6a : #ffffff;
+                                border-width: 1px;
+                                border-color: #a0b0c0;
+                                if show-different: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: "Diff";
+                                vertical-alignment: center;
+                                font-size: 9px;
+                                font-weight: 600;
+                                color: #3a4654;
+                            }
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 45px;
+                    height: 18px;
+                    clicked => { show-left-only = !show-left-only; filter-changed(); }
+                    Rectangle {
+                        background: show-left-only ? #ffffff : transparent;
+                        border-width: 1px;
+                        border-color: show-left-only ? #6ba3d8 : #c0c7d0;
+                        border-radius: 2px;
+                        HorizontalBox {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            spacing: 2px;
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                background: show-left-only ? #6ba3d8 : #ffffff;
+                                border-width: 1px;
+                                border-color: #a0b0c0;
+                                if show-left-only: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: "Left";
+                                vertical-alignment: center;
+                                font-size: 9px;
+                                font-weight: 600;
+                                color: #3a4654;
+                            }
+                        }
+                    }
+                }
+
+                TouchArea {
+                    width: 50px;
+                    height: 18px;
+                    clicked => { show-right-only = !show-right-only; filter-changed(); }
+                    Rectangle {
+                        background: show-right-only ? #ffffff : transparent;
+                        border-width: 1px;
+                        border-color: show-right-only ? #d85a6a : #c0c7d0;
+                        border-radius: 2px;
+                        HorizontalBox {
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            spacing: 2px;
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                background: show-right-only ? #d85a6a : #ffffff;
+                                border-width: 1px;
+                                border-color: #a0b0c0;
+                                if show-right-only: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: "Right";
+                                vertical-alignment: center;
+                                font-size: 9px;
+                                font-weight: 600;
+                                color: #3a4654;
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Search:";
+                    vertical-alignment: center;
+                    font-weight: 600;
+                    font-size: 10px;
+                    color: #3a4654;
+                }
+
+                Rectangle {
+                    background: #ffffff;
+                    border-width: 1px;
+                    border-color: #c0c7d0;
+                    width: 120px;
+                    height: 18px;
+
+                    TextInput {
+                        text <=> search-text;
+                        edited => { filter-changed(); }
+                        vertical-alignment: center;
+                        horizontal-alignment: left;
+                        font-size: 10px;
+                    }
+                }
+            }
+        }
+
+        // Main comparison view (folder compare)
+        if active-view == 0: HorizontalBox {
+            spacing: 8px;
+
+            // Base panel (only shown in three-way mode)
+            if three-way-mode: VerticalBox {
+                Text { text: "Base"; font-weight: 700; font-size: 12px; color: #0d2340; }
+
+                Rectangle {
+                    border-width: 1px;
+                    border-color: panel-border;
+                    background: panel-bg;
+
+                    VerticalBox {
+                        Rectangle {
+                            height: 18px;
+                            background: #f7f8fa;
+
+                            HorizontalBox {
+                                padding-left: 6px;
+                                padding-right: 4px;
+                                spacing: 5px;
+                                alignment: center;
+
+                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Date"; width: 140px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Stat"; width: 40px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: #d0d5db;
+                            }
+                        }
+
+                        if base-items.length == 0: VerticalBox {
+                            vertical-stretch: 1;
+                            padding: 40px;
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: "No files to display";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 13px;
+                                font-weight: 500;
+                                color: #5a6472;
+                            }
+
+                            Text {
+                                text: "Select base folder and click Compare";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 11px;
+                                color: #9ca3af;
+                            }
+                        }
+
+                        ListView {
+                            for item[i] in base-items: base-row := TouchArea {
+                                height: 20px;
+                                clicked => { open-base-item(item.path, item.is-dir); }
+
+                                Rectangle {
+                                    height: 20px;
+                                    background: item.path == selected-path ? selected-bg
+                                        : base-row.has-hover ? (
+                                            item.status-code == 0 ? hover-same
+                                            : item.status-code == 1 ? hover-diff
+                                            : item.status-code == 2 ? hover-left
+                                            : item.status-code == 3 ? hover-right
+                                            : hover-unknown
+                                        )
+                                        : item.status-code == 0 ? (Math.mod(i, 2) == 0 ? panel-bg : row-alt)
+                                        : item.status-code == 1 ? diff-del
+                                        : item.status-code == 2 ? diff-left
+                                        : item.status-code == 3 ? diff-right
+                                        : diff-unknown;
+                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-color: selected-border;
+
+                                    Rectangle {
+                                        y: parent.height - 1px;
+                                        height: 1px;
+                                        background: row-divider;
+                                    }
+
+                                    HorizontalBox {
+                                        padding-left: item.depth * 16px + 6px;
+                                        spacing: 5px;
+
+                                        Rectangle {
+                                            width: 4px;
+                                            height: 12px;
+                                            background: item.status-code == 0 ? status-same
+                                                : item.status-code == 1 ? status-diff
+                                                : item.status-code == 2 ? status-left
+                                                : item.status-code == 3 ? status-right
+                                                : status-unknown;
+                                        }
+
+                                        Text {
+                                            text: item.is-dir ? (item.expanded ? "v" : ">") : "";
+                                            width: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            color: #2a3a4d;
+                                        }
+
+                                        Rectangle {
+                                            width: 24px;
+                                            height: 14px;
+                                            background: item.is-dir ? accent-soft : #f2f4f7;
+                                            border-width: 1px;
+                                            border-color: #c8d2dd;
+
+                                            Text {
+                                                text: item.is-dir ? "DIR" : "FILE";
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                font-size: 9px;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: item.name;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.size;
+                                            width: 90px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.date;
+                                            width: 140px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.status;
+                                            width: 40px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Gutter between base and left (only shown in three-way mode)
+            if three-way-mode: Rectangle {
+                width: 18px;
+                background: @linear-gradient(90deg, #ccd5e0 0%, #e2e8f0 50%, #ccd5e0 100%);
+
+                VerticalBox {
+                    padding: 6px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 4px;
+                        vertical-stretch: 1;
+                        background: @linear-gradient(90deg, #a9b6c9 0%, #c3ccd8 50%, #a9b6c9 100%);
+                        border-radius: 2px;
+                    }
+                }
+            }
+
+            // Left panel
+            VerticalBox {
+                Text { text: "Left"; font-weight: 700; font-size: 12px; color: #0d2340; }
+
+                Rectangle {
+                    border-width: 1px;
+                    border-color: panel-border;
+                    background: panel-bg;
+
+                    VerticalBox {
+                        Rectangle {
+                            height: 18px;
+                            background: #f7f8fa;
+
+                            HorizontalBox {
+                                padding-left: 6px;
+                                padding-right: 4px;
+                                spacing: 5px;
+                                alignment: center;
+
+                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Date"; width: 140px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Stat"; width: 40px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: #d0d5db;
+                            }
+                        }
+
+                        if left-items.length == 0: VerticalBox {
+                            vertical-stretch: 1;
+                            padding: 40px;
+                            alignment: center;
+                            spacing: 4px;
+
+                            Text {
+                                text: "No files to display";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 13px;
+                                font-weight: 500;
+                                color: #5a6472;
+                            }
+
+                            Text {
+                                text: "Select folders and click Compare to begin";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 11px;
+                                color: #9ca3af;
+                            }
+                        }
+
+                        ListView {
+                            for item[i] in left-items: left-row := TouchArea {
+                                height: 20px;
+                                clicked => { open-left-item(item.path, item.is-dir); }
+
+                                Rectangle {
+                                    height: 20px;
+                                    background: item.path == selected-path ? selected-bg
+                                        : left-row.has-hover ? (
+                                            item.status-code == 0 ? hover-same
+                                            : item.status-code == 1 ? hover-diff
+                                            : item.status-code == 2 ? hover-left
+                                            : item.status-code == 3 ? hover-right
+                                            : hover-unknown
+                                        )
+                                        : item.status-code == 0 ? (Math.mod(i, 2) == 0 ? panel-bg : row-alt)
+                                        : item.status-code == 1 ? diff-del
+                                        : item.status-code == 2 ? diff-left
+                                        : item.status-code == 3 ? diff-right
+                                        : diff-unknown;
+                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-color: selected-border;
+
+                                    Rectangle {
+                                        y: parent.height - 1px;
+                                        height: 1px;
+                                        background: row-divider;
+                                    }
+
+                                    HorizontalBox {
+                                        padding-left: item.depth * 16px + 6px;
+                                        spacing: 5px;
+
+                                        Rectangle {
+                                            width: 4px;
+                                            height: 12px;
+                                            background: item.status-code == 0 ? status-same
+                                                : item.status-code == 1 ? status-diff
+                                                : item.status-code == 2 ? status-left
+                                                : item.status-code == 3 ? status-right
+                                                : status-unknown;
+                                        }
+
+                                        Text {
+                                            text: item.is-dir ? (item.expanded ? "v" : ">") : "";
+                                            width: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            color: #2a3a4d;
+                                        }
+
+                                        Rectangle {
+                                            width: 24px;
+                                            height: 14px;
+                                            background: item.is-dir ? accent-soft : #f2f4f7;
+                                            border-width: 1px;
+                                            border-color: #c8d2dd;
+
+                                            Text {
+                                                text: item.is-dir ? "DIR" : "FILE";
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                font-size: 9px;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: item.name;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.size;
+                                            width: 90px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.date;
+                                            width: 140px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.status;
+                                            width: 40px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Center gutter
+            Rectangle {
+                width: 18px;
+                background: @linear-gradient(90deg, #ccd5e0 0%, #e2e8f0 50%, #ccd5e0 100%);
+
+                VerticalBox {
+                    padding: 6px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 4px;
+                        vertical-stretch: 1;
+                        background: @linear-gradient(90deg, #a9b6c9 0%, #c3ccd8 50%, #a9b6c9 100%);
+                        border-radius: 2px;
+                    }
+                }
+            }
+
+            // Right panel
+            VerticalBox {
+                Text { text: "Right"; font-weight: 700; font-size: 12px; color: #0d2340; }
+
+                Rectangle {
+                    border-width: 1px;
+                    border-color: panel-border;
+                    background: panel-bg;
+
+                    VerticalBox {
+                        Rectangle {
+                            height: 18px;
+                            background: #f7f8fa;
+
+                            HorizontalBox {
+                                padding-left: 6px;
+                                padding-right: 4px;
+                                spacing: 5px;
+                                alignment: center;
+
+                                Text { text: "Type"; width: 40px; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Name"; horizontal-stretch: 1; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Size"; width: 90px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Date"; width: 140px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                                Rectangle { width: 1px; height: 12px; background: #d0d5db; }
+                                Text { text: "Stat"; width: 40px; horizontal-alignment: right; font-size: 9px; font-weight: 600; color: #5a6472; }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: #d0d5db;
+                            }
+                        }
+
+                        if right-items.length == 0: VerticalBox {
+                            vertical-stretch: 1;
+                            padding: 20px;
+                            alignment: center;
+                            spacing: 6px;
+
+                            Text {
+                                text: "No files to display";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 14px;
+                                color: #6b7785;
+                            }
+
+                            Text {
+                                text: "Select folders and click Compare to begin";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 12px;
+                                color: #9ca3af;
+                            }
+                        }
+
+                        ListView {
+                            for item[i] in right-items: right-row := TouchArea {
+                                height: 20px;
+                                clicked => { open-right-item(item.path, item.is-dir); }
+
+                                Rectangle {
+                                    height: 20px;
+                                    background: item.path == selected-path ? selected-bg
+                                        : right-row.has-hover ? (
+                                            item.status-code == 0 ? hover-same
+                                            : item.status-code == 1 ? hover-diff
+                                            : item.status-code == 2 ? hover-left
+                                            : item.status-code == 3 ? hover-right
+                                            : hover-unknown
+                                        )
+                                        : item.status-code == 0 ? (Math.mod(i, 2) == 0 ? panel-bg : row-alt)
+                                        : item.status-code == 1 ? diff-del
+                                        : item.status-code == 2 ? diff-left
+                                        : item.status-code == 3 ? diff-right
+                                        : diff-unknown;
+                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-color: selected-border;
+
+                                    Rectangle {
+                                        y: parent.height - 1px;
+                                        height: 1px;
+                                        background: row-divider;
+                                    }
+
+                                    HorizontalBox {
+                                        padding-left: item.depth * 16px + 6px;
+                                        spacing: 5px;
+
+                                        Rectangle {
+                                            width: 4px;
+                                            height: 12px;
+                                            background: item.status-code == 0 ? status-same
+                                                : item.status-code == 1 ? status-diff
+                                                : item.status-code == 2 ? status-left
+                                                : item.status-code == 3 ? status-right
+                                                : status-unknown;
+                                        }
+
+                                        Text {
+                                            text: item.is-dir ? (item.expanded ? "v" : ">") : "";
+                                            width: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            color: #2a3a4d;
+                                        }
+
+                                        Rectangle {
+                                            width: 24px;
+                                            height: 14px;
+                                            background: item.is-dir ? accent-soft : #f2f4f7;
+                                            border-width: 1px;
+                                            border-color: #c8d2dd;
+
+                                            Text {
+                                                text: item.is-dir ? "DIR" : "FILE";
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                                font-size: 9px;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: item.name;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.size;
+                                            width: 90px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.date;
+                                            width: 140px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+
+                                        Text {
+                                            text: item.status;
+                                            width: 40px;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: right;
+                                            color: item.path == selected-path ? selected-text : #000000;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Warning when all filters are disabled
+        if active-view == 0 && !show-identical && !show-different && !show-left-only && !show-right-only: Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #00000040;
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 450px;
+                height: 200px;
+                background: #ffffff;
+                border-radius: 8px;
+                drop-shadow-blur: 20px;
+                drop-shadow-color: #00000040;
+                border-width: 2px;
+                border-color: #dc2626;
+
+                VerticalBox {
+                    padding: 30px;
+                    spacing: 20px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        background: #fee2e2;
+                        border-radius: 24px;
+
+                        Text {
+                            text: "⚠";
+                            font-size: 32px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Text {
+                        text: "All Filters Disabled";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: #dc2626;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "No files will be displayed because all filters are turned off.\nEnable at least one filter to see results.";
+                        font-size: 13px;
+                        color: #4a5568;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    Button {
+                        text: "Enable All Filters";
+                        primary: true;
+                        clicked => {
+                            show-identical = true;
+                            show-different = true;
+                            show-left-only = true;
+                            show-right-only = true;
+                            filter-changed();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Text comparison view
+        if active-view == 1: VerticalBox {
+            spacing: 4px;
+
+            Text { text: "Text Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+
+            HorizontalBox {
+                spacing: 6px;
+                alignment: start;
+
+                Button {
+                    text: "Select Left File...";
+                    clicked => { select-left-text(); }
+                }
+
+                Text {
+                    text: left-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Select Right File...";
+                    clicked => { select-right-text(); }
+                }
+
+                Text {
+                    text: right-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Compare Text";
+                    clicked => { compare-text-clicked(); }
+                }
+            }
+
+            Rectangle {
+                border-width: 1px;
+                border-color: panel-border;
+                height: 240px;
+                background: panel-bg;
+
+                VerticalBox {
+                    Rectangle {
+                        height: 22px;
+                        background: header-bg;
+
+                        HorizontalBox {
+                            padding-left: 6px;
+                            spacing: 5px;
+
+                            Text { text: "L"; width: 36px; horizontal-alignment: right; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "R"; width: 36px; horizontal-alignment: right; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "Text"; font-size: 11px; font-weight: 600; }
+                        }
+                    }
+
+                    if text-lines.length == 0: VerticalBox {
+                        padding: 40px;
+                        alignment: center;
+
+                        Text {
+                            text: "No comparison results";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: #6b7785;
+                        }
+
+                        Text {
+                            text: "Select files and click Compare Text";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            color: #9ca3af;
+                        }
+                    }
+
+                    ListView {
+                        for line in text-lines: Rectangle {
+                            height: 20px;
+                            background: line.change == 1 ? diff-add : line.change == 2 ? diff-del : diff-same;
+
+                            HorizontalBox {
+                                spacing: 5px;
+                                padding-left: 6px;
+
+                                Text {
+                                    text: line.line-left;
+                                    width: 36px;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                }
+
+                                Rectangle { width: 1px; background: #e0e5ec; }
+
+                                Text {
+                                    text: line.line-right;
+                                    width: 36px;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                }
+
+                                Rectangle { width: 1px; background: #d3d9e0; }
+
+                                HorizontalBox {
+                                    for segment in line.segments: Text {
+                                        text: segment.text;
+                                        color: segment.color;
+                                        font-weight: segment.bold ? 700 : 400;
+                                        vertical-alignment: center;
+                                        font-family: "JetBrains Mono";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Hex comparison view
+        if active-view == 2: VerticalBox {
+            spacing: 4px;
+
+            Text { text: "Hex Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+
+            HorizontalBox {
+                spacing: 6px;
+                alignment: start;
+
+                Button {
+                    text: "Select Left File...";
+                    clicked => { select-left-binary(); }
+                }
+
+                Text {
+                    text: left-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Select Right File...";
+                    clicked => { select-right-binary(); }
+                }
+
+                Text {
+                    text: right-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Compare Binary";
+                    primary: true;
+                    clicked => { compare-binary-clicked(); }
+                }
+            }
+
+            Rectangle {
+                border-width: 1px;
+                border-color: panel-border;
+                vertical-stretch: 1;
+                background: panel-bg;
+
+                VerticalBox {
+                    Rectangle {
+                        height: 22px;
+                        background: header-bg;
+
+                        HorizontalBox {
+                            padding-left: 6px;
+                            spacing: 5px;
+
+                            Text { text: "Offset"; width: 80px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "Left Hex"; width: 390px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "Left ASCII"; width: 140px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "Right Hex"; width: 390px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                            Rectangle { width: 1px; background: #cfd6de; }
+                            Text { text: "Right ASCII"; width: 140px; font-family: "JetBrains Mono"; font-size: 11px; font-weight: 600; }
+                        }
+                    }
+
+                    if hex-lines.length == 0: VerticalBox {
+                        padding: 40px;
+                        alignment: center;
+
+                        Text {
+                            text: "No comparison results";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: #6b7785;
+                        }
+
+                        Text {
+                            text: "Select files and click Compare Binary";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            color: #9ca3af;
+                        }
+                    }
+
+                    ListView {
+                        for line in hex-lines: Rectangle {
+                            height: 20px;
+                            background: line.has-diff ? #fde8e8 : diff-same;
+
+                            HorizontalBox {
+                                spacing: 5px;
+                                padding-left: 6px;
+
+                                Text {
+                                    text: line.offset;
+                                    width: 80px;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                    color: #6b7785;
+                                }
+
+                                Rectangle { width: 1px; background: #e0e5ec; }
+
+                                Text {
+                                    text: line.left-hex;
+                                    width: 390px;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                }
+
+                                Rectangle { width: 1px; background: #e0e5ec; }
+
+                                Text {
+                                    text: line.left-ascii;
+                                    width: 140px;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                    color: #4a5568;
+                                }
+
+                                Rectangle { width: 1px; background: #d3d9e0; }
+
+                                Text {
+                                    text: line.right-hex;
+                                    width: 390px;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                }
+
+                                Rectangle { width: 1px; background: #e0e5ec; }
+
+                                Text {
+                                    text: line.right-ascii;
+                                    width: 140px;
+                                    vertical-alignment: center;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                    color: #4a5568;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Image Compare view
+        if active-view == 3: VerticalBox {
+            spacing: 4px;
+
+            Text { text: "Image Compare"; font-weight: 700; font-size: 12px; color: #1f3f6b; }
+
+            HorizontalBox {
+                spacing: 6px;
+                alignment: start;
+
+                Button {
+                    text: "Select Left Image...";
+                    clicked => { select-left-image(); }
+                }
+
+                Text {
+                    text: left-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Select Right Image...";
+                    clicked => { select-right-image(); }
+                }
+
+                Text {
+                    text: right-text-path;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-size: 12px;
+                }
+
+                Button {
+                    text: "Compare Images";
+                    clicked => { compare-image-clicked(); }
+                }
+            }
+
+            // Image comparison results panel
+            Rectangle {
+                border-width: 1px;
+                border-color: panel-border;
+                vertical-stretch: 1;
+                background: panel-bg;
+
+                VerticalBox {
+                    padding: 12px;
+                    spacing: 8px;
+
+                    // Results header
+                    Rectangle {
+                        height: 28px;
+                        background: header-bg;
+                        border-radius: 4px;
+
+                        HorizontalBox {
+                            padding-left: 12px;
+                            padding-right: 12px;
+
+                            Text {
+                                text: "Image Comparison Results";
+                                vertical-alignment: center;
+                                font-weight: 700;
+                                font-size: 13px;
+                                color: #1f3f6b;
+                            }
+                        }
+                    }
+
+                    // Stats grid
+                    HorizontalBox {
+                        spacing: 16px;
+
+                        // Left image info
+                        Rectangle {
+                            background: #f8fafc;
+                            border-width: 1px;
+                            border-color: #e2e8f0;
+                            border-radius: 6px;
+                            horizontal-stretch: 1;
+
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 6px;
+
+                                Text { text: "Left Image"; font-weight: 600; font-size: 12px; color: #475569; }
+                                Text { text: "Dimensions: " + image-diff-result.left-width + " x " + image-diff-result.left-height; font-size: 12px; }
+                                Text { text: image-diff-result.left-path; font-size: 11px; color: #64748b; overflow: elide; }
+                            }
+                        }
+
+                        // Right image info
+                        Rectangle {
+                            background: #f8fafc;
+                            border-width: 1px;
+                            border-color: #e2e8f0;
+                            border-radius: 6px;
+                            horizontal-stretch: 1;
+
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 6px;
+
+                                Text { text: "Right Image"; font-weight: 600; font-size: 12px; color: #475569; }
+                                Text { text: "Dimensions: " + image-diff-result.right-width + " x " + image-diff-result.right-height; font-size: 12px; }
+                                Text { text: image-diff-result.right-path; font-size: 11px; color: #64748b; overflow: elide; }
+                            }
+                        }
+                    }
+
+                    // Difference stats
+                    Rectangle {
+                        background: image-diff-result.difference-percentage == 0 ? #dcfce7 : image-diff-result.difference-percentage < 5 ? #fef9c3 : #fee2e2;
+                        border-width: 1px;
+                        border-color: image-diff-result.difference-percentage == 0 ? #86efac : image-diff-result.difference-percentage < 5 ? #fde047 : #fca5a5;
+                        border-radius: 6px;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            HorizontalBox {
+                                spacing: 24px;
+
+                                VerticalBox {
+                                    spacing: 2px;
+                                    Text { text: "Difference"; font-weight: 600; font-size: 11px; color: #475569; }
+                                    Text {
+                                        text: round(image-diff-result.difference-percentage * 100) / 100 + "%";
+                                        font-weight: 700;
+                                        font-size: 24px;
+                                        color: image-diff-result.difference-percentage == 0 ? #16a34a : image-diff-result.difference-percentage < 5 ? #ca8a04 : #dc2626;
+                                    }
+                                }
+
+                                VerticalBox {
+                                    spacing: 2px;
+                                    Text { text: "Different Pixels"; font-weight: 600; font-size: 11px; color: #475569; }
+                                    Text { text: image-diff-result.different-pixels + " / " + image-diff-result.total-pixels; font-size: 14px; }
+                                }
+
+                                VerticalBox {
+                                    spacing: 2px;
+                                    Text { text: "Mean Diff"; font-weight: 600; font-size: 11px; color: #475569; }
+                                    Text { text: round(image-diff-result.mean-diff * 100) / 100; font-size: 14px; }
+                                }
+
+                                VerticalBox {
+                                    spacing: 2px;
+                                    Text { text: "Dimensions Match"; font-weight: 600; font-size: 11px; color: #475569; }
+                                    Text {
+                                        text: image-diff-result.same-dimensions ? "Yes" : "No";
+                                        font-size: 14px;
+                                        color: image-diff-result.same-dimensions ? #16a34a : #dc2626;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Result message
+                    Rectangle {
+                        height: 40px;
+                        background: #f1f5f9;
+                        border-radius: 4px;
+
+                        HorizontalBox {
+                            padding-left: 12px;
+                            padding-right: 12px;
+
+                            Text {
+                                text: image-diff-result.difference-percentage == 0
+                                    ? "Images are identical"
+                                    : image-diff-result.same-dimensions
+                                        ? "Images differ by " + round(image-diff-result.difference-percentage * 100) / 100 + "% (" + image-diff-result.different-pixels + " pixels)"
+                                        : "Images have different dimensions - cannot compare pixel-by-pixel";
+                                vertical-alignment: center;
+                                font-size: 13px;
+                                color: #334155;
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+        }
+
+        // Status bar
+        Rectangle {
+            height: 22px;
+            background: #f2f4f7;
+            border-width: 1px;
+            border-color: #d0d5db;
+
+            HorizontalBox {
+                padding-left: 6px;
+                padding-right: 6px;
+                spacing: 8px;
+                alignment: center;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    background: #4caf50;
+                    border-radius: 4px;
+                }
+
+                Text {
+                    text: status-text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    font-size: 11px;
+                }
+
+                Rectangle { width: 1px; height: 14px; background: #d0d5db; }
+
+                HorizontalBox {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        background: status-same;
+                        border-radius: 1px;
+                    }
+                    Text {
+                        text: "Same";
+                        vertical-alignment: center;
+                        font-size: 10px;
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        background: status-diff;
+                        border-radius: 1px;
+                    }
+                    Text {
+                        text: "Different";
+                        vertical-alignment: center;
+                        font-size: 10px;
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        background: status-left;
+                        border-radius: 1px;
+                    }
+                    Text {
+                        text: "Left Only";
+                        vertical-alignment: center;
+                        font-size: 10px;
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 4px;
+                    alignment: center;
+
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        background: status-right;
+                        border-radius: 1px;
+                    }
+                    Text {
+                        text: "Right Only";
+                        vertical-alignment: center;
+                        font-size: 10px;
+                    }
+                }
+
+                Rectangle { width: 1px; height: 14px; background: #d0d5db; }
+
+                Text {
+                    text: "RCompare v" + app-version;
+                    vertical-alignment: center;
+                    font-size: 10px;
+                    color: #6b7785;
+                }
+            }
+        }
+    }
+
+    // Click-away overlay to close menus
+    if active-menu != 0: TouchArea {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        clicked => { active-menu = 0; }
+    }
+
+    // Profiles dialog overlay
+    if show-profiles: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {
+                close-profiles();
+                profile-error-message = "";
+                new-profile-name = "";
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 550px;
+            height: 450px;
+            background: #ffffff;
+            border-radius: 8px;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+
+            // Prevent clicks from propagating to background
+            TouchArea {
+                width: 100%;
+                height: 100%;
+            }
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 16px;
+
+                Text {
+                    text: "Session Profiles";
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                // Save current session
+                VerticalBox {
+                    spacing: 8px;
+
+                    Text {
+                        text: "Save Current Session";
+                        font-weight: 600;
+                    }
+
+                    HorizontalBox {
+                        spacing: 8px;
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 32px;
+                            border-width: 1px;
+                            border-color: profile-error-message != "" ? #dc2626 : #c8d2dd;
+                            background: #ffffff;
+
+                            TextInput {
+                                text <=> new-profile-name;
+                                vertical-alignment: center;
+                                font-size: 12px;
+                                edited => {
+                                    profile-error-message = validate-profile-name(self.text);
+                                }
+                            }
+                        }
+
+                        Button {
+                            text: "Save Profile";
+                            enabled: new-profile-name != "" && left-path != "" && right-path != "" && profile-error-message == "";
+                            clicked => {
+                                if save-current-profile(new-profile-name) {
+                                    new-profile-name = "";
+                                    profile-error-message = "";
+                                }
+                            }
+                        }
+                    }
+
+                    if profile-error-message != "": Text {
+                        text: profile-error-message;
+                        font-size: 11px;
+                        color: #dc2626;
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                // Saved profiles list
+                VerticalBox {
+                    vertical-stretch: 1;
+                    spacing: 8px;
+
+                    Text {
+                        text: "Saved Profiles";
+                        font-weight: 600;
+                    }
+
+                    Rectangle {
+                        vertical-stretch: 1;
+                        border-width: 1px;
+                        border-color: #c8d2dd;
+                        background: #f8fafc;
+
+                        if profiles.length == 0: VerticalBox {
+                            padding: 40px;
+                            alignment: center;
+
+                            Text {
+                                text: "No saved profiles";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 14px;
+                                color: #6b7785;
+                            }
+
+                            Text {
+                                text: "Save a profile above to get started";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 12px;
+                                color: #9ca3af;
+                            }
+                        }
+
+                        ListView {
+                            for profile[i] in profiles: TouchArea {
+                                height: 60px;
+                                clicked => {
+                                    selected-profile-index = i;
+                                }
+
+                                Rectangle {
+                                    background: i == selected-profile-index ? selected-bg : (i == 0 ? #ffffff : (Math.mod(i, 2) == 0 ? #ffffff : row-alt));
+                                    border-width: i == selected-profile-index ? 1px : 0px;
+                                    border-color: selected-border;
+
+                                    VerticalBox {
+                                        padding: 8px;
+                                        spacing: 4px;
+
+                                        HorizontalBox {
+                                            Text {
+                                                text: profile.name;
+                                                font-weight: 600;
+                                                font-size: 13px;
+                                                horizontal-stretch: 1;
+                                            }
+                                            Text {
+                                                text: profile.last-used;
+                                                font-size: 11px;
+                                                color: #6b7785;
+                                            }
+                                        }
+
+                                        Text {
+                                            text: "Left: " + profile.left-path;
+                                            font-size: 11px;
+                                            color: #4a5568;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: "Right: " + profile.right-path;
+                                            font-size: 11px;
+                                            color: #4a5568;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "Delete";
+                        enabled: selected-profile-index >= 0;
+                        clicked => {
+                            show-delete-confirm = true;
+                        }
+                    }
+
+                    Button {
+                        text: "Load";
+                        enabled: selected-profile-index >= 0;
+                        clicked => {
+                            load-profile(selected-profile-index);
+                            show-profiles = false;
+                        }
+                    }
+
+                    Button {
+                        text: "Close";
+                        clicked => {
+                            close-profiles();
+                            profile-error-message = "";
+                            new-profile-name = "";
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sync dialog overlay
+    if show-sync-dialog: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { close-sync-dialog(); }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 450px;
+            height: 350px;
+            background: #ffffff;
+            border-radius: 8px;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+
+            // Prevent clicks from propagating to background
+            TouchArea {
+                width: 100%;
+                height: 100%;
+            }
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 16px;
+
+                Text {
+                    text: "Folder Synchronization";
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                // Sync mode selection
+                VerticalBox {
+                    spacing: 12px;
+
+                    Text {
+                        text: "Sync Mode:";
+                        font-weight: 600;
+                    }
+
+                    // Left to Right
+                    TouchArea {
+                        height: 28px;
+                        clicked => { sync-mode = 0; }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                border-width: 2px;
+                                border-color: sync-mode == 0 ? accent : #c8d2dd;
+                                border-radius: 10px;
+                                background: #ffffff;
+
+                                if sync-mode == 0: Rectangle {
+                                    x: 4px;
+                                    y: 4px;
+                                    width: 12px;
+                                    height: 12px;
+                                    background: accent;
+                                    border-radius: 6px;
+                                }
+                            }
+
+                            Text {
+                                text: "Mirror Left → Right (copy left to right)";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Right to Left
+                    TouchArea {
+                        height: 28px;
+                        clicked => { sync-mode = 1; }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                border-width: 2px;
+                                border-color: sync-mode == 1 ? accent : #c8d2dd;
+                                border-radius: 10px;
+                                background: #ffffff;
+
+                                if sync-mode == 1: Rectangle {
+                                    x: 4px;
+                                    y: 4px;
+                                    width: 12px;
+                                    height: 12px;
+                                    background: accent;
+                                    border-radius: 6px;
+                                }
+                            }
+
+                            Text {
+                                text: "Mirror Right → Left (copy right to left)";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Bidirectional
+                    TouchArea {
+                        height: 28px;
+                        clicked => { sync-mode = 2; }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                border-width: 2px;
+                                border-color: sync-mode == 2 ? accent : #c8d2dd;
+                                border-radius: 10px;
+                                background: #ffffff;
+
+                                if sync-mode == 2: Rectangle {
+                                    x: 4px;
+                                    y: 4px;
+                                    width: 12px;
+                                    height: 12px;
+                                    background: accent;
+                                    border-radius: 6px;
+                                }
+                            }
+
+                            Text {
+                                text: "Bidirectional (newer wins)";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                // Options
+                VerticalBox {
+                    spacing: 8px;
+
+                    // Dry run checkbox
+                    TouchArea {
+                        height: 24px;
+                        clicked => { sync-dry-run = !sync-dry-run; }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                background: sync-dry-run ? accent : #ffffff;
+                                border-width: 1px;
+                                border-color: sync-dry-run ? accent : #c8d2dd;
+                                border-radius: 3px;
+
+                                if sync-dry-run: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: "Preview only (dry run)";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Use trash checkbox
+                    TouchArea {
+                        height: 24px;
+                        clicked => { sync-use-trash = !sync-use-trash; }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                width: 20px;
+                                height: 20px;
+                                background: sync-use-trash ? accent : #ffffff;
+                                border-width: 1px;
+                                border-color: sync-use-trash ? accent : #c8d2dd;
+                                border-radius: 3px;
+
+                                if sync-use-trash: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: "Move deleted files to trash";
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { close-sync-dialog(); }
+                    }
+
+                    Button {
+                        text: sync-dry-run ? "Preview Sync" : "Execute Sync";
+                        primary: true;
+                        clicked => { execute-sync(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Settings dialog overlay
+    if show-settings: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { show-settings = false; cancel-settings(); }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 500px;
+            height: 420px;
+            background: #ffffff;
+            border-radius: 8px;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+
+            // Prevent clicks from propagating to background
+            TouchArea {
+                width: 100%;
+                height: 100%;
+            }
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 16px;
+
+                Text {
+                    text: "Settings";
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                VerticalBox {
+                    spacing: 12px;
+
+                    // Ignore patterns
+                    VerticalBox {
+                        spacing: 4px;
+
+                        Text {
+                            text: "Ignore Patterns (one per line):";
+                            font-weight: 600;
+                        }
+
+                        Rectangle {
+                            height: 80px;
+                            border-width: 1px;
+                            border-color: #c8d2dd;
+                            background: #ffffff;
+
+                            TextInput {
+                                text <=> settings-ignore-patterns;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                            }
+                        }
+
+                        Text {
+                            text: "Examples: *.o, node_modules/, .git/";
+                            font-size: 11px;
+                            color: #6b7785;
+                        }
+                    }
+
+                    // Follow symlinks
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: start;
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { settings-follow-symlinks = !settings-follow-symlinks; }
+
+                            Rectangle {
+                                background: settings-follow-symlinks ? accent : #ffffff;
+                                border-width: 1px;
+                                border-color: settings-follow-symlinks ? accent : #c8d2dd;
+                                border-radius: 3px;
+
+                                if settings-follow-symlinks: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "Follow symbolic links";
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Hash verification
+                    HorizontalBox {
+                        spacing: 8px;
+                        alignment: start;
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { settings-hash-verification = !settings-hash-verification; }
+
+                            Rectangle {
+                                background: settings-hash-verification ? accent : #ffffff;
+                                border-width: 1px;
+                                border-color: settings-hash-verification ? accent : #c8d2dd;
+                                border-radius: 3px;
+
+                                if settings-hash-verification: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "Use hash verification for same-size files";
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Cache directory
+                    VerticalBox {
+                        spacing: 4px;
+
+                        Text {
+                            text: "Cache Directory:";
+                            font-weight: 600;
+                        }
+
+                        HorizontalBox {
+                            spacing: 8px;
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 28px;
+                                border-width: 1px;
+                                border-color: #c8d2dd;
+                                background: #ffffff;
+
+                                TextInput {
+                                    text <=> settings-cache-dir;
+                                    vertical-alignment: center;
+                                    font-size: 12px;
+                                }
+                            }
+
+                            Button {
+                                text: "Browse...";
+                                clicked => { select-cache-dir(); }
+                            }
+                        }
+
+                        Text {
+                            text: "Leave empty for default location";
+                            font-size: 11px;
+                            color: #6b7785;
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { show-settings = false; cancel-settings(); }
+                    }
+
+                    Button {
+                        text: "Save";
+                        primary: true;
+                        clicked => { show-settings = false; save-settings(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete confirmation dialog
+    if show-delete-confirm: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000080;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => { show-delete-confirm = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 400px;
+            height: 180px;
+            background: #ffffff;
+            border-radius: 8px;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000040;
+
+            // Prevent clicks from propagating to background
+            TouchArea {
+                width: 100%;
+                height: 100%;
+            }
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 16px;
+
+                Text {
+                    text: "Delete Profile?";
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: #e0e5ec;
+                }
+
+                Text {
+                    text: selected-profile-index >= 0 && selected-profile-index < profiles.length
+                        ? "Are you sure you want to delete the profile '" + profiles[selected-profile-index].name + "'?"
+                        : "Are you sure you want to delete this profile?";
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "Cancel";
+                        clicked => { show-delete-confirm = false; }
+                    }
+
+                    Button {
+                        text: "Delete";
+                        primary: true;
+                        clicked => {
+                            delete-profile(selected-profile-index);
+                            selected-profile-index = -1;
+                            show-delete-confirm = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Menu dropdown overlays (rendered last to appear on top)
+    // File dropdown menu
+    if active-menu == 1: Rectangle {
+        x: 12px;
+        y: 32px;
+        width: 180px;
+        height: 200px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { new-session(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "New Session"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { compare-clicked(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Compare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { refresh-clicked(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Refresh"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #e0e5ec; }
+
+            TouchArea {
+                height: 26px;
+                clicked => { open-profiles(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Load Profile..."; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #e0e5ec; }
+
+            TouchArea {
+                height: 26px;
+                clicked => { exit-application(); }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Exit"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Edit dropdown menu
+    if active-menu == 2: Rectangle {
+        x: 68px;
+        y: 32px;
+        width: 180px;
+        height: 130px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { copy-left-to-right(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Copy Left to Right"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { copy-right-to-left(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Copy Right to Left"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #e0e5ec; }
+
+            TouchArea {
+                height: 26px;
+                clicked => { expand-all(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Expand All"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { collapse-all(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Collapse All"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+
+    // View dropdown menu
+    if active-menu == 3: Rectangle {
+        x: 118px;
+        y: 32px;
+        width: 180px;
+        height: 130px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { active-view = 0; active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Folder Compare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { active-view = 1; active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Text Compare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { active-view = 2; active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Hex Compare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            TouchArea {
+                height: 26px;
+                clicked => { active-view = 3; active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Image Compare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #e0e5ec; }
+
+            TouchArea {
+                height: 26px;
+                clicked => { toggle-three-way-mode(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: three-way-mode ? "Disable 3-Way Mode" : "Enable 3-Way Mode"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Session dropdown menu
+    if active-menu == 4: Rectangle {
+        x: 173px;
+        y: 32px;
+        width: 180px;
+        height: 100px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { open-profiles(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Manage Profiles..."; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: #e0e5ec; }
+
+            TouchArea {
+                height: 26px;
+                clicked => { open-sync-dialog(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Synchronize..."; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Tools dropdown menu
+    if active-menu == 5: Rectangle {
+        x: 243px;
+        y: 32px;
+        width: 180px;
+        height: 60px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { open-settings(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "Settings..."; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Help dropdown menu
+    if active-menu == 6: Rectangle {
+        x: 298px;
+        y: 32px;
+        width: 180px;
+        height: 60px;
+        background: #ffffff;
+        border-width: 1px;
+        border-color: panel-border;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000020;
+
+        VerticalBox {
+            padding: 4px;
+            spacing: 2px;
+
+            TouchArea {
+                height: 26px;
+                clicked => { show-about(); active-menu = 0; }
+                Rectangle {
+                    background: parent.has-hover ? accent-soft : transparent;
+                    HorizontalBox {
+                        padding-left: 12px;
+                        Text { text: "About RCompare"; vertical-alignment: center; font-size: 12px; }
+                    }
+                }
+            }
+        }
+    }
+}

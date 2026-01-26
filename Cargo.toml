@@ -1,0 +1,92 @@
+[workspace]
+members = [
+    "rcompare_common",
+    "rcompare_core",
+    "rcompare_cli",
+    "rcompare_gui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["RCompare Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aecs4u/rcompare"
+
+[workspace.dependencies]
+# Shared dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+chrono = "0.4"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Filesystem and I/O
+jwalk = "0.8"
+ignore = "0.4"
+
+# Hashing
+blake3 = "1.5"
+hex = "0.4"
+
+# Serialization
+bincode = "1.3"
+toml = "0.8"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Diffing
+similar = { version = "2.6", features = ["inline"] }
+
+# Syntax highlighting
+syntect = "5.2"
+
+# Image processing
+image = "0.25"
+
+# Archive handling
+zip = "0.6"
+tar = "0.4"
+flate2 = "1.0"
+sevenz-rust = "0.6"
+bzip2 = "0.5"
+xz2 = "0.1"
+unrar = "0.5"
+
+# Pattern matching
+glob = "0.3"
+
+# Concurrency
+rayon = "1.10"
+crossbeam = "0.8"
+
+# Platform-specific paths
+directories = "5.0"
+
+# Trash
+trash = "5.0"
+
+# GUI
+slint = { version = "1.9", default-features = false, features = ["backend-winit", "renderer-femtovg", "compat-1-2"] }
+filetime = "0.2"
+tempfile = "3.8"
+
+# SSH/SFTP
+ssh2 = "0.9"
+
+# Cloud storage - S3
+aws-config = "1.5"
+aws-sdk-s3 = "1.36"
+aws-credential-types = "1.2"
+
+# Cloud storage - WebDAV and HTTP
+reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1.5"
+async-trait = "0.1"
+tokio = { version = "1.37", features = ["full"] }
+url = "2.5"

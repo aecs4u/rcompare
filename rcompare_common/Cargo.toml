@@ -1,0 +1,17 @@
+[package]
+name = "rcompare_common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+blake3.workspace = true
+hex.workspace = true
+toml.workspace = true
+directories.workspace = true
