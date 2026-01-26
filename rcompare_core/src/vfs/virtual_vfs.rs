@@ -184,7 +184,11 @@ impl UnionVfs {
     /// Find the layer that contains a given path
     fn find_layer(&self, path: &Path) -> Option<&Arc<dyn Vfs>> {
         // Search from last (highest priority) to first
-        self.layers.iter().rev().find(|&layer| layer.exists(path)).map(|v| v as _)
+        self.layers
+            .iter()
+            .rev()
+            .find(|&layer| layer.exists(path))
+            .map(|v| v as _)
     }
 }
 

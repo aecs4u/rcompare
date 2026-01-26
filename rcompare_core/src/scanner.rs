@@ -104,9 +104,7 @@ impl FolderScanner {
             }
 
             let entry = entry.map_err(|e| {
-                RCompareError::Io(std::io::Error::other(
-                    format!("Walk error: {}", e),
-                ))
+                RCompareError::Io(std::io::Error::other(format!("Walk error: {}", e)))
             })?;
 
             let path = entry.path();
@@ -121,9 +119,7 @@ impl FolderScanner {
             }
 
             let metadata = entry.metadata().map_err(|e| {
-                RCompareError::Io(std::io::Error::other(
-                    format!("Metadata error: {}", e),
-                ))
+                RCompareError::Io(std::io::Error::other(format!("Metadata error: {}", e)))
             })?;
 
             // For symlinks, follow them to determine if they point to a directory
@@ -246,10 +242,10 @@ impl FolderScanner {
             // Check all parent directories
             let mut current = path;
             while let Some(parent) = current.parent() {
-                if !parent.as_os_str().is_empty()
-                    && custom_ignore.matched(parent, true).is_ignore() {
-                        return true;
-                    }
+                if !parent.as_os_str().is_empty() && custom_ignore.matched(parent, true).is_ignore()
+                {
+                    return true;
+                }
                 current = parent;
             }
         }
@@ -271,10 +267,9 @@ impl FolderScanner {
         // Check all parent directories
         let mut current = path;
         while let Some(parent) = current.parent() {
-            if !parent.as_os_str().is_empty()
-                && gitignore.matched(parent, true).is_ignore() {
-                    return true;
-                }
+            if !parent.as_os_str().is_empty() && gitignore.matched(parent, true).is_ignore() {
+                return true;
+            }
             current = parent;
         }
         false
@@ -323,8 +318,10 @@ mod tests {
         fs::write(temp.path().join("file1.txt"), b"test").unwrap();
         fs::write(temp.path().join("file2.o"), b"test").unwrap();
 
-        let mut config = AppConfig::default();
-        config.ignore_patterns = vec!["*.o".to_string()];
+        let config = AppConfig {
+            ignore_patterns: vec!["*.o".to_string()],
+            ..Default::default()
+        };
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
@@ -347,11 +344,13 @@ mod tests {
         fs::create_dir(temp.path().join("build")).unwrap();
         fs::write(temp.path().join("build/output.txt"), b"test").unwrap();
 
-        let mut config = AppConfig::default();
-        config.ignore_patterns = vec![
-            "*.log".to_string(),  // Ignore all .log files at any depth
-            "build/".to_string(), // Ignore build directory
-        ];
+        let config = AppConfig {
+            ignore_patterns: vec![
+                "*.log".to_string(),  // Ignore all .log files at any depth
+                "build/".to_string(), // Ignore build directory
+            ],
+            ..Default::default()
+        };
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
@@ -394,10 +393,12 @@ mod tests {
         fs::create_dir(temp.path().join("subdir")).unwrap();
         fs::write(temp.path().join("subdir/config.toml"), b"test").unwrap();
 
-        let mut config = AppConfig::default();
-        config.ignore_patterns = vec![
-            "/config.toml".to_string(), // Ignore only in root
-        ];
+        let config = AppConfig {
+            ignore_patterns: vec![
+                "/config.toml".to_string(), // Ignore only in root
+            ],
+            ..Default::default()
+        };
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
@@ -429,10 +430,12 @@ mod tests {
         fs::write(temp.path().join("temp/file.txt"), b"test").unwrap();
         fs::write(temp.path().join("temp.txt"), b"test").unwrap(); // File named "temp.txt"
 
-        let mut config = AppConfig::default();
-        config.ignore_patterns = vec![
-            "temp/".to_string(), // Ignore only directories named "temp"
-        ];
+        let config = AppConfig {
+            ignore_patterns: vec![
+                "temp/".to_string(), // Ignore only directories named "temp"
+            ],
+            ..Default::default()
+        };
 
         let scanner = FolderScanner::new(config);
         let entries = scanner.scan(temp.path()).unwrap();
@@ -471,7 +474,7 @@ mod tests {
                 "Scanner included root directory entry with empty path"
             );
             assert!(
-                entry.path != std::path::PathBuf::from(""),
+                entry.path != Path::new(""),
                 "Scanner included root directory with empty PathBuf"
             );
         }

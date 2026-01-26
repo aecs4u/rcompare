@@ -40,9 +40,10 @@ pub struct HighlightStyle {
 }
 
 /// Whitespace handling options for text comparison
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WhitespaceMode {
     /// Compare whitespace exactly
+    #[default]
     Exact,
     /// Ignore all whitespace changes
     IgnoreAll,
@@ -52,12 +53,6 @@ pub enum WhitespaceMode {
     IgnoreTrailing,
     /// Ignore changes in amount of whitespace
     IgnoreChanges,
-}
-
-impl Default for WhitespaceMode {
-    fn default() -> Self {
-        Self::Exact
-    }
 }
 
 /// Regular expression rule for filtering or transforming lines before comparison
@@ -157,38 +152,39 @@ impl TextDiffEngine {
 
         // Apply regex rules
         for rule in &self.config.regex_rules {
-            result = rule.pattern.replace_all(&result, &rule.replacement).to_string();
+            result = rule
+                .pattern
+                .replace_all(&result, &rule.replacement)
+                .to_string();
         }
 
         // Apply whitespace handling
         match self.config.whitespace_mode {
             WhitespaceMode::Exact => result,
-            WhitespaceMode::IgnoreAll => {
-                result.lines()
-                    .map(|line| line.chars().filter(|c| !c.is_whitespace()).collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            WhitespaceMode::IgnoreLeading => {
-                result.lines()
-                    .map(|line| line.trim_start())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            WhitespaceMode::IgnoreTrailing => {
-                result.lines()
-                    .map(|line| line.trim_end())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            WhitespaceMode::IgnoreChanges => {
-                result.lines()
-                    .map(|line| {
-                        line.split_whitespace().collect::<Vec<_>>().join(" ")
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            WhitespaceMode::IgnoreAll => result
+                .lines()
+                .map(|line| {
+                    line.chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            WhitespaceMode::IgnoreLeading => result
+                .lines()
+                .map(|line| line.trim_start())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            WhitespaceMode::IgnoreTrailing => result
+                .lines()
+                .map(|line| line.trim_end())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            WhitespaceMode::IgnoreChanges => result
+                .lines()
+                .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>()
+                .join("\n"),
         }
     }
 
@@ -422,8 +418,6 @@ impl Default for TextDiffEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_text_diff_basic() {
@@ -434,7 +428,7 @@ mod tests {
         let diff = engine
             .compare_text(left, right, Path::new("test.txt"))
             .unwrap();
-        assert!(diff.len() > 0);
+        assert!(!diff.is_empty());
     }
 
     #[test]
@@ -456,6 +450,6 @@ mod tests {
         let diff = engine
             .compare_text_patience(left, right, Path::new("test.rs"))
             .unwrap();
-        assert!(diff.len() > 0);
+        assert!(!diff.is_empty());
     }
 }

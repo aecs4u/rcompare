@@ -3,8 +3,8 @@
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus, Vfs};
-use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
 use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
+use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
     ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
@@ -926,8 +926,7 @@ fn run_scan(
                                         "\n  Row-level differences (showing first {}):",
                                         result.row_diffs.len().min(5)
                                     );
-                                    for diff in result.row_diffs.iter().take(5)
-                                    {
+                                    for diff in result.row_diffs.iter().take(5) {
                                         match diff.diff_type {
                                             rcompare_core::csv_diff::RowDiffType::Modified => {
                                                 println!(
@@ -1787,9 +1786,16 @@ fn run_scan(
                         let right_path = right.join(&right_entry.path);
 
                         // Read file contents
-                        match (std::fs::read_to_string(&left_path), std::fs::read_to_string(&right_path)) {
+                        match (
+                            std::fs::read_to_string(&left_path),
+                            std::fs::read_to_string(&right_path),
+                        ) {
                             (Ok(left_content), Ok(right_content)) => {
-                                match text_engine.compare_text_patience(&left_content, &right_content, &left_path) {
+                                match text_engine.compare_text_patience(
+                                    &left_content,
+                                    &right_content,
+                                    &left_path,
+                                ) {
                                     Ok(diff_lines) => {
                                         text_comparisons += 1;
 
@@ -1881,11 +1887,52 @@ fn is_text_file(path: &Path) -> bool {
         .map(|ext| {
             matches!(
                 ext.to_lowercase().as_str(),
-                "txt" | "md" | "markdown" | "rst" | "log"
-                | "rs" | "toml" | "yaml" | "yml" | "json" | "xml" | "html" | "htm" | "css" | "js" | "ts" | "tsx" | "jsx"
-                | "c" | "cpp" | "cc" | "cxx" | "h" | "hpp" | "hxx" | "cs" | "java" | "py" | "rb" | "go" | "php" | "pl" | "sh" | "bash" | "zsh" | "fish"
-                | "sql" | "conf" | "cfg" | "ini" | "properties"
-                | "cmake" | "make" | "dockerfile" | "gitignore" | "gitattributes"
+                "txt"
+                    | "md"
+                    | "markdown"
+                    | "rst"
+                    | "log"
+                    | "rs"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "json"
+                    | "xml"
+                    | "html"
+                    | "htm"
+                    | "css"
+                    | "js"
+                    | "ts"
+                    | "tsx"
+                    | "jsx"
+                    | "c"
+                    | "cpp"
+                    | "cc"
+                    | "cxx"
+                    | "h"
+                    | "hpp"
+                    | "hxx"
+                    | "cs"
+                    | "java"
+                    | "py"
+                    | "rb"
+                    | "go"
+                    | "php"
+                    | "pl"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "fish"
+                    | "sql"
+                    | "conf"
+                    | "cfg"
+                    | "ini"
+                    | "properties"
+                    | "cmake"
+                    | "make"
+                    | "dockerfile"
+                    | "gitignore"
+                    | "gitattributes"
             )
         })
         .unwrap_or(false)

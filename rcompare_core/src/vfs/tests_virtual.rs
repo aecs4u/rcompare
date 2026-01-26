@@ -2,7 +2,7 @@
 mod tests {
     use crate::vfs::{FilteredVfs, LocalVfs, UnionVfs};
     use rcompare_common::Vfs;
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;

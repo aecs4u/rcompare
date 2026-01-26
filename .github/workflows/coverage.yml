@@ -57,6 +57,8 @@ jobs:
         run: cargo install cargo-tarpaulin
 
       - name: Run tests with coverage
+        # Note: --avoid-cfg-tarpaulin prevents instrumentation issues with polars-arrow
+        # See: https://github.com/xd009642/tarpaulin/issues/1208
         run: |
           cargo tarpaulin \
             --workspace \
@@ -66,6 +68,7 @@ jobs:
             --exclude-files "target/*" \
             --exclude-files "*/tests/*" \
             --exclude-files "*/examples/*" \
+            --avoid-cfg-tarpaulin \
             -- --test-threads 1
 
       - name: Upload coverage reports to Codecov

@@ -2,7 +2,6 @@
 mod tests {
     use crate::vfs::LocalVfs;
     use rcompare_common::Vfs;
-    use std::fs;
     use std::io::{Read, Write};
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -381,7 +380,7 @@ mod tests {
 
         for path in paths {
             vfs.write_file(&path, b"test")
-                .expect(&format!("Failed to write {:?}", path));
+                .unwrap_or_else(|_| panic!("Failed to write {:?}", path));
             assert!(
                 vfs.metadata(&path).is_ok(),
                 "Failed to get metadata for {:?}",

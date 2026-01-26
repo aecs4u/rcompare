@@ -4,11 +4,17 @@
 [advisories]
 # Deny security vulnerabilities
 vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
 yanked = "deny"
 notice = "warn"
-ignore = []
+# Ignore unmaintained/unsound crate warnings from transitive dependencies
+# These are indirect dependencies from slint, syntect, image, aws-sdk-s3, etc.
+ignore = [
+    "RUSTSEC-2025-0141", # bincode (unmaintained) - from syntect and slint
+    "RUSTSEC-2025-0119", # number_prefix (unmaintained) - from indicatif
+    "RUSTSEC-2024-0436", # paste (unmaintained) - from rav1e/image
+    "RUSTSEC-2024-0320", # yaml-rust (unmaintained) - from syntect
+    "RUSTSEC-2026-0002", # lru (unsound - IterMut) - from aws-sdk-s3
+]
 
 [licenses]
 # Allow common open-source licenses

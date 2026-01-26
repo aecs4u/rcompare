@@ -60,9 +60,10 @@ impl S3Vfs {
 
         // Create a Tokio runtime for async operations
         let runtime = Runtime::new().map_err(|e| {
-            VfsError::Io(std::io::Error::other(
-                format!("Failed to create async runtime: {}", e),
-            ))
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to create async runtime: {}",
+                e
+            )))
         })?;
 
         let client = runtime.block_on(Self::create_client(&config))?;
@@ -242,9 +243,10 @@ impl Vfs for S3Vfs {
                 }
 
                 let output = list_request.send().await.map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to list S3 objects: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to list S3 objects: {}",
+                        e
+                    )))
                 })?;
 
                 // Add files (objects)
@@ -323,9 +325,10 @@ impl Vfs for S3Vfs {
                 .collect()
                 .await
                 .map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to read S3 object body: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to read S3 object body: {}",
+                        e
+                    )))
                 })?
                 .into_bytes();
 
@@ -344,9 +347,10 @@ impl Vfs for S3Vfs {
                 .send()
                 .await
                 .map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to delete S3 object: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to delete S3 object: {}",
+                        e
+                    )))
                 })?;
 
             Ok(())
@@ -368,9 +372,10 @@ impl Vfs for S3Vfs {
                 .send()
                 .await
                 .map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to copy S3 object: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to copy S3 object: {}",
+                        e
+                    )))
                 })?;
 
             Ok(())
@@ -411,9 +416,10 @@ impl Vfs for S3Vfs {
                 .send()
                 .await
                 .map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to create S3 directory: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to create S3 directory: {}",
+                        e
+                    )))
                 })?;
 
             Ok(())
@@ -444,9 +450,10 @@ impl Vfs for S3Vfs {
                 .send()
                 .await
                 .map_err(|e| {
-                    VfsError::Io(std::io::Error::other(
-                        format!("Failed to write S3 object: {}", e),
-                    ))
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to write S3 object: {}",
+                        e
+                    )))
                 })?;
 
             Ok(())
@@ -496,11 +503,7 @@ impl std::io::Write for S3Writer {
                 .body(aws_sdk_s3::primitives::ByteStream::from(data))
                 .send()
                 .await
-                .map_err(|e| {
-                    std::io::Error::other(
-                        format!("Failed to upload to S3: {}", e),
-                    )
-                })?;
+                .map_err(|e| std::io::Error::other(format!("Failed to upload to S3: {}", e)))?;
 
             Ok(())
         })
