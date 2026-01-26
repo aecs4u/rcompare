@@ -138,7 +138,7 @@ impl Default for AppConfig {
         Self {
             ignore_patterns: vec![],
             follow_symlinks: false,
-            use_hash_verification: true,
+            use_hash_verification: false,
             cache_dir: None,
             portable_mode: false,
             profiles: vec![],

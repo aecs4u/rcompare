@@ -60,6 +60,10 @@ enum Commands {
         /// Disable ANSI colors in output
         #[arg(long)]
         no_color: bool,
+
+        /// Use columned diff-style output (side-by-side comparison)
+        #[arg(short = 'c', long)]
+        columns: bool,
     },
 }
 
@@ -114,6 +118,7 @@ fn main() {
             diff_only,
             json,
             no_color,
+            columns,
         } => {
             if let Err(e) = run_scan(
                 left,
@@ -126,6 +131,7 @@ fn main() {
                 diff_only,
                 json,
                 no_color,
+                columns,
             ) {
                 error!("Scan failed: {}", e);
                 std::process::exit(1);
@@ -145,6 +151,7 @@ fn run_scan(
     diff_only: bool,
     json: bool,
     no_color: bool,
+    columns: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Validate paths
     if !left.exists() {
@@ -241,9 +248,7 @@ fn run_scan(
     }
 
     // Display results
-    println!("\n{}", "=".repeat(80));
-    println!("Comparison Results");
-    println!("{}", "=".repeat(80));
+    let use_color = !no_color && std::io::stdout().is_terminal();
 
     let mut same_count = 0;
     let mut different_count = 0;
@@ -251,49 +256,119 @@ fn run_scan(
     let mut orphan_right_count = 0;
     let mut unchecked_count = 0;
 
-    let use_color = !no_color && std::io::stdout().is_terminal();
+    if columns {
+        // Columned output format (side-by-side)
+        println!("\n{}", "=".repeat(120));
+        println!("Comparison Results (Side-by-Side)");
+        println!("{}", "=".repeat(120));
+        println!("{:<50} {:^8} {:<50}", "Left", "Status", "Right");
+        println!("{}", "-".repeat(120));
 
-    for node in &diff_nodes {
-        match node.status {
-            DiffStatus::Same => same_count += 1,
-            DiffStatus::Different => different_count += 1,
-            DiffStatus::OrphanLeft => orphan_left_count += 1,
-            DiffStatus::OrphanRight => orphan_right_count += 1,
-            DiffStatus::Unchecked => unchecked_count += 1,
+        for node in &diff_nodes {
+            match node.status {
+                DiffStatus::Same => same_count += 1,
+                DiffStatus::Different => different_count += 1,
+                DiffStatus::OrphanLeft => orphan_left_count += 1,
+                DiffStatus::OrphanRight => orphan_right_count += 1,
+                DiffStatus::Unchecked => unchecked_count += 1,
+            }
+
+            // Skip identical files if diff_only is set
+            if diff_only && node.status == DiffStatus::Same {
+                continue;
+            }
+
+            let status_symbol = match node.status {
+                DiffStatus::Same => "==",
+                DiffStatus::Different => "!=",
+                DiffStatus::OrphanLeft => "<<",
+                DiffStatus::OrphanRight => ">>",
+                DiffStatus::Unchecked => "??",
+            };
+
+            let (status_color, reset) = if use_color {
+                (match node.status {
+                    DiffStatus::Same => "\x1b[32m",        // Green
+                    DiffStatus::Different => "\x1b[31m",   // Red
+                    DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
+                    DiffStatus::OrphanRight => "\x1b[34m", // Blue
+                    DiffStatus::Unchecked => "\x1b[36m",   // Cyan
+                }, "\x1b[0m")
+            } else {
+                ("", "")
+            };
+
+            let left_text = if node.left.is_some() {
+                format!("{}", node.relative_path.display())
+            } else {
+                String::from("(missing)")
+            };
+
+            let right_text = if node.right.is_some() {
+                format!("{}", node.relative_path.display())
+            } else {
+                String::from("(missing)")
+            };
+
+            println!(
+                "{:<50} {}{:^8}{} {:<50}",
+                truncate_path(&left_text, 50),
+                status_color,
+                status_symbol,
+                reset,
+                truncate_path(&right_text, 50)
+            );
         }
+        println!("{}", "=".repeat(120));
+    } else {
+        // Standard output format
+        println!("\n{}", "=".repeat(80));
+        println!("Comparison Results");
+        println!("{}", "=".repeat(80));
 
-        // Skip identical files if diff_only is set
-        if diff_only && node.status == DiffStatus::Same {
-            continue;
+        for node in &diff_nodes {
+            match node.status {
+                DiffStatus::Same => same_count += 1,
+                DiffStatus::Different => different_count += 1,
+                DiffStatus::OrphanLeft => orphan_left_count += 1,
+                DiffStatus::OrphanRight => orphan_right_count += 1,
+                DiffStatus::Unchecked => unchecked_count += 1,
+            }
+
+            // Skip identical files if diff_only is set
+            if diff_only && node.status == DiffStatus::Same {
+                continue;
+            }
+
+            let status_symbol = match node.status {
+                DiffStatus::Same => "  ==  ",
+                DiffStatus::Different => "  !=  ",
+                DiffStatus::OrphanLeft => "  <<  ",
+                DiffStatus::OrphanRight => "  >>  ",
+                DiffStatus::Unchecked => "  ??  ",
+            };
+
+            let (status_color, reset) = if use_color {
+                (match node.status {
+                    DiffStatus::Same => "\x1b[32m",        // Green
+                    DiffStatus::Different => "\x1b[31m",   // Red
+                    DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
+                    DiffStatus::OrphanRight => "\x1b[34m", // Blue
+                    DiffStatus::Unchecked => "\x1b[36m",   // Cyan
+                }, "\x1b[0m")
+            } else {
+                ("", "")
+            };
+
+            println!(
+                "{}{}{} {}",
+                status_color,
+                status_symbol,
+                reset,
+                node.relative_path.display()
+            );
         }
-
-        let status_symbol = match node.status {
-            DiffStatus::Same => "  ==  ",
-            DiffStatus::Different => "  !=  ",
-            DiffStatus::OrphanLeft => "  <<  ",
-            DiffStatus::OrphanRight => "  >>  ",
-            DiffStatus::Unchecked => "  ??  ",
-        };
-
-        let (status_color, reset) = if use_color {
-            (match node.status {
-                DiffStatus::Same => "\x1b[32m",        // Green
-                DiffStatus::Different => "\x1b[31m",   // Red
-                DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
-                DiffStatus::OrphanRight => "\x1b[34m", // Blue
-                DiffStatus::Unchecked => "\x1b[36m",   // Cyan
-            }, "\x1b[0m")
-        } else {
-            ("", "")
-        };
-
-        println!(
-            "{}{}{} {}",
-            status_color,
-            status_symbol,
-            reset,
-            node.relative_path.display()
-        );
+        println!("\n{}", "=".repeat(80));
     }
 
     println!("\n{}", "=".repeat(80));
@@ -404,6 +479,22 @@ fn json_side(entry: &rcompare_common::FileEntry) -> JsonFileSide {
 
 fn system_time_to_unix(time: SystemTime) -> Option<u64> {
     time.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.chars().count() <= max_len {
+        return path.to_string();
+    }
+
+    // Try to keep the end of the path (filename) visible
+    let prefix = "...";
+    let keep_len = max_len.saturating_sub(prefix.len());
+
+    // Use char indices to avoid splitting UTF-8 characters
+    let skip_count = path.chars().count().saturating_sub(keep_len);
+    let suffix: String = path.chars().skip(skip_count).collect();
+
+    format!("{}{}", prefix, suffix)
 }
 
 fn scan_source(
