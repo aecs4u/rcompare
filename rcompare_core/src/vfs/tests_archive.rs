@@ -193,8 +193,7 @@ mod tests {
         let mut zip = zip::ZipWriter::new(file);
         let _ = zip.finish().expect("Failed to finish ZIP");
 
-        let vfs =
-            WritableZipVfs::new(zip_path.clone()).expect("Failed to create WritableZipVfs");
+        let vfs = WritableZipVfs::new(zip_path.clone()).expect("Failed to create WritableZipVfs");
 
         // Write a file
         vfs.write_file(&PathBuf::from("new.txt"), b"New content")
