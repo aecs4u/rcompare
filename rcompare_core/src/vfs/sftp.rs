@@ -49,8 +49,13 @@ pub struct SftpVfs {
 impl SftpVfs {
     /// Create a new SFTP VFS connection
     pub fn new(config: SftpConfig) -> Result<Self, VfsError> {
-        let instance_id = format!("sftp://{}@{}:{}{}",
-            config.username, config.host, config.port, config.root_path.display());
+        let instance_id = format!(
+            "sftp://{}@{}:{}{}",
+            config.username,
+            config.host,
+            config.port,
+            config.root_path.display()
+        );
 
         let session = Self::connect(&config)?;
 
@@ -63,68 +68,80 @@ impl SftpVfs {
 
     fn connect(config: &SftpConfig) -> Result<Session, VfsError> {
         let addr = format!("{}:{}", config.host, config.port);
-        let tcp = TcpStream::connect(&addr)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        let tcp = TcpStream::connect(&addr).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::ConnectionRefused,
-                format!("Failed to connect to {}: {}", addr, e)
-            )))?;
+                format!("Failed to connect to {}: {}", addr, e),
+            ))
+        })?;
 
         tcp.set_read_timeout(Some(Duration::from_secs(30)))
-            .map_err(|e| VfsError::Io(e))?;
+            .map_err(VfsError::Io)?;
         tcp.set_write_timeout(Some(Duration::from_secs(30)))
-            .map_err(|e| VfsError::Io(e))?;
+            .map_err(VfsError::Io)?;
 
-        let mut session = Session::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create SSH session: {}", e)
-            )))?;
+        let mut session = Session::new().map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to create SSH session: {}", e),
+            ))
+        })?;
 
         session.set_tcp_stream(tcp);
-        session.handshake()
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        session.handshake().map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::ConnectionRefused,
-                format!("SSH handshake failed: {}", e)
-            )))?;
+                format!("SSH handshake failed: {}", e),
+            ))
+        })?;
 
         // Authenticate
         match &config.auth {
             SftpAuth::Password(password) => {
-                session.userauth_password(&config.username, password)
-                    .map_err(|e| VfsError::Io(std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        format!("Password authentication failed: {}", e)
-                    )))?;
+                session
+                    .userauth_password(&config.username, password)
+                    .map_err(|e| {
+                        VfsError::Io(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            format!("Password authentication failed: {}", e),
+                        ))
+                    })?;
             }
-            SftpAuth::KeyFile { private_key, passphrase } => {
-                session.userauth_pubkey_file(
-                    &config.username,
-                    None,
-                    private_key,
-                    passphrase.as_deref(),
-                ).map_err(|e| VfsError::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!("Key file authentication failed: {}", e)
-                )))?;
+            SftpAuth::KeyFile {
+                private_key,
+                passphrase,
+            } => {
+                session
+                    .userauth_pubkey_file(
+                        &config.username,
+                        None,
+                        private_key,
+                        passphrase.as_deref(),
+                    )
+                    .map_err(|e| {
+                        VfsError::Io(std::io::Error::new(
+                            std::io::ErrorKind::PermissionDenied,
+                            format!("Key file authentication failed: {}", e),
+                        ))
+                    })?;
             }
             SftpAuth::Agent => {
-                let mut agent = session.agent()
-                    .map_err(|e| VfsError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to connect to SSH agent: {}", e)
-                    )))?;
+                let mut agent = session.agent().map_err(|e| {
+                    VfsError::Io(std::io::Error::other(
+                        format!("Failed to connect to SSH agent: {}", e),
+                    ))
+                })?;
 
-                agent.connect()
-                    .map_err(|e| VfsError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to connect to SSH agent: {}", e)
-                    )))?;
+                agent.connect().map_err(|e| {
+                    VfsError::Io(std::io::Error::other(
+                        format!("Failed to connect to SSH agent: {}", e),
+                    ))
+                })?;
 
-                agent.list_identities()
-                    .map_err(|e| VfsError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to list SSH agent identities: {}", e)
-                    )))?;
+                agent.list_identities().map_err(|e| {
+                    VfsError::Io(std::io::Error::other(
+                        format!("Failed to list SSH agent identities: {}", e),
+                    ))
+                })?;
 
                 let mut authenticated = false;
                 for identity in agent.identities().unwrap_or_default() {
@@ -137,7 +154,7 @@ impl SftpVfs {
                 if !authenticated {
                     return Err(VfsError::Io(std::io::Error::new(
                         std::io::ErrorKind::PermissionDenied,
-                        "SSH agent authentication failed: no valid identity found"
+                        "SSH agent authentication failed: no valid identity found",
                     )));
                 }
             }
@@ -146,7 +163,7 @@ impl SftpVfs {
         if !session.authenticated() {
             return Err(VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                "SSH authentication failed"
+                "SSH authentication failed",
             )));
         }
 
@@ -154,17 +171,17 @@ impl SftpVfs {
     }
 
     fn get_sftp(&self) -> Result<Sftp, VfsError> {
-        let session = self.session.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to lock session mutex"
-            )))?;
+        let session = self.session.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock session mutex",
+            ))
+        })?;
 
-        session.sftp()
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create SFTP channel: {}", e)
-            )))
+        session.sftp().map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to create SFTP channel: {}", e),
+            ))
+        })
     }
 
     fn full_path(&self, path: &Path) -> PathBuf {
@@ -181,13 +198,15 @@ impl Vfs for SftpVfs {
         let sftp = self.get_sftp()?;
         let full_path = self.full_path(path);
 
-        let stat = sftp.stat(&full_path)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        let stat = sftp.stat(&full_path).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Failed to stat {}: {}", full_path.display(), e)
-            )))?;
+                format!("Failed to stat {}: {}", full_path.display(), e),
+            ))
+        })?;
 
-        let modified = stat.mtime
+        let modified = stat
+            .mtime
             .map(|t| UNIX_EPOCH + Duration::from_secs(t))
             .unwrap_or(UNIX_EPOCH);
 
@@ -203,17 +222,19 @@ impl Vfs for SftpVfs {
         let sftp = self.get_sftp()?;
         let full_path = self.full_path(path);
 
-        let entries = sftp.readdir(&full_path)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        let entries = sftp.readdir(&full_path).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Failed to read directory {}: {}", full_path.display(), e)
-            )))?;
+                format!("Failed to read directory {}: {}", full_path.display(), e),
+            ))
+        })?;
 
         let file_entries: Vec<FileEntry> = entries
             .into_iter()
             .filter_map(|(entry_path, stat)| {
                 // Get the relative path from the root
-                let rel_path = entry_path.strip_prefix(&self.config.root_path)
+                let rel_path = entry_path
+                    .strip_prefix(&self.config.root_path)
                     .ok()?
                     .to_path_buf();
 
@@ -223,7 +244,8 @@ impl Vfs for SftpVfs {
                     return None;
                 }
 
-                let modified = stat.mtime
+                let modified = stat
+                    .mtime
                     .map(|t| UNIX_EPOCH + Duration::from_secs(t))
                     .unwrap_or(UNIX_EPOCH);
 
@@ -243,19 +265,20 @@ impl Vfs for SftpVfs {
         let sftp = self.get_sftp()?;
         let full_path = self.full_path(path);
 
-        let mut file = sftp.open(&full_path)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        let mut file = sftp.open(&full_path).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Failed to open {}: {}", full_path.display(), e)
-            )))?;
+                format!("Failed to open {}: {}", full_path.display(), e),
+            ))
+        })?;
 
         // Read entire file into memory (SFTP files don't implement Send)
         let mut contents = Vec::new();
-        file.read_to_end(&mut contents)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read {}: {}", full_path.display(), e)
-            )))?;
+        file.read_to_end(&mut contents).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to read {}: {}", full_path.display(), e),
+            ))
+        })?;
 
         Ok(Box::new(Cursor::new(contents)))
     }
@@ -264,11 +287,11 @@ impl Vfs for SftpVfs {
         let sftp = self.get_sftp()?;
         let full_path = self.full_path(path);
 
-        sftp.unlink(&full_path)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to remove {}: {}", full_path.display(), e)
-            )))?;
+        sftp.unlink(&full_path).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to remove {}: {}", full_path.display(), e),
+            ))
+        })?;
 
         Ok(())
     }
@@ -280,31 +303,36 @@ impl Vfs for SftpVfs {
         let dest_full = self.full_path(dest);
 
         // Read source file
-        let mut src_file = sftp.open(&src_full)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
+        let mut src_file = sftp.open(&src_full).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Failed to open source {}: {}", src_full.display(), e)
-            )))?;
+                format!("Failed to open source {}: {}", src_full.display(), e),
+            ))
+        })?;
 
         let mut contents = Vec::new();
-        src_file.read_to_end(&mut contents)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read source {}: {}", src_full.display(), e)
-            )))?;
+        src_file.read_to_end(&mut contents).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to read source {}: {}", src_full.display(), e),
+            ))
+        })?;
 
         // Write to destination
-        let mut dest_file = sftp.create(&dest_full)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create destination {}: {}", dest_full.display(), e)
-            )))?;
+        let mut dest_file = sftp.create(&dest_full).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!(
+                    "Failed to create destination {}: {}",
+                    dest_full.display(),
+                    e
+                ),
+            ))
+        })?;
 
-        std::io::Write::write_all(&mut dest_file, &contents)
-            .map_err(|e| VfsError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write destination {}: {}", dest_full.display(), e)
-            )))?;
+        std::io::Write::write_all(&mut dest_file, &contents).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                format!("Failed to write destination {}: {}", dest_full.display(), e),
+            ))
+        })?;
 
         Ok(())
     }

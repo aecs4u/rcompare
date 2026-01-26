@@ -1,21 +1,22 @@
+#![allow(clippy::too_many_arguments)]
+
 slint::include_modules!();
 
 use rcompare_common::{
-    DiffNode, DiffStatus, FileEntry, SessionProfile, Vfs,
-    ThreeWayDiffNode, ThreeWayDiffStatus,
-    default_cache_dir, ensure_config, save_config,
+    default_cache_dir, ensure_config, save_config, DiffNode, DiffStatus, FileEntry, SessionProfile,
+    ThreeWayDiffNode, ThreeWayDiffStatus, Vfs,
 };
-use rcompare_core::{BinaryDiffEngine, ComparisonEngine, FileOperations, FolderScanner, HashCache};
+use rcompare_core::image_diff::{is_image_file, ImageDiffEngine};
 use rcompare_core::text_diff::{DiffChangeType, DiffLine, HighlightedSegment};
-use rcompare_core::TextDiffEngine;
-use rcompare_core::image_diff::{ImageDiffEngine, is_image_file};
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
+use rcompare_core::TextDiffEngine;
+use rcompare_core::{BinaryDiffEngine, ComparisonEngine, FileOperations, FolderScanner, HashCache};
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -124,8 +125,8 @@ impl FilterFlags {
             DiffStatus::Unchecked => true,
         };
 
-        let search_match = self.search_text.is_empty()
-            || name.to_lowercase().contains(&self.search_text);
+        let search_match =
+            self.search_text.is_empty() || name.to_lowercase().contains(&self.search_text);
 
         status_match && search_match
     }
@@ -151,8 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
@@ -162,6 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_weak = ui.as_weak();
     let compare_roots: Arc<Mutex<Option<CompareRoots>>> = Arc::new(Mutex::new(None));
     let tree_state: Arc<Mutex<Option<TreeState>>> = Arc::new(Mutex::new(None));
+    let last_browse_dir: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let compare_state = Arc::new(CompareState {
         generation: AtomicU64::new(0),
         cancel: Mutex::new(None),
@@ -170,10 +171,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up callbacks
     ui.on_select_left_path({
         let ui_weak = ui_weak.clone();
+        let compare_state = compare_state.clone();
+        let compare_roots = compare_roots.clone();
+        let tree_state = tree_state.clone();
+        let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                if let Some(path) = select_folder() {
+                let last_dir = last_browse_dir.lock().ok().and_then(|g| g.clone());
+                if let Some(path) = select_folder(last_dir.as_deref()) {
+                    // Update last browse directory
+                    if let Ok(mut guard) = last_browse_dir.lock() {
+                        *guard = path.parent().map(|p| p.to_path_buf());
+                    }
+
                     ui.set_left_path(path.to_string_lossy().to_string().into());
+
+                    // Auto-trigger comparison if both paths are set
+                    let left_path = ui.get_left_path().to_string();
+                    let right_path = ui.get_right_path().to_string();
+                    if !left_path.is_empty() && !right_path.is_empty() {
+                        ui.set_status_text("Comparing...".into());
+                        let (generation, cancel) = start_comparison(&compare_state);
+                        spawn_comparison(
+                            ui_weak.clone(),
+                            compare_state.clone(),
+                            compare_roots.clone(),
+                            tree_state.clone(),
+                            left_path,
+                            right_path,
+                            None,
+                            generation,
+                            cancel,
+                        );
+                    }
                 }
             }
         }
@@ -181,10 +211,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_select_right_path({
         let ui_weak = ui_weak.clone();
+        let compare_state = compare_state.clone();
+        let compare_roots = compare_roots.clone();
+        let tree_state = tree_state.clone();
+        let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                if let Some(path) = select_folder() {
+                let last_dir = last_browse_dir.lock().ok().and_then(|g| g.clone());
+                if let Some(path) = select_folder(last_dir.as_deref()) {
+                    // Update last browse directory
+                    if let Ok(mut guard) = last_browse_dir.lock() {
+                        *guard = path.parent().map(|p| p.to_path_buf());
+                    }
+
                     ui.set_right_path(path.to_string_lossy().to_string().into());
+
+                    // Auto-trigger comparison if both paths are set
+                    let left_path = ui.get_left_path().to_string();
+                    let right_path = ui.get_right_path().to_string();
+                    if !left_path.is_empty() && !right_path.is_empty() {
+                        ui.set_status_text("Comparing...".into());
+                        let (generation, cancel) = start_comparison(&compare_state);
+                        spawn_comparison(
+                            ui_weak.clone(),
+                            compare_state.clone(),
+                            compare_roots.clone(),
+                            tree_state.clone(),
+                            left_path,
+                            right_path,
+                            None,
+                            generation,
+                            cancel,
+                        );
+                    }
                 }
             }
         }
@@ -192,9 +251,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_select_base_path({
         let ui_weak = ui_weak.clone();
+        let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                if let Some(path) = select_folder() {
+                let last_dir = last_browse_dir.lock().ok().and_then(|g| g.clone());
+                if let Some(path) = select_folder(last_dir.as_deref()) {
+                    // Update last browse directory
+                    if let Ok(mut guard) = last_browse_dir.lock() {
+                        *guard = path.parent().map(|p| p.to_path_buf());
+                    }
+
                     ui.set_base_path(path.to_string_lossy().to_string().into());
                 }
             }
@@ -242,7 +308,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let current = ui.get_three_way_mode();
                 ui.set_three_way_mode(!current);
                 if !current {
-                    ui.set_status_text("Three-way comparison mode enabled. Select a base path.".into());
+                    ui.set_status_text(
+                        "Three-way comparison mode enabled. Select a base path.".into(),
+                    );
                 } else {
                     ui.set_status_text("Two-way comparison mode.".into());
                     ui.set_base_path("".into());
@@ -273,7 +341,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let three_way_mode = ui.get_three_way_mode();
                 let base_path = if three_way_mode {
                     let bp = ui.get_base_path().to_string();
-                    if bp.is_empty() { None } else { Some(bp) }
+                    if bp.is_empty() {
+                        None
+                    } else {
+                        Some(bp)
+                    }
                 } else {
                     None
                 };
@@ -284,7 +356,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if three_way_mode && base_path.is_none() {
-                    ui.set_status_text("Please select a base directory for three-way comparison".into());
+                    ui.set_status_text(
+                        "Please select a base directory for three-way comparison".into(),
+                    );
                     return;
                 }
 
@@ -317,7 +391,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let three_way_mode = ui.get_three_way_mode();
                 let base_path = if three_way_mode {
                     let bp = ui.get_base_path().to_string();
-                    if bp.is_empty() { None } else { Some(bp) }
+                    if bp.is_empty() {
+                        None
+                    } else {
+                        Some(bp)
+                    }
                 } else {
                     None
                 };
@@ -555,8 +633,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_settings_follow_symlinks(config.follow_symlinks);
                         ui.set_settings_hash_verification(config.use_hash_verification);
                         ui.set_settings_cache_dir(
-                            config.cache_dir.map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default().into()
+                            config
+                                .cache_dir
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                                .into(),
                         );
                         ui.set_show_settings(true);
                     }
@@ -598,7 +679,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ui.set_status_text("Settings saved".into());
                             }
                             Err(e) => {
-                                ui.set_status_text(format!("Failed to save settings: {}", e).into());
+                                ui.set_status_text(
+                                    format!("Failed to save settings: {}", e).into(),
+                                );
                             }
                         }
                     }
@@ -621,9 +704,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_select_cache_dir({
         let ui_weak = ui_weak.clone();
+        let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                if let Some(path) = select_folder() {
+                let last_dir = last_browse_dir.lock().ok().and_then(|g| g.clone());
+                if let Some(path) = select_folder(last_dir.as_deref()) {
+                    // Update last browse directory
+                    if let Ok(mut guard) = last_browse_dir.lock() {
+                        *guard = path.parent().map(|p| p.to_path_buf());
+                    }
+
                     ui.set_settings_cache_dir(path.to_string_lossy().to_string().into());
                 }
             }
@@ -695,7 +785,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok(_) => {
                                 // Refresh profiles list
                                 let profile_items = profiles_to_ui_items(&loaded.config.profiles);
-                                ui.set_profiles(Rc::new(slint::VecModel::from(profile_items)).into());
+                                ui.set_profiles(
+                                    Rc::new(slint::VecModel::from(profile_items)).into(),
+                                );
                                 ui.set_status_text(format!("Profile '{}' saved", name).into());
                                 return true;
                             }
@@ -748,7 +840,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Set paths in UI
                         ui.set_left_path(left_path.clone().into());
                         ui.set_right_path(right_path.clone().into());
-                        ui.set_status_text(format!("Loaded profile '{}' - click Compare to scan", name).into());
+                        ui.set_status_text(
+                            format!("Loaded profile '{}' - click Compare to scan", name).into(),
+                        );
                     }
                     Err(e) => {
                         ui.set_status_text(format!("Failed to load profile: {}", e).into());
@@ -781,11 +875,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok(_) => {
                                 // Refresh profiles list
                                 let profile_items = profiles_to_ui_items(&loaded.config.profiles);
-                                ui.set_profiles(Rc::new(slint::VecModel::from(profile_items)).into());
+                                ui.set_profiles(
+                                    Rc::new(slint::VecModel::from(profile_items)).into(),
+                                );
                                 ui.set_status_text(format!("Profile '{}' deleted", name).into());
                             }
                             Err(e) => {
-                                ui.set_status_text(format!("Failed to delete profile: {}", e).into());
+                                ui.set_status_text(
+                                    format!("Failed to delete profile: {}", e).into(),
+                                );
                             }
                         }
                     }
@@ -905,13 +1003,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Spawn sync operation
                 let ui_weak = ui_weak.clone();
                 std::thread::spawn(move || {
-                    let result = execute_sync_operation(
-                        &roots,
-                        &tree.root,
-                        sync_mode,
-                        dry_run,
-                        use_trash,
-                    );
+                    let result =
+                        execute_sync_operation(&roots, &tree.root, sync_mode, dry_run, use_trash);
 
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak.upgrade() {
@@ -935,7 +1028,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(state) = guard.as_mut() {
                         expand_all_dirs(&state.root, &mut state.expanded);
                         let filters = FilterFlags::from_ui(&ui);
-                        let (left_items, right_items) = flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                        let (left_items, right_items) =
+                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
                         ui.set_status_text("All folders expanded".into());
@@ -954,7 +1048,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(state) = guard.as_mut() {
                         state.expanded.clear();
                         let filters = FilterFlags::from_ui(&ui);
-                        let (left_items, right_items) = flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                        let (left_items, right_items) =
+                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
                         ui.set_status_text("All folders collapsed".into());
@@ -1092,7 +1187,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_status_text("RCompare v0.1.0 - High-performance file comparison tool".into());
+                ui.set_status_text(
+                    "RCompare v0.1.0 - High-performance file comparison tool".into(),
+                );
             }
         }
     });
@@ -1105,11 +1202,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(guard) = tree_state.lock() {
                     if let Some(state) = guard.as_ref() {
                         let filters = FilterFlags::from_ui(&ui);
-                        let (left_items, right_items) = flatten_tree_filtered(
-                            &state.root,
-                            &state.expanded,
-                            &filters,
-                        );
+                        let (left_items, right_items) =
+                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
                         let visible_count = left_items.len();
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
@@ -1136,7 +1230,12 @@ fn spawn_comparison(
     cancel: Arc<AtomicBool>,
 ) {
     std::thread::spawn(move || {
-        let result = run_comparison(&left_path, &right_path, base_path.as_deref(), Some(cancel.as_ref()));
+        let result = run_comparison(
+            &left_path,
+            &right_path,
+            base_path.as_deref(),
+            Some(cancel.as_ref()),
+        );
 
         let _ = slint::invoke_from_event_loop(move || {
             if compare_state.generation.load(Ordering::SeqCst) != generation {
@@ -1150,7 +1249,9 @@ fn spawn_comparison(
                 match result {
                     Ok(result) => {
                         ui.set_left_items(Rc::new(slint::VecModel::from(result.left_items)).into());
-                        ui.set_right_items(Rc::new(slint::VecModel::from(result.right_items)).into());
+                        ui.set_right_items(
+                            Rc::new(slint::VecModel::from(result.right_items)).into(),
+                        );
                         ui.set_status_text(result.status.into());
 
                         if let Ok(mut roots) = compare_roots.lock() {
@@ -1170,11 +1271,7 @@ fn spawn_comparison(
     });
 }
 
-fn spawn_text_diff(
-    ui_weak: slint::Weak<MainWindow>,
-    left_path: String,
-    right_path: String,
-) {
+fn spawn_text_diff(ui_weak: slint::Weak<MainWindow>, left_path: String, right_path: String) {
     std::thread::spawn(move || {
         let result = run_text_diff(&left_path, &right_path);
 
@@ -1196,11 +1293,7 @@ fn spawn_text_diff(
     });
 }
 
-fn spawn_binary_diff(
-    ui_weak: slint::Weak<MainWindow>,
-    left_path: String,
-    right_path: String,
-) {
+fn spawn_binary_diff(ui_weak: slint::Weak<MainWindow>, left_path: String, right_path: String) {
     std::thread::spawn(move || {
         let result = run_binary_diff(&left_path, &right_path);
 
@@ -1210,7 +1303,9 @@ fn spawn_binary_diff(
                     Ok(lines) => {
                         let diff_count = lines.iter().filter(|l| l.has_diff).count();
                         ui.set_hex_lines(Rc::new(slint::VecModel::from(lines)).into());
-                        ui.set_status_text(format!("Binary diff ready - {} differences found", diff_count).into());
+                        ui.set_status_text(
+                            format!("Binary diff ready - {} differences found", diff_count).into(),
+                        );
                     }
                     Err(e) => {
                         error!("Binary diff failed: {}", e);
@@ -1240,7 +1335,7 @@ fn run_binary_diff(left: &str, right: &str) -> Result<Vec<HexDiffLine>, AnyError
     for chunk in chunks {
         // Process 16 bytes per line
         let max_len = chunk.left_data.len().max(chunk.right_data.len());
-        let lines_in_chunk = (max_len + 15) / 16;
+        let lines_in_chunk = max_len.div_ceil(16);
 
         for line_idx in 0..lines_in_chunk {
             let start = line_idx * 16;
@@ -1260,7 +1355,10 @@ fn run_binary_diff(left: &str, right: &str) -> Result<Vec<HexDiffLine>, AnyError
             };
 
             // Check if this line has differences
-            let has_diff = chunk.differences.iter().any(|&idx| idx >= start && idx < end);
+            let has_diff = chunk
+                .differences
+                .iter()
+                .any(|&idx| idx >= start && idx < end);
 
             hex_lines.push(HexDiffLine {
                 offset: format!("{:08X}", offset).into(),
@@ -1276,11 +1374,7 @@ fn run_binary_diff(left: &str, right: &str) -> Result<Vec<HexDiffLine>, AnyError
     Ok(hex_lines)
 }
 
-fn spawn_image_diff(
-    ui_weak: slint::Weak<MainWindow>,
-    left_path: String,
-    right_path: String,
-) {
+fn spawn_image_diff(ui_weak: slint::Weak<MainWindow>, left_path: String, right_path: String) {
     std::thread::spawn(move || {
         let result = run_image_diff(&left_path, &right_path);
 
@@ -1351,7 +1445,13 @@ fn format_hex_bytes(data: &[u8]) -> String {
 
 fn format_ascii_bytes(data: &[u8]) -> String {
     data.iter()
-        .map(|&b| if b >= 0x20 && b < 0x7F { b as char } else { '.' })
+        .map(|&b| {
+            if (0x20..0x7F).contains(&b) {
+                b as char
+            } else {
+                '.'
+            }
+        })
         .collect()
 }
 
@@ -1412,8 +1512,7 @@ fn run_comparison(
     let right_entries = scan_source(&scanner, &right_source, cancel)?;
     info!("Found {} entries in right directory", right_entries.len());
 
-    let comparison_engine = ComparisonEngine::new(hash_cache)
-        .with_hash_verification(verify_hashes);
+    let comparison_engine = ComparisonEngine::new(hash_cache).with_hash_verification(verify_hashes);
 
     // Check if three-way comparison
     if let Some(base_str) = base {
@@ -1452,7 +1551,9 @@ fn run_comparison(
                 ThreeWayDiffStatus::AllSame => all_same += 1,
                 ThreeWayDiffStatus::LeftChanged => left_changed += 1,
                 ThreeWayDiffStatus::RightChanged => right_changed += 1,
-                ThreeWayDiffStatus::BothChanged | ThreeWayDiffStatus::BothAdded => both_changed += 1,
+                ThreeWayDiffStatus::BothChanged | ThreeWayDiffStatus::BothAdded => {
+                    both_changed += 1
+                }
                 _ => {}
             }
         }
@@ -1533,10 +1634,7 @@ fn run_comparison(
     })
 }
 
-fn run_text_diff(
-    left: &str,
-    right: &str,
-) -> Result<Vec<RawTextDiffLine>, AnyError> {
+fn run_text_diff(left: &str, right: &str) -> Result<Vec<RawTextDiffLine>, AnyError> {
     let left_path = PathBuf::from(left);
     let right_path = PathBuf::from(right);
 
@@ -1576,7 +1674,8 @@ fn handle_item_click(
                 }
 
                 let filters = FilterFlags::from_ui(ui);
-                let (left_items, right_items) = flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                let (left_items, right_items) =
+                    flatten_tree_filtered(&state.root, &state.expanded, &filters);
                 ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                 ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
             }
@@ -1683,23 +1782,6 @@ fn build_tree_state(diff_nodes: Vec<DiffNode>) -> TreeState {
     TreeState { root, expanded }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gui_smoke_test() {
-        if std::env::var_os("RCOMPARE_GUI_SMOKE_TEST").is_none() {
-            eprintln!("Skipping GUI smoke test: set RCOMPARE_GUI_SMOKE_TEST=1 to enable");
-            return;
-        }
-
-        if let Err(err) = MainWindow::new() {
-            panic!("Failed to create MainWindow: {err}");
-        }
-    }
-}
-
 fn build_tree_state_from_three_way(diff_nodes: Vec<ThreeWayDiffNode>) -> TreeState {
     let mut root = TreeNode {
         name: String::new(),
@@ -1727,7 +1809,7 @@ fn build_tree_state_from_three_way(diff_nodes: Vec<ThreeWayDiffNode>) -> TreeSta
 fn insert_three_way_diff_node(root: &mut TreeNode, diff: ThreeWayDiffNode) {
     let ThreeWayDiffNode {
         relative_path,
-        base: _,  // Base is not displayed in current UI
+        base: _, // Base is not displayed in current UI
         left,
         right,
         status,
@@ -1759,7 +1841,13 @@ fn insert_three_way_diff_node(root: &mut TreeNode, diff: ThreeWayDiffNode) {
     let mut left_entry = left;
     let mut right_entry = right;
 
-    insert_components(root, &components, &mut left_entry, &mut right_entry, display_status);
+    insert_components(
+        root,
+        &components,
+        &mut left_entry,
+        &mut right_entry,
+        display_status,
+    );
 }
 
 fn insert_diff_node(root: &mut TreeNode, diff: DiffNode) {
@@ -1862,12 +1950,10 @@ fn aggregate_status(node: &mut TreeNode) -> DiffStatus {
 }
 
 fn sort_children(node: &mut TreeNode) {
-    node.children.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    node.children.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     for child in node.children.iter_mut() {
@@ -1917,7 +2003,14 @@ fn flatten_tree_filtered(
     let mut right_items = Vec::new();
 
     for child in &root.children {
-        flatten_node_filtered(child, 0, expanded, filters, &mut left_items, &mut right_items);
+        flatten_node_filtered(
+            child,
+            0,
+            expanded,
+            filters,
+            &mut left_items,
+            &mut right_items,
+        );
     }
 
     (left_items, right_items)
@@ -1934,7 +2027,8 @@ fn flatten_node_filtered(
     // For directories, check if any visible children exist
     let should_show = if node.is_dir {
         // Always show directories if they have visible children or match search
-        has_visible_children(node, filters) || filters.search_text.is_empty()
+        has_visible_children(node, filters)
+            || filters.search_text.is_empty()
             || node.name.to_lowercase().contains(&filters.search_text)
     } else {
         filters.should_show(node.status, &node.name)
@@ -2073,7 +2167,6 @@ fn status_color(status: DiffStatus) -> slint::Color {
     }
 }
 
-
 fn is_probably_text_file(path: &std::path::Path) -> bool {
     let mut file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -2099,8 +2192,14 @@ fn build_raw_text_lines(lines: Vec<DiffLine>) -> Vec<RawTextDiffLine> {
         .into_iter()
         .map(|line| {
             let change = change_code(line.change_type);
-            let left_line = line.line_number_left.map(|n| n.to_string()).unwrap_or_default();
-            let right_line = line.line_number_right.map(|n| n.to_string()).unwrap_or_default();
+            let left_line = line
+                .line_number_left
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+            let right_line = line
+                .line_number_right
+                .map(|n| n.to_string())
+                .unwrap_or_default();
             let segments = build_raw_segments(line.highlighted_segments);
 
             RawTextDiffLine {
@@ -2172,7 +2271,7 @@ fn to_ui_text_lines(lines: Vec<RawTextDiffLine>) -> Vec<TextDiffLine> {
 }
 
 fn sanitize_segment_text(text: &str) -> String {
-    text.replace('\n', "").replace('\r', "")
+    text.replace(['\n', '\r'], "")
 }
 
 fn change_code(change: DiffChangeType) -> i32 {
@@ -2304,29 +2403,38 @@ fn execute_sync_operation(
     };
 
     if dry_run {
-        Ok(format!("Sync preview ({}): {} files would be copied, {} errors", mode_str, copied, errors))
+        Ok(format!(
+            "Sync preview ({}): {} files would be copied, {} errors",
+            mode_str, copied, errors
+        ))
     } else {
-        Ok(format!("Sync complete ({}): {} files copied, {} errors", mode_str, copied, errors))
+        Ok(format!(
+            "Sync complete ({}): {} files copied, {} errors",
+            mode_str, copied, errors
+        ))
     }
 }
 
 fn profiles_to_ui_items(profiles: &[SessionProfile]) -> Vec<ProfileItem> {
-    profiles.iter().map(|p| {
-        let last_used = if p.last_used > 0 {
-            let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(p.last_used as i64, 0);
-            dt.map(|d| d.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| "Unknown".to_string())
-        } else {
-            "Never".to_string()
-        };
+    profiles
+        .iter()
+        .map(|p| {
+            let last_used = if p.last_used > 0 {
+                let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(p.last_used as i64, 0);
+                dt.map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            } else {
+                "Never".to_string()
+            };
 
-        ProfileItem {
-            name: p.name.clone().into(),
-            left_path: p.left_path.to_string_lossy().to_string().into(),
-            right_path: p.right_path.to_string_lossy().to_string().into(),
-            last_used: last_used.into(),
-        }
-    }).collect()
+            ProfileItem {
+                name: p.name.clone().into(),
+                left_path: p.left_path.to_string_lossy().to_string().into(),
+                right_path: p.right_path.to_string_lossy().to_string().into(),
+                last_used: last_used.into(),
+            }
+        })
+        .collect()
 }
 
 fn format_size(size: u64) -> String {
@@ -2362,10 +2470,16 @@ fn format_time(time: &std::time::SystemTime) -> String {
     }
 }
 
-fn select_folder() -> Option<std::path::PathBuf> {
-    native_dialog::FileDialog::new()
-        .show_open_single_dir()
-        .unwrap_or(None)
+fn select_folder(last_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let mut dialog = native_dialog::FileDialog::new();
+
+    if let Some(dir) = last_dir {
+        if dir.exists() {
+            dialog = dialog.set_location(dir);
+        }
+    }
+
+    dialog.show_open_single_dir().unwrap_or(None)
 }
 
 fn select_archive() -> Option<std::path::PathBuf> {
@@ -2426,7 +2540,8 @@ fn build_scan_source(path: &std::path::Path) -> Result<ScanSource, AnyError> {
     Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
         format!("Path does not exist: {}", path.display()),
-    ).into())
+    )
+    .into())
 }
 
 fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind> {
@@ -2439,5 +2554,22 @@ fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind> {
         Some(ArchiveKind::SevenZ)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_smoke_test() {
+        if std::env::var_os("RCOMPARE_GUI_SMOKE_TEST").is_none() {
+            eprintln!("Skipping GUI smoke test: set RCOMPARE_GUI_SMOKE_TEST=1 to enable");
+            return;
+        }
+
+        if let Err(err) = MainWindow::new() {
+            panic!("Failed to create MainWindow: {err}");
+        }
     }
 }

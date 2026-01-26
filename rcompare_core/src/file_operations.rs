@@ -1,9 +1,9 @@
+use rayon::prelude::*;
 use rcompare_common::{FileEntry, RCompareError};
-use std::path::{Path, PathBuf};
 use std::fs;
 use std::io;
-use tracing::{info, debug};
-use rayon::prelude::*;
+use std::path::{Path, PathBuf};
+use tracing::{debug, info};
 
 /// File operation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,11 @@ impl FileOperations {
     /// Copy a file from source to destination
     pub fn copy_file(&self, source: &Path, dest: &Path) -> Result<OperationResult, RCompareError> {
         if self.dry_run {
-            info!("DRY RUN: Would copy {} to {}", source.display(), dest.display());
+            info!(
+                "DRY RUN: Would copy {} to {}",
+                source.display(),
+                dest.display()
+            );
             return Ok(OperationResult {
                 source: source.to_path_buf(),
                 destination: Some(dest.to_path_buf()),
@@ -61,11 +65,17 @@ impl FileOperations {
         // Preserve timestamps
         if let Ok(metadata) = fs::metadata(source) {
             if let Ok(modified) = metadata.modified() {
-                let _ = filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
+                let _ =
+                    filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
             }
         }
 
-        info!("Copied {} bytes from {} to {}", bytes, source.display(), dest.display());
+        info!(
+            "Copied {} bytes from {} to {}",
+            bytes,
+            source.display(),
+            dest.display()
+        );
 
         Ok(OperationResult {
             source: source.to_path_buf(),
@@ -80,7 +90,11 @@ impl FileOperations {
     /// Move a file from source to destination
     pub fn move_file(&self, source: &Path, dest: &Path) -> Result<OperationResult, RCompareError> {
         if self.dry_run {
-            info!("DRY RUN: Would move {} to {}", source.display(), dest.display());
+            info!(
+                "DRY RUN: Would move {} to {}",
+                source.display(),
+                dest.display()
+            );
             return Ok(OperationResult {
                 source: source.to_path_buf(),
                 destination: Some(dest.to_path_buf()),
@@ -123,7 +137,11 @@ impl FileOperations {
                     fs::copy(source, dest)?;
                     // Delete the source
                     fs::remove_file(source)?;
-                    info!("Moved {} to {} (copy+delete)", source.display(), dest.display());
+                    info!(
+                        "Moved {} to {} (copy+delete)",
+                        source.display(),
+                        dest.display()
+                    );
                 } else {
                     // Some other error, propagate it
                     return Err(e.into());
@@ -160,8 +178,9 @@ impl FileOperations {
 
         if self.use_trash {
             debug!("Moving {} to trash", path.display());
-            trash::delete(path)
-                .map_err(|e| RCompareError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+            trash::delete(path).map_err(|e| {
+                RCompareError::Io(io::Error::other(e.to_string()))
+            })?;
             info!("Moved {} to trash", path.display());
         } else {
             debug!("Permanently deleting {}", path.display());
@@ -180,9 +199,17 @@ impl FileOperations {
     }
 
     /// Touch a file (sync timestamp from source to destination)
-    pub fn touch_timestamp(&self, source: &Path, dest: &Path) -> Result<OperationResult, RCompareError> {
+    pub fn touch_timestamp(
+        &self,
+        source: &Path,
+        dest: &Path,
+    ) -> Result<OperationResult, RCompareError> {
         if self.dry_run {
-            info!("DRY RUN: Would sync timestamp from {} to {}", source.display(), dest.display());
+            info!(
+                "DRY RUN: Would sync timestamp from {} to {}",
+                source.display(),
+                dest.display()
+            );
             return Ok(OperationResult {
                 source: source.to_path_buf(),
                 destination: Some(dest.to_path_buf()),
@@ -196,11 +223,19 @@ impl FileOperations {
         let source_meta = fs::metadata(source)?;
         let modified = source_meta.modified()?;
 
-        debug!("Syncing timestamp from {} to {}", source.display(), dest.display());
+        debug!(
+            "Syncing timestamp from {} to {}",
+            source.display(),
+            dest.display()
+        );
         filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified))
-            .map_err(|e| RCompareError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+            .map_err(|e| RCompareError::Io(io::Error::other(e.to_string())))?;
 
-        info!("Synced timestamp from {} to {}", source.display(), dest.display());
+        info!(
+            "Synced timestamp from {} to {}",
+            source.display(),
+            dest.display()
+        );
 
         Ok(OperationResult {
             source: source.to_path_buf(),
@@ -216,18 +251,16 @@ impl FileOperations {
     pub fn batch_copy(&self, operations: Vec<(PathBuf, PathBuf)>) -> Vec<OperationResult> {
         operations
             .par_iter()
-            .map(|(src, dest)| {
-                match self.copy_file(src, dest) {
-                    Ok(result) => result,
-                    Err(e) => OperationResult {
-                        source: src.clone(),
-                        destination: Some(dest.clone()),
-                        operation: FileOperation::Copy,
-                        success: false,
-                        error: Some(e.to_string()),
-                        bytes_processed: 0,
-                    },
-                }
+            .map(|(src, dest)| match self.copy_file(src, dest) {
+                Ok(result) => result,
+                Err(e) => OperationResult {
+                    source: src.clone(),
+                    destination: Some(dest.clone()),
+                    operation: FileOperation::Copy,
+                    success: false,
+                    error: Some(e.to_string()),
+                    bytes_processed: 0,
+                },
             })
             .collect()
     }
@@ -236,18 +269,16 @@ impl FileOperations {
     pub fn batch_delete(&self, files: Vec<PathBuf>) -> Vec<OperationResult> {
         files
             .par_iter()
-            .map(|path| {
-                match self.delete_file(path) {
-                    Ok(result) => result,
-                    Err(e) => OperationResult {
-                        source: path.clone(),
-                        destination: None,
-                        operation: FileOperation::Delete,
-                        success: false,
-                        error: Some(e.to_string()),
-                        bytes_processed: 0,
-                    },
-                }
+            .map(|path| match self.delete_file(path) {
+                Ok(result) => result,
+                Err(e) => OperationResult {
+                    source: path.clone(),
+                    destination: None,
+                    operation: FileOperation::Delete,
+                    success: false,
+                    error: Some(e.to_string()),
+                    bytes_processed: 0,
+                },
             })
             .collect()
     }
@@ -295,8 +326,8 @@ impl FileOperations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::io::Write;
+    use tempfile::TempDir;
 
     #[test]
     fn test_copy_file() {
@@ -346,6 +377,9 @@ mod tests {
         let source_meta = fs::metadata(&source).unwrap();
         let dest_meta = fs::metadata(&dest).unwrap();
 
-        assert_eq!(source_meta.modified().unwrap(), dest_meta.modified().unwrap());
+        assert_eq!(
+            source_meta.modified().unwrap(),
+            dest_meta.modified().unwrap()
+        );
     }
 }

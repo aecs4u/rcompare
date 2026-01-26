@@ -240,7 +240,8 @@ mod tests {
         fs::write(temp.path().join("old.txt"), b"content").unwrap();
 
         let vfs = LocalVfs::new(temp.path().to_path_buf());
-        vfs.rename(Path::new("old.txt"), Path::new("new.txt")).unwrap();
+        vfs.rename(Path::new("old.txt"), Path::new("new.txt"))
+            .unwrap();
 
         assert!(!temp.path().join("old.txt").exists());
         assert!(temp.path().join("new.txt").exists());
@@ -269,7 +270,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let vfs = LocalVfs::new(temp.path().to_path_buf());
 
-        vfs.write_file(Path::new("written.txt"), b"direct write").unwrap();
+        vfs.write_file(Path::new("written.txt"), b"direct write")
+            .unwrap();
 
         let content = fs::read_to_string(temp.path().join("written.txt")).unwrap();
         assert_eq!(content, "direct write");
@@ -306,7 +308,8 @@ mod tests {
         fs::write(temp.path().join("source.txt"), b"copy me").unwrap();
 
         let vfs = LocalVfs::new(temp.path().to_path_buf());
-        vfs.copy_file(Path::new("source.txt"), Path::new("dest.txt")).unwrap();
+        vfs.copy_file(Path::new("source.txt"), Path::new("dest.txt"))
+            .unwrap();
 
         assert!(temp.path().join("source.txt").exists());
         assert!(temp.path().join("dest.txt").exists());

@@ -1,21 +1,21 @@
-use rcompare_common::{FileEntry, FileMetadata, Vfs, VfsCapabilities, VfsError};
 use super::local::LocalVfs;
-use std::io::{Read, Write, Cursor};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
-use zip::{ZipArchive, ZipWriter};
-use zip::write::FileOptions;
-use std::fs::File;
+use bzip2::read::BzDecoder;
+use bzip2::write::BzEncoder;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use rcompare_common::{FileEntry, FileMetadata, Vfs, VfsCapabilities, VfsError};
 use sevenz_rust::decompress_file;
-use bzip2::read::BzDecoder;
-use bzip2::write::BzEncoder;
+use std::fs::File;
+use std::io::{Cursor, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+use unrar::Archive;
 use xz2::read::XzDecoder;
 use xz2::write::XzEncoder;
-use unrar::Archive;
+use zip::write::FileOptions;
+use zip::{ZipArchive, ZipWriter};
 
 /// ZIP archive VFS implementation (read-only)
 pub struct ZipVfs {
@@ -63,16 +63,20 @@ impl Vfs for ZipVfs {
         let path_str = path.to_string_lossy();
 
         for i in 0..archive.len() {
-            let file = archive.by_index(i)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let file = archive
+                .by_index(i)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
             if file.name() == path_str.as_ref() {
                 return Ok(FileMetadata {
                     size: file.size(),
-                    modified: file.last_modified().to_time()
+                    modified: file
+                        .last_modified()
+                        .to_time()
                         .map(|dt| {
                             let timestamp = dt.unix_timestamp();
-                            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64)
+                            SystemTime::UNIX_EPOCH
+                                + std::time::Duration::from_secs(timestamp as u64)
                         })
                         .unwrap_or(SystemTime::UNIX_EPOCH),
                     is_dir: file.is_dir(),
@@ -95,8 +99,9 @@ impl Vfs for ZipVfs {
         };
 
         for i in 0..archive.len() {
-            let file = archive.by_index(i)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            let file = archive
+                .by_index(i)
+                .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
             let name = file.name();
             if name.starts_with(&prefix) {
@@ -107,10 +112,13 @@ impl Vfs for ZipVfs {
                     entries.push(FileEntry {
                         path: PathBuf::from(name),
                         size: file.size(),
-                        modified: file.last_modified().to_time()
+                        modified: file
+                            .last_modified()
+                            .to_time()
                             .map(|dt| {
                                 let timestamp = dt.unix_timestamp();
-                                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64)
+                                SystemTime::UNIX_EPOCH
+                                    + std::time::Duration::from_secs(timestamp as u64)
                             })
                             .unwrap_or(SystemTime::UNIX_EPOCH),
                         is_dir: file.is_dir(),
@@ -126,7 +134,8 @@ impl Vfs for ZipVfs {
         let mut archive = self.open_archive()?;
         let path_str = path.to_string_lossy();
 
-        let mut file = archive.by_name(&path_str)
+        let mut file = archive
+            .by_name(&path_str)
             .map_err(|_| VfsError::NotFound(path.display().to_string()))?;
 
         if file.is_dir() {
@@ -140,11 +149,15 @@ impl Vfs for ZipVfs {
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("ZIP archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "ZIP archives are read-only".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("ZIP archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "ZIP archives are read-only".to_string(),
+        ))
     }
 
     fn capabilities(&self) -> VfsCapabilities {
@@ -156,16 +169,18 @@ impl WritableZipVfs {
     /// Create a writable ZIP VFS from an existing archive
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
             let file = File::open(&archive_path)?;
-            let mut archive = ZipArchive::new(file)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let mut archive = ZipArchive::new(file).map_err(|e| {
+                VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            })?;
 
-            archive.extract(temp_dir.path())
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            archive
+                .extract(temp_dir.path())
+                .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
         }
 
         let instance_id = format!("zip-rw:{}", archive_path.display());
@@ -183,7 +198,7 @@ impl WritableZipVfs {
     /// Create a new empty writable ZIP archive
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("zip-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -204,19 +219,21 @@ impl WritableZipVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock temp dir")))?;
+        let temp_dir = self.temp_dir.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock temp dir",
+            ))
+        })?;
 
         let file = File::create(&self.archive_path)?;
         let mut zip = ZipWriter::new(file);
-        let options = FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // Walk the temp directory and add all files
         add_directory_to_zip(&mut zip, temp_dir.path(), temp_dir.path(), options)?;
 
         zip.finish()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         Ok(())
     }
@@ -231,21 +248,24 @@ fn add_directory_to_zip(
     for entry in std::fs::read_dir(current_path)? {
         let entry = entry?;
         let path = entry.path();
-        let relative_path = path.strip_prefix(base_path)
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Path strip failed")))?;
+        let relative_path = path.strip_prefix(base_path).map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Path strip failed",
+            ))
+        })?;
 
         if path.is_dir() {
             // Add directory entry
             let dir_name = format!("{}/", relative_path.to_string_lossy());
             zip.add_directory(&dir_name, options)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
             // Recurse into directory
             add_directory_to_zip(zip, base_path, &path, options)?;
         } else {
             // Add file entry
             let file_name = relative_path.to_string_lossy();
             zip.start_file(file_name.as_ref(), options)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
             let content = std::fs::read(&path)?;
             zip.write_all(&content)?;
         }
@@ -321,8 +341,11 @@ impl Vfs for WritableZipVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock modified flag")))?;
+        let modified = self.modified.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock modified flag",
+            ))
+        })?;
 
         if *modified {
             drop(modified); // Release lock before rebuilding
@@ -393,7 +416,8 @@ impl Vfs for TarVfs {
                 let header = entry.header();
                 return Ok(FileMetadata {
                     size: header.size()?,
-                    modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(header.mtime()?),
+                    modified: SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(header.mtime()?),
                     is_dir: header.entry_type().is_dir(),
                     is_symlink: header.entry_type() == tar::EntryType::Symlink,
                 });
@@ -416,7 +440,8 @@ impl Vfs for TarVfs {
                     entries.push(FileEntry {
                         path: entry_path.to_path_buf(),
                         size: header.size()?,
-                        modified: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(header.mtime()?),
+                        modified: SystemTime::UNIX_EPOCH
+                            + std::time::Duration::from_secs(header.mtime()?),
                         is_dir: header.entry_type().is_dir(),
                     });
                 }
@@ -444,11 +469,15 @@ impl Vfs for TarVfs {
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("TAR archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "TAR archives are read-only".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("TAR archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "TAR archives are read-only".to_string(),
+        ))
     }
 
     fn capabilities(&self) -> VfsCapabilities {
@@ -461,7 +490,7 @@ impl WritableTarVfs {
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
         let compress_gzip = is_gzip_archive(&archive_path);
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
@@ -493,7 +522,7 @@ impl WritableTarVfs {
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
         let compress_gzip = is_gzip_archive(&archive_path);
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("tar-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -515,8 +544,11 @@ impl WritableTarVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock temp dir")))?;
+        let temp_dir = self.temp_dir.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock temp dir",
+            ))
+        })?;
 
         let file = File::create(&self.archive_path)?;
 
@@ -603,8 +635,11 @@ impl Vfs for WritableTarVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock modified flag")))?;
+        let modified = self.modified.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock modified flag",
+            ))
+        })?;
 
         if *modified {
             drop(modified);
@@ -650,10 +685,14 @@ impl SevenZVfs {
         }
 
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
-        decompress_file(&archive_path, temp_dir.path())
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))?;
+        decompress_file(&archive_path, temp_dir.path()).map_err(|e| {
+            VfsError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            ))
+        })?;
 
         let instance_id = format!("7z:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -684,11 +723,15 @@ impl Vfs for SevenZVfs {
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("7Z archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "7Z archives are read-only".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("7Z archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "7Z archives are read-only".to_string(),
+        ))
     }
 
     fn capabilities(&self) -> VfsCapabilities {
@@ -700,12 +743,16 @@ impl Writable7zVfs {
     /// Create a writable 7Z VFS from an existing archive
     pub fn new(archive_path: PathBuf) -> Result<Self, VfsError> {
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract existing archive if it exists
         if archive_path.exists() {
-            decompress_file(&archive_path, temp_dir.path())
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))?;
+            decompress_file(&archive_path, temp_dir.path()).map_err(|e| {
+                VfsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                ))
+            })?;
         }
 
         let instance_id = format!("7z-rw:{}", archive_path.display());
@@ -723,7 +770,7 @@ impl Writable7zVfs {
     /// Create a new empty writable 7Z archive
     pub fn create(archive_path: PathBuf) -> Result<Self, VfsError> {
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         let instance_id = format!("7z-rw:{}", archive_path.display());
         let local_vfs = LocalVfs::new(temp_dir.path().to_path_buf());
@@ -744,12 +791,18 @@ impl Writable7zVfs {
     }
 
     fn rebuild_archive(&self) -> Result<(), VfsError> {
-        let temp_dir = self.temp_dir.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock temp dir")))?;
+        let temp_dir = self.temp_dir.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock temp dir",
+            ))
+        })?;
 
         // Use sevenz_rust to compress the directory
-        sevenz_rust::compress_to_path(temp_dir.path(), &self.archive_path)
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        sevenz_rust::compress_to_path(temp_dir.path(), &self.archive_path).map_err(|e| {
+            VfsError::Io(std::io::Error::other(
+                e.to_string(),
+            ))
+        })?;
 
         Ok(())
     }
@@ -823,8 +876,11 @@ impl Vfs for Writable7zVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock modified flag")))?;
+        let modified = self.modified.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock modified flag",
+            ))
+        })?;
 
         if *modified {
             drop(modified);
@@ -847,25 +903,35 @@ impl RarVfs {
         }
 
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
 
         // Extract RAR archive to temp directory
-        let mut archive = Archive::new(&archive_path)
-            .open_for_processing()
-            .map_err(|e: unrar::error::UnrarError| {
-                VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
-            })?;
+        let mut archive = Archive::new(&archive_path).open_for_processing().map_err(
+            |e: unrar::error::UnrarError| {
+                VfsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                ))
+            },
+        )?;
 
         // Process each entry and extract
-        while let Some(header) = archive.read_header()
+        while let Some(header) = archive
+            .read_header()
             .map_err(|e: unrar::error::UnrarError| {
-                VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+                VfsError::Io(std::io::Error::other(
+                    e.to_string(),
+                ))
             })?
         {
-            archive = header.extract_to(temp_dir.path())
-                .map_err(|e: unrar::error::UnrarError| {
-                    VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-                })?;
+            archive =
+                header
+                    .extract_to(temp_dir.path())
+                    .map_err(|e: unrar::error::UnrarError| {
+                        VfsError::Io(std::io::Error::other(
+                            e.to_string(),
+                        ))
+                    })?;
         }
 
         let instance_id = format!("rar:{}", archive_path.display());
@@ -904,11 +970,15 @@ impl Vfs for RarVfs {
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("RAR archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "RAR archives are read-only".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("RAR archives are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "RAR archives are read-only".to_string(),
+        ))
     }
 
     fn capabilities(&self) -> VfsCapabilities {
@@ -1082,11 +1152,15 @@ impl Vfs for CompressedFileVfs {
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Compressed files are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "Compressed files are read-only".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Compressed files are read-only".to_string()))
+        Err(VfsError::Unsupported(
+            "Compressed files are read-only".to_string(),
+        ))
     }
 
     fn capabilities(&self) -> VfsCapabilities {
@@ -1189,8 +1263,11 @@ impl WritableCompressedFileVfs {
     }
 
     fn compress_and_write(&self) -> Result<(), VfsError> {
-        let content = self.content.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content")))?;
+        let content = self.content.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock content",
+            ))
+        })?;
 
         let file = File::create(&self.archive_path)?;
 
@@ -1233,8 +1310,11 @@ impl Vfs for WritableCompressedFileVfs {
         }
 
         if path_str == self.inner_filename || path == Path::new(&self.inner_filename) {
-            let content = self.content.lock()
-                .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content")))?;
+            let content = self.content.lock().map_err(|_| {
+                VfsError::Io(std::io::Error::other(
+                    "Failed to lock content",
+                ))
+            })?;
 
             return Ok(FileMetadata {
                 size: content.len() as u64,
@@ -1253,8 +1333,11 @@ impl Vfs for WritableCompressedFileVfs {
             return Err(VfsError::NotADirectory(path.display().to_string()));
         }
 
-        let content = self.content.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content")))?;
+        let content = self.content.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock content",
+            ))
+        })?;
 
         Ok(vec![FileEntry {
             path: PathBuf::from(&self.inner_filename),
@@ -1270,18 +1353,25 @@ impl Vfs for WritableCompressedFileVfs {
             return Err(VfsError::NotFound(path.display().to_string()));
         }
 
-        let content = self.content.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content")))?;
+        let content = self.content.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock content",
+            ))
+        })?;
 
         Ok(Box::new(Cursor::new(content.clone())))
     }
 
     fn remove_file(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Cannot remove the only file in a compressed archive".to_string()))
+        Err(VfsError::Unsupported(
+            "Cannot remove the only file in a compressed archive".to_string(),
+        ))
     }
 
     fn copy_file(&self, _src: &Path, _dest: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Copy not supported in single-file compressed archives".to_string()))
+        Err(VfsError::Unsupported(
+            "Copy not supported in single-file compressed archives".to_string(),
+        ))
     }
 
     fn is_writable(&self) -> bool {
@@ -1302,7 +1392,9 @@ impl Vfs for WritableCompressedFileVfs {
     fn create_file(&self, path: &Path) -> Result<Box<dyn Write + Send>, VfsError> {
         let path_str = path.to_string_lossy();
         if path_str != self.inner_filename && path != Path::new(&self.inner_filename) {
-            return Err(VfsError::Unsupported("Can only write to the inner file".to_string()));
+            return Err(VfsError::Unsupported(
+                "Can only write to the inner file".to_string(),
+            ));
         }
 
         self.mark_modified();
@@ -1316,13 +1408,18 @@ impl Vfs for WritableCompressedFileVfs {
     fn write_file(&self, path: &Path, new_content: &[u8]) -> Result<(), VfsError> {
         let path_str = path.to_string_lossy();
         if path_str != self.inner_filename && path != Path::new(&self.inner_filename) {
-            return Err(VfsError::Unsupported("Can only write to the inner file".to_string()));
+            return Err(VfsError::Unsupported(
+                "Can only write to the inner file".to_string(),
+            ));
         }
 
         self.mark_modified();
 
-        let mut content = self.content.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content")))?;
+        let mut content = self.content.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock content",
+            ))
+        })?;
 
         content.clear();
         content.extend_from_slice(new_content);
@@ -1331,8 +1428,11 @@ impl Vfs for WritableCompressedFileVfs {
     }
 
     fn flush(&self) -> Result<(), VfsError> {
-        let modified = self.modified.lock()
-            .map_err(|_| VfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock modified flag")))?;
+        let modified = self.modified.lock().map_err(|_| {
+            VfsError::Io(std::io::Error::other(
+                "Failed to lock modified flag",
+            ))
+        })?;
 
         if *modified {
             drop(modified);
@@ -1354,8 +1454,9 @@ struct ContentWriter {
 
 impl Write for ContentWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut content = self.content.lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "Failed to lock content"))?;
+        let mut content = self.content.lock().map_err(|_| {
+            std::io::Error::other("Failed to lock content")
+        })?;
         content.extend_from_slice(buf);
 
         if let Ok(mut modified) = self.modified.lock() {
@@ -1410,9 +1511,11 @@ mod tests {
         let vfs = WritableZipVfs::create(archive_path.clone()).unwrap();
 
         // Write a file
-        vfs.write_file(Path::new("hello.txt"), b"Hello, World!").unwrap();
+        vfs.write_file(Path::new("hello.txt"), b"Hello, World!")
+            .unwrap();
         vfs.create_dir(Path::new("subdir")).unwrap();
-        vfs.write_file(Path::new("subdir/nested.txt"), b"Nested content").unwrap();
+        vfs.write_file(Path::new("subdir/nested.txt"), b"Nested content")
+            .unwrap();
 
         // Flush to create the archive
         vfs.flush().unwrap();
@@ -1435,7 +1538,8 @@ mod tests {
         let vfs = WritableTarVfs::create(archive_path.clone()).unwrap();
 
         // Write a file
-        vfs.write_file(Path::new("test.txt"), b"TAR content").unwrap();
+        vfs.write_file(Path::new("test.txt"), b"TAR content")
+            .unwrap();
 
         // Flush to create the archive
         vfs.flush().unwrap();
@@ -1458,7 +1562,8 @@ mod tests {
 
         // Create a new writable TAR.GZ
         let vfs = WritableTarVfs::create(archive_path.clone()).unwrap();
-        vfs.write_file(Path::new("compressed.txt"), b"Compressed content").unwrap();
+        vfs.write_file(Path::new("compressed.txt"), b"Compressed content")
+            .unwrap();
         vfs.flush().unwrap();
 
         assert!(archive_path.exists());
@@ -1466,15 +1571,26 @@ mod tests {
         // Verify it's gzip compressed
         let file = File::open(&archive_path).unwrap();
         let mut bytes = [0u8; 2];
-        std::io::BufReader::new(file).read_exact(&mut bytes).unwrap();
+        std::io::BufReader::new(file)
+            .read_exact(&mut bytes)
+            .unwrap();
         assert_eq!(bytes, [0x1f, 0x8b]); // Gzip magic number
     }
 
     #[test]
     fn test_compression_type_detection() {
-        assert_eq!(CompressionType::from_path(Path::new("file.gz")), Some(CompressionType::Gzip));
-        assert_eq!(CompressionType::from_path(Path::new("file.bz2")), Some(CompressionType::Bzip2));
-        assert_eq!(CompressionType::from_path(Path::new("file.xz")), Some(CompressionType::Xz));
+        assert_eq!(
+            CompressionType::from_path(Path::new("file.gz")),
+            Some(CompressionType::Gzip)
+        );
+        assert_eq!(
+            CompressionType::from_path(Path::new("file.bz2")),
+            Some(CompressionType::Bzip2)
+        );
+        assert_eq!(
+            CompressionType::from_path(Path::new("file.xz")),
+            Some(CompressionType::Xz)
+        );
 
         // TAR archives should not be detected as compressed files
         assert_eq!(CompressionType::from_path(Path::new("file.tar.gz")), None);
@@ -1524,7 +1640,8 @@ mod tests {
 
         // Create and write
         let vfs = WritableCompressedFileVfs::create(archive_path.clone()).unwrap();
-        vfs.write_file(Path::new("output.txt"), b"New gzip content").unwrap();
+        vfs.write_file(Path::new("output.txt"), b"New gzip content")
+            .unwrap();
         vfs.flush().unwrap();
 
         // Verify by reading back

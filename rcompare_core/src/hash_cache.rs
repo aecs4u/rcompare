@@ -24,7 +24,9 @@ impl HashCache {
         if cache_file.exists() {
             match fs::read(&cache_file) {
                 Ok(data) => {
-                    if let Ok(cached_data) = bincode::deserialize::<HashMap<CacheKey, Blake3Hash>>(&data) {
+                    if let Ok(cached_data) =
+                        bincode::deserialize::<HashMap<CacheKey, Blake3Hash>>(&data)
+                    {
                         memory_cache = cached_data;
                         debug!("Loaded {} entries from cache", memory_cache.len());
                     }
@@ -58,11 +60,13 @@ impl HashCache {
         let cache_file = self.cache_dir.join("hash_cache.bin");
         let temp_file = self.cache_dir.join("hash_cache.bin.tmp");
 
-        let cache = self.memory_cache.read()
+        let cache = self
+            .memory_cache
+            .read()
             .map_err(|e| RCompareError::Cache(format!("Lock error: {}", e)))?;
 
-        let data = bincode::serialize(&*cache)
-            .map_err(|e| RCompareError::Serialization(e.to_string()))?;
+        let data =
+            bincode::serialize(&*cache).map_err(|e| RCompareError::Serialization(e.to_string()))?;
 
         // Write to temporary file first
         fs::write(&temp_file, data)?;

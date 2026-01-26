@@ -56,31 +56,42 @@ impl ImageDiffEngine {
     }
 
     /// Compare two image files
-    pub fn compare_files(&self, left: &Path, right: &Path) -> Result<ImageDiffResult, RCompareError> {
-        let left_img = image::open(left)
-            .map_err(|e| RCompareError::Io(std::io::Error::new(
+    pub fn compare_files(
+        &self,
+        left: &Path,
+        right: &Path,
+    ) -> Result<ImageDiffResult, RCompareError> {
+        let left_img = image::open(left).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open left image: {}", e)
-            )))?;
+                format!("Failed to open left image: {}", e),
+            ))
+        })?;
 
-        let right_img = image::open(right)
-            .map_err(|e| RCompareError::Io(std::io::Error::new(
+        let right_img = image::open(right).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open right image: {}", e)
-            )))?;
+                format!("Failed to open right image: {}", e),
+            ))
+        })?;
 
         self.compare_images(&left_img, &right_img)
     }
 
     /// Compare two images
-    pub fn compare_images(&self, left: &DynamicImage, right: &DynamicImage) -> Result<ImageDiffResult, RCompareError> {
+    pub fn compare_images(
+        &self,
+        left: &DynamicImage,
+        right: &DynamicImage,
+    ) -> Result<ImageDiffResult, RCompareError> {
         let left_dims = left.dimensions();
         let right_dims = right.dimensions();
         let same_dimensions = left_dims == right_dims;
 
         if !same_dimensions {
             // Images have different dimensions - consider fully different
-            let total = (left_dims.0 as u64 * left_dims.1 as u64).max(right_dims.0 as u64 * right_dims.1 as u64);
+            let total = (left_dims.0 as u64 * left_dims.1 as u64)
+                .max(right_dims.0 as u64 * right_dims.1 as u64);
             return Ok(ImageDiffResult {
                 total_pixels: total,
                 different_pixels: total,
@@ -130,13 +141,17 @@ impl ImageDiffEngine {
     }
 
     /// Create a difference visualization image
-    pub fn create_diff_image(&self, left: &DynamicImage, right: &DynamicImage) -> Result<RgbaImage, RCompareError> {
+    pub fn create_diff_image(
+        &self,
+        left: &DynamicImage,
+        right: &DynamicImage,
+    ) -> Result<RgbaImage, RCompareError> {
         let left_dims = left.dimensions();
         let right_dims = right.dimensions();
 
         if left_dims != right_dims {
             return Err(RCompareError::Comparison(
-                "Cannot create diff image for images with different dimensions".to_string()
+                "Cannot create diff image for images with different dimensions".to_string(),
             ));
         }
 
@@ -156,7 +171,9 @@ impl ImageDiffEngine {
                     Rgba([255, 0, 0, 255])
                 } else {
                     // Show original pixel (grayscale)
-                    let gray = ((left_pixel[0] as u16 + left_pixel[1] as u16 + left_pixel[2] as u16) / 3) as u8;
+                    let gray =
+                        ((left_pixel[0] as u16 + left_pixel[1] as u16 + left_pixel[2] as u16) / 3)
+                            as u8;
                     Rgba([gray, gray, gray, 255])
                 };
 
@@ -168,7 +185,11 @@ impl ImageDiffEngine {
     }
 
     /// Create a side-by-side comparison image
-    pub fn create_side_by_side(&self, left: &DynamicImage, right: &DynamicImage) -> Result<RgbaImage, RCompareError> {
+    pub fn create_side_by_side(
+        &self,
+        left: &DynamicImage,
+        right: &DynamicImage,
+    ) -> Result<RgbaImage, RCompareError> {
         let left_dims = left.dimensions();
         let right_dims = right.dimensions();
 
@@ -205,13 +226,18 @@ impl ImageDiffEngine {
     }
 
     /// Create an overlay blend of two images
-    pub fn create_overlay(&self, left: &DynamicImage, right: &DynamicImage, blend: f32) -> Result<RgbaImage, RCompareError> {
+    pub fn create_overlay(
+        &self,
+        left: &DynamicImage,
+        right: &DynamicImage,
+        blend: f32,
+    ) -> Result<RgbaImage, RCompareError> {
         let left_dims = left.dimensions();
         let right_dims = right.dimensions();
 
         if left_dims != right_dims {
             return Err(RCompareError::Comparison(
-                "Cannot create overlay for images with different dimensions".to_string()
+                "Cannot create overlay for images with different dimensions".to_string(),
             ));
         }
 
@@ -243,32 +269,37 @@ impl ImageDiffEngine {
     fn pixels_differ(&self, left: &Rgba<u8>, right: &Rgba<u8>) -> bool {
         match self.mode {
             ImageCompareMode::Exact => {
-                left[0] != right[0] || left[1] != right[1] || left[2] != right[2] || left[3] != right[3]
+                left[0] != right[0]
+                    || left[1] != right[1]
+                    || left[2] != right[2]
+                    || left[3] != right[3]
             }
             ImageCompareMode::Threshold(thresh) => {
-                self.channel_diff(left[0], right[0]) > thresh ||
-                self.channel_diff(left[1], right[1]) > thresh ||
-                self.channel_diff(left[2], right[2]) > thresh ||
-                self.channel_diff(left[3], right[3]) > thresh
+                self.channel_diff(left[0], right[0]) > thresh
+                    || self.channel_diff(left[1], right[1]) > thresh
+                    || self.channel_diff(left[2], right[2]) > thresh
+                    || self.channel_diff(left[3], right[3]) > thresh
             }
             ImageCompareMode::Perceptual => {
                 // Simple perceptual difference using weighted RGB
-                let left_luma = 0.299 * left[0] as f32 + 0.587 * left[1] as f32 + 0.114 * left[2] as f32;
-                let right_luma = 0.299 * right[0] as f32 + 0.587 * right[1] as f32 + 0.114 * right[2] as f32;
+                let left_luma =
+                    0.299 * left[0] as f32 + 0.587 * left[1] as f32 + 0.114 * left[2] as f32;
+                let right_luma =
+                    0.299 * right[0] as f32 + 0.587 * right[1] as f32 + 0.114 * right[2] as f32;
                 (left_luma - right_luma).abs() > 3.0
             }
         }
     }
 
     fn channel_diff(&self, a: u8, b: u8) -> u8 {
-        if a > b { a - b } else { b - a }
+        a.abs_diff(b)
     }
 
     fn pixel_difference(&self, left: &Rgba<u8>, right: &Rgba<u8>) -> u32 {
-        self.channel_diff(left[0], right[0]) as u32 +
-        self.channel_diff(left[1], right[1]) as u32 +
-        self.channel_diff(left[2], right[2]) as u32 +
-        self.channel_diff(left[3], right[3]) as u32
+        self.channel_diff(left[0], right[0]) as u32
+            + self.channel_diff(left[1], right[1]) as u32
+            + self.channel_diff(left[2], right[2]) as u32
+            + self.channel_diff(left[3], right[3]) as u32
     }
 }
 
@@ -282,9 +313,24 @@ impl Default for ImageDiffEngine {
 pub fn is_image_file(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
         let ext = ext.to_string_lossy().to_lowercase();
-        matches!(ext.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "tiff" | "tif" |
-            "webp" | "pnm" | "pbm" | "pgm" | "ppm" | "dds" | "tga" | "ff"
+        matches!(
+            ext.as_str(),
+            "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "bmp"
+                | "ico"
+                | "tiff"
+                | "tif"
+                | "webp"
+                | "pnm"
+                | "pbm"
+                | "pgm"
+                | "ppm"
+                | "dds"
+                | "tga"
+                | "ff"
         )
     } else {
         false
