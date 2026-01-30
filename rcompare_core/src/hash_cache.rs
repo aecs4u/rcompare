@@ -1,3 +1,61 @@
+//! Persistent BLAKE3 hash cache with in-memory and disk storage.
+//!
+//! This module provides a thread-safe hash cache that stores BLAKE3 file hashes
+//! both in memory and on disk, enabling efficient repeated comparisons of large
+//! file trees. The cache uses file size and modification time as cache keys,
+//! automatically invalidating entries when files change.
+//!
+//! # Features
+//!
+//! - **Persistent storage**: Hashes survive across program runs
+//! - **Thread-safe**: Uses RwLock for concurrent access
+//! - **Automatic invalidation**: Cache entries include size/mtime for validation
+//! - **Full and partial hashes**: Supports both complete file hashing and partial (8KB)
+//! - **Binary serialization**: Uses bincode for efficient disk storage
+//!
+//! # Cache Key Strategy
+//!
+//! Cache entries are keyed by:
+//! - File path (relative to scan root)
+//! - File size
+//! - Modification timestamp
+//!
+//! This ensures that cached hashes are automatically invalidated when files
+//! are modified, preventing stale data.
+//!
+//! # Examples
+//!
+//! Basic usage:
+//!
+//! ```no_run
+//! use rcompare_core::hash_cache::HashCache;
+//! use rcompare_common::CacheKey;
+//! use std::path::{Path, PathBuf};
+//! use std::time::SystemTime;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let cache = HashCache::new(Path::new(".cache").to_path_buf())?;
+//!
+//! let key = CacheKey {
+//!     path: PathBuf::from("file.txt"),
+//!     size: 1024,
+//!     modified: SystemTime::now(),
+//! };
+//!
+//! // Check if hash is cached
+//! if let Some(hash) = cache.get(&key) {
+//!     println!("Cached hash found: {}", hex::encode(hash));
+//! } else {
+//!     // Compute and cache the hash
+//!     // cache.insert(key, computed_hash);
+//! }
+//!
+//! // Persist cache to disk
+//! cache.persist()?;
+//! # Ok(())
+//! # }
+//! ```
+
 use rcompare_common::{Blake3Hash, CacheKey, RCompareError};
 use std::collections::HashMap;
 use std::fs;
@@ -5,7 +63,31 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tracing::{debug, warn};
 
-/// In-memory and disk-backed hash cache
+/// Thread-safe in-memory and disk-backed BLAKE3 hash cache.
+///
+/// The cache stores file hashes keyed by path, size, and modification time,
+/// enabling efficient detection of file changes across multiple comparison runs.
+/// Cache data is automatically loaded from disk on creation and can be persisted
+/// back to disk using [`persist()`](HashCache::persist).
+///
+/// # Thread Safety
+///
+/// The cache uses `RwLock` to allow multiple concurrent readers or a single writer,
+/// making it safe to use from multiple threads during parallel directory scans.
+///
+/// # Examples
+///
+/// ```no_run
+/// use rcompare_core::hash_cache::HashCache;
+/// use std::path::Path;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let cache = HashCache::new(Path::new(".cache").to_path_buf())?;
+/// // Use cache for comparisons...
+/// cache.persist()?; // Save to disk
+/// # Ok(())
+/// # }
+/// ```
 pub struct HashCache {
     cache_dir: PathBuf,
     memory_cache: Arc<RwLock<HashMap<CacheKey, Blake3Hash>>>,

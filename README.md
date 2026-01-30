@@ -4,7 +4,8 @@ A high-performance file and directory comparison utility written in Rust, inspir
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-170%2B%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
+[![codecov](https://codecov.io/gh/aecs4u/rcompare/branch/main/graph/badge.svg)](https://codecov.io/gh/aecs4u/rcompare)
+[![Tests](https://img.shields.io/badge/tests-210%2B%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
 
 ## Features
 
@@ -41,8 +42,14 @@ A high-performance file and directory comparison utility written in Rust, inspir
 git clone https://github.com/aecs4u/rcompare
 cd rcompare
 
-# Build release binaries
+# Build release binaries (all features)
 cargo build --release
+
+# Build with minimal features (no cloud, archives, or specialized comparisons)
+cargo build --release --no-default-features
+
+# Build with specific features only
+cargo build --release --no-default-features --features "archives,csv-diff"
 
 # Run CLI
 ./target/release/rcompare_cli scan /path/to/left /path/to/right
@@ -50,6 +57,48 @@ cargo build --release
 # Run GUI
 ./target/release/rcompare_gui
 ```
+
+### Feature Flags
+
+RCompare uses Cargo feature flags to allow optional dependencies, reducing binary size and compile time when you don't need all functionality:
+
+**Default features** (enabled by default):
+- `cloud` - Cloud storage support (S3, SSH/SFTP, WebDAV)
+- `archives` - Archive format support (ZIP, TAR, 7Z, RAR)
+- `specialized` - All specialized file format comparisons
+
+**Specialized format features** (enabled with `specialized`):
+- `csv-diff` - CSV file comparison
+- `excel-diff` - Excel workbook comparison (.xlsx, .xls)
+- `json-diff` - JSON/YAML structural comparison
+- `parquet-diff` - Parquet DataFrame comparison
+- `image-diff` - Image pixel-level comparison with EXIF
+
+**Examples:**
+
+```bash
+# Minimal build (core functionality only - ~50% smaller binary)
+cargo build --release --no-default-features
+
+# Only archive support (no cloud or specialized comparisons)
+cargo build --release --no-default-features --features "archives"
+
+# Only specialized formats (no cloud or archives)
+cargo build --release --no-default-features --features "specialized"
+
+# Custom combination (archives + CSV + images only)
+cargo build --release --no-default-features --features "archives,csv-diff,image-diff"
+
+# Everything except cloud storage
+cargo build --release --no-default-features --features "archives,specialized"
+```
+
+**Binary size comparison** (approximate, release mode):
+- Full build (all features): ~200 MB
+- No cloud: ~180 MB
+- No archives: ~190 MB
+- No specialized: ~120 MB
+- Minimal (no defaults): ~50 MB
 
 ### Usage Examples
 
@@ -218,7 +267,8 @@ rcompare/
 ├── rcompare_common/      # Shared types, traits, and errors
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
-└── rcompare_gui/         # Graphical interface (Slint)
+├── rcompare_gui/         # Graphical interface (Slint)
+└── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 
 ### Key Components
@@ -227,6 +277,48 @@ rcompare/
 - **Scanner**: Parallel directory traversal with gitignore support
 - **Comparison Engine**: Size, timestamp, and hash-based file comparison
 - **Hash Cache**: Persistent BLAKE3 hash cache to avoid re-computation
+- **Patch Engine**: Parse, manipulate, and serialize diff/patch files (unified, context, normal formats)
+- **FFI Layer**: C-compatible API for integration with C/C++ applications
+
+### C/C++ Integration (FFI)
+
+RCompare provides a libkomparediff2-compatible C API for parsing and manipulating diff/patch files:
+
+```c
+#include "rcompare.h"
+
+// Parse diff
+PatchSetHandle* handle = NULL;
+rcompare_parse_diff(diff_data, diff_len, &handle);
+
+// Access metadata
+size_t file_count = rcompare_patchset_file_count(handle);
+const char* source = rcompare_filepatch_source(handle, 0);
+
+// Blend with original file
+rcompare_blend_file(handle, 0, original_data, original_len);
+
+// Apply/unapply patches
+rcompare_apply_difference(handle, 0, diff_idx);
+rcompare_unapply_difference(handle, 0, diff_idx);
+
+// Serialize back to diff
+char* output = rcompare_serialize_diff(handle);
+rcompare_free_string(output);
+
+// Cleanup
+rcompare_free_patchset(handle);
+```
+
+Features:
+- Parse multiple diff formats (unified, context, normal, RCS, ed)
+- Auto-detect generators (CVS, Perforce, Subversion)
+- Apply/unapply individual or all differences
+- Blend original file content with patch
+- Serialize back to unified diff format
+- Arena-based memory management for strings
+
+See [rcompare_ffi/README.md](rcompare_ffi/README.md) for complete documentation and examples.
 
 ## Output Symbols
 
@@ -391,7 +483,137 @@ See [CI Documentation](.github/workflows/README.md) for details.
 - **Directory Deduplication**: Find duplicate directory structures
 - **Migration Checks**: Validate data migrations
 
+## Examples
+
+RCompare includes several example programs demonstrating different use cases:
+
+### Basic Directory Comparison
+```bash
+cargo run --example basic_comparison -- /path/to/left /path/to/right
+```
+Demonstrates fundamental directory comparison with detailed output of differences.
+
+### Archive Comparison
+```bash
+cargo run --example archive_comparison -- backup1.zip backup2.tar.gz
+```
+Shows how to compare files inside ZIP and TAR archives without extraction using the VFS abstraction.
+
+### Specialized Format Comparison
+```bash
+# Text file comparison with syntax highlighting
+cargo run --example specialized_formats -- text left.rs right.rs
+
+# Image comparison with pixel-level analysis
+cargo run --example specialized_formats -- image photo1.png photo2.png
+
+# CSV structural comparison
+cargo run --example specialized_formats -- csv data1.csv data2.csv
+
+# JSON path-based comparison
+cargo run --example specialized_formats -- json config1.json config2.json
+```
+Demonstrates specialized comparison engines for different file types.
+
+### Cloud Storage Comparison
+```bash
+cargo run --example cloud_storage_example
+```
+Shows integration with S3 and SSH/SFTP for comparing cloud-stored files.
+
+All examples include detailed comments and error handling to serve as templates for your own integrations.
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run tests for a specific package
+cargo test --package rcompare_core
+
+# Run tests with output
+cargo test -- --nocapture
+```
+
+### Running Benchmarks
+
+RCompare uses [Criterion](https://github.com/bheisler/criterion.rs) for performance benchmarking:
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark group
+cargo bench scanner
+cargo bench comparison
+cargo bench hash_cache
+
+# Generate HTML report (saved to target/criterion/)
+cargo bench --bench core_benchmarks
+```
+
+Benchmark results are saved in `target/criterion/` with detailed HTML reports showing:
+- Performance metrics (mean, median, std dev)
+- Comparison with previous runs
+- Regression detection
+- Detailed plots and statistics
+
+**Benchmark categories:**
+- **Scanner benchmarks**: Directory traversal performance (small, medium, large trees)
+- **Hash cache benchmarks**: Cache lookup and insertion performance
+- **Comparison benchmarks**: File comparison at different scales
+- **Workflow benchmarks**: End-to-end scan and compare operations
+
+### Code Quality
+
+```bash
+# Format code
+cargo fmt --all
+
+# Run Clippy lints
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run security audit
+cargo audit
+
+# Check dependencies for issues
+cargo deny check
+```
+
+### Documentation
+
+```bash
+# Build and view API documentation
+cargo doc --no-deps --open
+
+# Check for documentation warnings
+cargo doc --no-deps 2>&1 | grep warning
+```
+
 ## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+**Quick start:**
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes following our [coding standards](CONTRIBUTING.md#coding-standards)
+4. Add tests for new functionality
+5. Run tests and linters (`cargo test && cargo clippy`)
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+**Before submitting:**
+- ✅ All tests pass (`cargo test`)
+- ✅ Code is formatted (`cargo fmt --all -- --check`)
+- ✅ No Clippy warnings (`cargo clippy --all-targets -- -D warnings`)
+- ✅ Documentation updated for API changes
+- ✅ Examples added/updated if relevant
 
 Contributions are welcome! Please feel free to submit pull requests or open issues.
 

@@ -1,0 +1,14 @@
+[package]
+name = "rcompare_ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rcompare_common = { path = "../rcompare_common" }
+rcompare_core = { path = "../rcompare_core" }

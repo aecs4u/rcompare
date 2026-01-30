@@ -4,6 +4,7 @@ members = [
     "rcompare_core",
     "rcompare_cli",
     "rcompare_gui",
+    "rcompare_ffi",
 ]
 resolver = "2"
 
@@ -105,3 +106,6 @@ bytes = "1.5"
 async-trait = "0.1"
 tokio = { version = "1.37", features = ["full"] }
 url = "2.5"
+
+# Benchmarking (dev dependency)
+criterion = { version = "0.5", features = ["html_reports"] }

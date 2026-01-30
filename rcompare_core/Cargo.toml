@@ -6,6 +6,25 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["cloud", "archives", "specialized"]
+
+# Cloud storage support (S3, SSH/SFTP, WebDAV)
+cloud = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:ssh2", "dep:reqwest", "dep:bytes", "dep:async-trait", "dep:tokio", "dep:url"]
+
+# Archive format support (ZIP, TAR, 7Z, RAR)
+archives = ["dep:zip", "dep:tar", "dep:flate2", "dep:sevenz-rust", "dep:bzip2", "dep:xz2", "dep:unrar", "dep:tempfile"]
+
+# Specialized file format comparisons (CSV, Excel, JSON, Parquet, Images)
+specialized = ["csv-diff", "excel-diff", "json-diff", "parquet-diff", "image-diff"]
+
+# Individual specialized format features
+csv-diff = ["dep:csv"]
+excel-diff = ["dep:calamine"]
+json-diff = ["dep:serde_json", "dep:serde_yaml"]
+parquet-diff = ["dep:polars"]
+image-diff = ["dep:image", "dep:kamadak-exif"]
+
 [dependencies]
 rcompare_common = { path = "../rcompare_common" }
 
@@ -32,38 +51,38 @@ similar.workspace = true
 # Syntax highlighting
 syntect.workspace = true
 
-# Image processing
-image.workspace = true
-kamadak-exif.workspace = true
+# Image processing (optional - enabled with image-diff feature)
+image = { workspace = true, optional = true }
+kamadak-exif = { workspace = true, optional = true }
 
-# CSV processing
-csv.workspace = true
+# CSV processing (optional - enabled with csv-diff feature)
+csv = { workspace = true, optional = true }
 
-# Excel processing
-calamine.workspace = true
+# Excel processing (optional - enabled with excel-diff feature)
+calamine = { workspace = true, optional = true }
 
-# JSON/YAML processing
-serde_json.workspace = true
-serde_yaml.workspace = true
+# JSON/YAML processing (optional - enabled with json-diff feature)
+serde_json = { workspace = true, optional = true }
+serde_yaml = { workspace = true, optional = true }
 
-# DataFrame/Parquet processing
-polars.workspace = true
+# DataFrame/Parquet processing (optional - enabled with parquet-diff feature)
+polars = { workspace = true, optional = true }
 
-# Archive handling
-zip.workspace = true
-tar.workspace = true
-flate2.workspace = true
-sevenz-rust.workspace = true
-bzip2.workspace = true
-xz2.workspace = true
-unrar.workspace = true
+# Archive handling (optional - enabled with archives feature)
+zip = { workspace = true, optional = true }
+tar = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+sevenz-rust = { workspace = true, optional = true }
+bzip2 = { workspace = true, optional = true }
+xz2 = { workspace = true, optional = true }
+unrar = { workspace = true, optional = true }
 
 # Pattern matching
 glob.workspace = true
 regex.workspace = true
 
-# Temp extraction for 7z
-tempfile.workspace = true
+# Temp extraction for 7z (optional - enabled with archives feature)
+tempfile = { workspace = true, optional = true }
 
 # Concurrency
 rayon.workspace = true
@@ -74,19 +93,25 @@ directories.workspace = true
 filetime.workspace = true
 trash.workspace = true
 
-# SSH/SFTP
-ssh2.workspace = true
+# SSH/SFTP (optional - enabled with cloud feature)
+ssh2 = { workspace = true, optional = true }
 
-# Cloud storage - S3
-aws-config.workspace = true
-aws-sdk-s3.workspace = true
-aws-credential-types.workspace = true
+# Cloud storage - S3 (optional - enabled with cloud feature)
+aws-config = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-credential-types = { workspace = true, optional = true }
 
-# Cloud storage - WebDAV and HTTP
-reqwest.workspace = true
-bytes.workspace = true
-async-trait.workspace = true
-tokio.workspace = true
-url.workspace = true
+# Cloud storage - WebDAV and HTTP (optional - enabled with cloud feature)
+reqwest = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "core_benchmarks"
+harness = false

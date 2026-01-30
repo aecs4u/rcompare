@@ -1,47 +1,127 @@
 # RCompare Roadmap
 
-Status legend: Not started, In progress, Done
+This document outlines the development roadmap for RCompare, organized by priority and implementation status.
 
-## Milestone 1: Folder Compare UX Core (In progress)
-- Virtual tree model (flattened rows with depth + expand/collapse) - Done
-- Tree row selection model + keyboard navigation - Not started
-- Synced scrolling between left/right panes - Not started
-- Gutter diff overview map - Not started
-- Folder list click opens text diff - Done
+## Legend
 
-## Milestone 2: Text Compare + Merge (Not started)
-- 3-way merge core logic - Not started
-- Merge UI controls (Take Left/Right/Both/None) - Not started
-- Editable text view with debounced diff - Not started
-- Ignore whitespace/case options - Not started
+- ✅ **Completed**: Fully implemented and tested
+- 🚧 **In Progress**: Currently being developed
+- 📋 **Planned**: Scheduled for future development
+- 🔮 **Future**: Long-term goals, not yet scheduled
 
-## Milestone 3: File Operations + Sync (Not started)
-- Expose copy/move/delete/touch in CLI - Not started
-- Expose copy/move/delete/touch in GUI with confirmations - Not started
-- Dry-run preview and progress reporting - Not started
-- Post-copy checksum verification option - Not started
+---
 
-## Milestone 4: Archive + VFS Maturity (In progress)
-- VFS-backed comparison for archives (.zip/.tar/.tar.gz/.7z) - Done
-- Archive selection in GUI - Done
-- Streaming 7z support (avoid full extraction) - Not started
-- Archive-in-archive traversal (if in scope) - Not started
+## Phase 1: Core Foundation ✅
 
-## Milestone 5: Config + Portability (In progress)
-- TOML config load/save (XDG/AppData/Library) - Done
-- Portable mode (config next to binary) - Done
-- Settings dialog in GUI - Not started
+### File Comparison Engine ✅
+- ✅ BLAKE3 hashing with persistent cache
+- ✅ Size and timestamp-based comparison
+- ✅ Parallel directory traversal with jwalk
+- ✅ Gitignore pattern support
+- ✅ Cross-platform support (Linux, Windows, macOS)
 
-## Milestone 6: Quality & Performance (Not started)
-- CLI integration tests for JSON/hashes (baseline) - Done
-- Benchmark large folder scans (1M+ files) - Not started
-- Performance profiling + caching improvements - Not started
+### Basic UI ✅
+- ✅ CLI with progress indicators
+- ✅ JSON output for automation
+- ✅ Slint GUI with file tree view
+- ✅ Settings dialog with config persistence
+- ✅ Copy operations (left/right)
 
-## Milestone 7: Advanced Comparison Features (Not started)
-- Moved lines detection + manual alignment tools - Not started
-- Structured compare modes (XML/CSV/JSON/logical sections) - Not started
-- Patch create/apply/preview workflows - Not started
-- Rich report exports (HTML/XML/CSV/Text/Patch) - Not started
-- Horizontal/vertical layout toggle + compare macros/scripting - Not started
-- Remote sources (FTP/SFTP) + VCS browsing (if in scope) - Not started
-- Unicode/casing/datetime normalization toggles - Not started
+### VFS & Archives ✅
+- ✅ VFS abstraction layer
+- ✅ ZIP, TAR, TAR.GZ, TGZ support
+- ✅ 7Z support (read-only via extraction)
+- ✅ Archive comparison without extraction
+
+---
+
+## Phase 2: Specialized Formats ✅
+
+### Text & Binary ✅
+- ✅ Line-by-line text diff with syntax highlighting
+- ✅ Whitespace handling (5 modes)
+- ✅ Case-insensitive comparison
+- ✅ Binary hex view
+
+### Structured Data ✅
+- ✅ CSV row/column comparison
+- ✅ Excel sheet/cell comparison (.xlsx, .xls)
+- ✅ JSON structural comparison
+- ✅ YAML structural comparison
+- ✅ Parquet DataFrame comparison
+
+### Media ✅
+- ✅ Image pixel-by-pixel comparison
+- ✅ EXIF metadata comparison
+- ✅ Configurable tolerance for images
+
+---
+
+## Phase 3: Patch System & FFI ✅
+
+### Patch Operations ✅
+- ✅ Parse multiple diff formats (unified, context, normal, RCS, ed)
+- ✅ Auto-detect generators (CVS, Perforce, Subversion)
+- ✅ Apply/unapply individual differences
+- ✅ Blend original file with patch
+- ✅ Serialize back to unified diff
+
+### C/C++ Integration ✅
+- ✅ C FFI layer (libkomparediff2-compatible)
+- ✅ Opaque handle pattern
+- ✅ CMake integration
+- ✅ C examples and documentation
+- ✅ 37 comprehensive FFI tests
+
+---
+
+## Phase 4: Advanced Features 🚧
+
+### Performance Optimization 🚧
+- 🚧 **Parallel hash computing** (in progress)
+  - Multi-threaded BLAKE3 hashing
+  - Work-stealing queue for load balancing
+  - Configurable thread pool size
+  - Target: 2-3x faster on multi-core systems
+
+- 📋 Streaming large file comparison
+- 📋 SQLite index for very large trees
+
+### GUI Enhancements 📋
+- 📋 Three-way merge (core + UI)
+- 📋 Tabs for multiple comparisons
+- 📋 Synced scrolling with gutter diff map
+
+### Copy Operations 📋
+- 📋 Post-copy checksum verification
+- 📋 Resumable copies
+
+---
+
+## Phase 5: Reporting & Workflow 📋
+
+- 📋 HTML/Markdown/CSV report export
+- 📋 JUnit XML for CI integration
+- 📋 Diff statistics dashboard
+- 📋 Comparison presets (save/load)
+- 📋 .rcompare-ignore file support
+
+---
+
+## Phase 6: Cloud & Remote 🔮
+
+- 🔮 Additional cloud providers (GCS, Azure, Dropbox)
+- 🔮 SSH improvements (key auth, pooling)
+- 🔮 Watch mode for continuous monitoring
+- 🔮 API server (REST/gRPC)
+
+---
+
+## Phase 7: AI & Platform Integration 🔮
+
+- 🔮 Semantic diff (refactoring detection, AST-based)
+- 🔮 macOS/Windows/Linux platform integrations
+- 🔮 Differential backup system
+- 🔮 Plugin/extension system
+
+Last updated: 2026-01-30

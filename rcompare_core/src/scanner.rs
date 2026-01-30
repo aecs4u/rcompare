@@ -1,3 +1,47 @@
+//! Directory and VFS scanning with gitignore support.
+//!
+//! This module provides efficient, parallel directory traversal using jwalk,
+//! with built-in support for .gitignore patterns and custom ignore rules.
+//!
+//! # Features
+//!
+//! - **Parallel scanning**: Uses jwalk for fast multi-threaded directory traversal
+//! - **Gitignore support**: Respects .gitignore files (including nested ones)
+//! - **Custom ignore patterns**: Supports user-defined gitignore-style patterns
+//! - **VFS abstraction**: Can scan both filesystem and virtual file systems (archives, cloud storage)
+//! - **Cancellation**: Supports cancelling long-running scans
+//! - **Symlink handling**: Configurable symlink following behavior
+//!
+//! # Examples
+//!
+//! Basic directory scanning:
+//!
+//! ```no_run
+//! use rcompare_core::FolderScanner;
+//! use rcompare_common::AppConfig;
+//! use std::path::Path;
+//!
+//! let config = AppConfig::default();
+//! let scanner = FolderScanner::new(config);
+//! let entries = scanner.scan(Path::new("/path/to/directory")).unwrap();
+//! println!("Found {} entries", entries.len());
+//! ```
+//!
+//! Scanning with custom ignore patterns:
+//!
+//! ```no_run
+//! use rcompare_core::FolderScanner;
+//! use rcompare_common::AppConfig;
+//! use std::path::Path;
+//!
+//! let config = AppConfig {
+//!     ignore_patterns: vec!["*.o".to_string(), "target/".to_string()],
+//!     ..Default::default()
+//! };
+//! let scanner = FolderScanner::new(config);
+//! let entries = scanner.scan(Path::new("/project")).unwrap();
+//! ```
+
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use jwalk::WalkDir;
 use rcompare_common::{AppConfig, FileEntry, RCompareError, Vfs};
@@ -5,7 +49,28 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::debug;
 
-/// Parallel folder scanner using jwalk
+/// Parallel folder scanner using jwalk with gitignore and custom pattern support.
+///
+/// The scanner efficiently traverses directory trees in parallel, respecting
+/// .gitignore files and custom ignore patterns. It can scan both regular
+/// filesystems and virtual file systems (VFS) for archives and cloud storage.
+///
+/// # Examples
+///
+/// ```no_run
+/// use rcompare_core::FolderScanner;
+/// use rcompare_common::AppConfig;
+/// use std::path::Path;
+///
+/// let config = AppConfig::default();
+/// let mut scanner = FolderScanner::new(config);
+///
+/// // Optionally load .gitignore files
+/// scanner.load_gitignore(Path::new("/project")).unwrap();
+///
+/// // Scan the directory
+/// let entries = scanner.scan(Path::new("/project")).unwrap();
+/// ```
 pub struct FolderScanner {
     config: AppConfig,
     gitignore: Option<Gitignore>,

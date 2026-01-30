@@ -22,6 +22,9 @@ pub enum RCompareError {
 
     #[error("Comparison error: {0}")]
     Comparison(String),
+
+    #[error("Patch parse error: {0}")]
+    PatchParse(String),
 }
 
 pub type Result<T> = std::result::Result<T, RCompareError>;
