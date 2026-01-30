@@ -1,11 +1,12 @@
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Result of a JSON/YAML comparison
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct JsonDiffResult {
     /// Total number of keys/paths compared
     pub total_paths: usize,
@@ -22,7 +23,7 @@ pub struct JsonDiffResult {
 }
 
 /// Represents a difference in a specific path
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PathDiff {
     /// JSON path (e.g., "root.users[0].name")
     pub path: String,
@@ -34,7 +35,7 @@ pub struct PathDiff {
     pub right_value: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum PathDiffType {
     /// Value exists in both but differs
     ValueDifferent,

@@ -1,5 +1,6 @@
 use rcompare_common::RCompareError;
 use regex::Regex;
+use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::path::Path;
@@ -9,7 +10,7 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 /// Represents a line in a text diff
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiffLine {
     pub line_number_left: Option<usize>,
     pub line_number_right: Option<usize>,
@@ -18,20 +19,20 @@ pub struct DiffLine {
     pub highlighted_segments: Vec<HighlightedSegment>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum DiffChangeType {
     Equal,
     Insert,
     Delete,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HighlightedSegment {
     pub text: String,
     pub style: HighlightStyle,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HighlightStyle {
     pub foreground: (u8, u8, u8),
     pub background: Option<(u8, u8, u8)>,

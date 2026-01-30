@@ -89,3 +89,10 @@ cobertura.xml
 # Benchmark results
 criterion/
 bench_results/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+*.egg

@@ -1,10 +1,11 @@
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 /// Represents a chunk of binary data for hex viewing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HexChunk {
     pub offset: u64,
     pub left_data: Vec<u8>,

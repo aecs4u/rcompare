@@ -3,7 +3,7 @@
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus, Vfs};
-use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
+use rcompare_core::text_diff::{DiffChangeType, RegexRule, TextDiffConfig, WhitespaceMode};
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
@@ -501,204 +501,226 @@ fn run_scan(
 
     comparison_engine.persist_cache()?;
 
-    if json {
-        let report = build_json_report(
-            &left,
-            &right,
-            &diff_nodes,
-            diff_only,
-            hide_identical,
-            hide_different,
-            hide_left_only,
-            hide_right_only,
-            hide_unchecked,
-        );
-        let output = serde_json::to_string_pretty(&report)?;
-        println!("{output}");
-        return Ok(());
-    }
-
-    // Display results
-    let use_color = !no_color && std::io::stdout().is_terminal();
-
-    let mut same_count = 0;
-    let mut different_count = 0;
-    let mut orphan_left_count = 0;
-    let mut orphan_right_count = 0;
-    let mut unchecked_count = 0;
-
-    if columns {
-        // Columned output format (side-by-side)
-        println!("\n{}", "=".repeat(120));
-        println!("Comparison Results (Side-by-Side)");
-        println!("{}", "=".repeat(120));
-        println!("{:<50} {:^8} {:<50}", "Left", "Status", "Right");
-        println!("{}", "-".repeat(120));
-
-        for node in &diff_nodes {
-            match node.status {
-                DiffStatus::Same => same_count += 1,
-                DiffStatus::Different => different_count += 1,
-                DiffStatus::OrphanLeft => orphan_left_count += 1,
-                DiffStatus::OrphanRight => orphan_right_count += 1,
-                DiffStatus::Unchecked => unchecked_count += 1,
-            }
-
-            // Check if entry should be shown based on filters
-            if !should_show_entry(
-                &node.status,
-                diff_only,
-                hide_identical,
-                hide_different,
-                hide_left_only,
-                hide_right_only,
-                hide_unchecked,
-            ) {
-                continue;
-            }
-
-            let status_symbol = match node.status {
-                DiffStatus::Same => "==",
-                DiffStatus::Different => "!=",
-                DiffStatus::OrphanLeft => "<<",
-                DiffStatus::OrphanRight => ">>",
-                DiffStatus::Unchecked => "??",
-            };
-
-            let (status_color, reset) = if use_color {
-                (
-                    match node.status {
-                        DiffStatus::Same => "\x1b[32m",        // Green
-                        DiffStatus::Different => "\x1b[31m",   // Red
-                        DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
-                        DiffStatus::OrphanRight => "\x1b[34m", // Blue
-                        DiffStatus::Unchecked => "\x1b[36m",   // Cyan
-                    },
-                    "\x1b[0m",
-                )
-            } else {
-                ("", "")
-            };
-
-            let left_text = if node.left.is_some() {
-                format!("{}", node.relative_path.display())
-            } else {
-                String::from("(missing)")
-            };
-
-            let right_text = if node.right.is_some() {
-                format!("{}", node.relative_path.display())
-            } else {
-                String::from("(missing)")
-            };
-
-            println!(
-                "{:<50} {}{:^8}{} {:<50}",
-                truncate_path(&left_text, 50),
-                status_color,
-                status_symbol,
-                reset,
-                truncate_path(&right_text, 50)
-            );
-        }
-        println!("{}", "=".repeat(120));
+    // Initialize optional result collectors for JSON mode
+    let mut json_text_diffs = if json && text_diff {
+        Some(Vec::new())
     } else {
-        // Standard output format
+        None
+    };
+    let mut json_image_diffs = if json && image_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    let mut json_csv_diffs = if json && csv_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    let mut json_excel_diffs = if json && excel_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    let mut json_json_diffs = if json && json_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    let mut json_yaml_diffs = if json && yaml_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+    let mut json_parquet_diffs = if json && parquet_diff {
+        Some(Vec::new())
+    } else {
+        None
+    };
+
+    // Display results (text mode only)
+    let use_color = !json && !no_color && std::io::stdout().is_terminal();
+
+    if !json {
+        let mut same_count = 0;
+        let mut different_count = 0;
+        let mut orphan_left_count = 0;
+        let mut orphan_right_count = 0;
+        let mut unchecked_count = 0;
+
+        if columns {
+            // Columned output format (side-by-side)
+            println!("\n{}", "=".repeat(120));
+            println!("Comparison Results (Side-by-Side)");
+            println!("{}", "=".repeat(120));
+            println!("{:<50} {:^8} {:<50}", "Left", "Status", "Right");
+            println!("{}", "-".repeat(120));
+
+            for node in &diff_nodes {
+                match node.status {
+                    DiffStatus::Same => same_count += 1,
+                    DiffStatus::Different => different_count += 1,
+                    DiffStatus::OrphanLeft => orphan_left_count += 1,
+                    DiffStatus::OrphanRight => orphan_right_count += 1,
+                    DiffStatus::Unchecked => unchecked_count += 1,
+                }
+
+                // Check if entry should be shown based on filters
+                if !should_show_entry(
+                    &node.status,
+                    diff_only,
+                    hide_identical,
+                    hide_different,
+                    hide_left_only,
+                    hide_right_only,
+                    hide_unchecked,
+                ) {
+                    continue;
+                }
+
+                let status_symbol = match node.status {
+                    DiffStatus::Same => "==",
+                    DiffStatus::Different => "!=",
+                    DiffStatus::OrphanLeft => "<<",
+                    DiffStatus::OrphanRight => ">>",
+                    DiffStatus::Unchecked => "??",
+                };
+
+                let (status_color, reset) = if use_color {
+                    (
+                        match node.status {
+                            DiffStatus::Same => "\x1b[32m",        // Green
+                            DiffStatus::Different => "\x1b[31m",   // Red
+                            DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
+                            DiffStatus::OrphanRight => "\x1b[34m", // Blue
+                            DiffStatus::Unchecked => "\x1b[36m",   // Cyan
+                        },
+                        "\x1b[0m",
+                    )
+                } else {
+                    ("", "")
+                };
+
+                let left_text = if node.left.is_some() {
+                    format!("{}", node.relative_path.display())
+                } else {
+                    String::from("(missing)")
+                };
+
+                let right_text = if node.right.is_some() {
+                    format!("{}", node.relative_path.display())
+                } else {
+                    String::from("(missing)")
+                };
+
+                println!(
+                    "{:<50} {}{:^8}{} {:<50}",
+                    truncate_path(&left_text, 50),
+                    status_color,
+                    status_symbol,
+                    reset,
+                    truncate_path(&right_text, 50)
+                );
+            }
+            println!("{}", "=".repeat(120));
+        } else {
+            // Standard output format
+            println!("\n{}", "=".repeat(80));
+            println!("Comparison Results");
+            println!("{}", "=".repeat(80));
+
+            for node in &diff_nodes {
+                match node.status {
+                    DiffStatus::Same => same_count += 1,
+                    DiffStatus::Different => different_count += 1,
+                    DiffStatus::OrphanLeft => orphan_left_count += 1,
+                    DiffStatus::OrphanRight => orphan_right_count += 1,
+                    DiffStatus::Unchecked => unchecked_count += 1,
+                }
+
+                // Check if entry should be shown based on filters
+                if !should_show_entry(
+                    &node.status,
+                    diff_only,
+                    hide_identical,
+                    hide_different,
+                    hide_left_only,
+                    hide_right_only,
+                    hide_unchecked,
+                ) {
+                    continue;
+                }
+
+                let status_symbol = match node.status {
+                    DiffStatus::Same => "  ==  ",
+                    DiffStatus::Different => "  !=  ",
+                    DiffStatus::OrphanLeft => "  <<  ",
+                    DiffStatus::OrphanRight => "  >>  ",
+                    DiffStatus::Unchecked => "  ??  ",
+                };
+
+                let (status_color, reset) = if use_color {
+                    (
+                        match node.status {
+                            DiffStatus::Same => "\x1b[32m",        // Green
+                            DiffStatus::Different => "\x1b[31m",   // Red
+                            DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
+                            DiffStatus::OrphanRight => "\x1b[34m", // Blue
+                            DiffStatus::Unchecked => "\x1b[36m",   // Cyan
+                        },
+                        "\x1b[0m",
+                    )
+                } else {
+                    ("", "")
+                };
+
+                println!(
+                    "{}{}{} {}",
+                    status_color,
+                    status_symbol,
+                    reset,
+                    node.relative_path.display()
+                );
+            }
+            println!("\n{}", "=".repeat(80));
+        }
+
         println!("\n{}", "=".repeat(80));
-        println!("Comparison Results");
+        let same_mark = if use_color {
+            "\x1b[32m(==)\x1b[0m"
+        } else {
+            "(==)"
+        };
+        let diff_mark = if use_color {
+            "\x1b[31m(!=)\x1b[0m"
+        } else {
+            "(!=)"
+        };
+        let left_mark = if use_color {
+            "\x1b[33m(<<)\x1b[0m"
+        } else {
+            "(<<)"
+        };
+        let right_mark = if use_color {
+            "\x1b[34m(>>)\x1b[0m"
+        } else {
+            "(>>)"
+        };
+        let unchecked_mark = if use_color {
+            "\x1b[36m(??)\x1b[0m"
+        } else {
+            "(??)"
+        };
+
+        println!("Summary:");
+        println!("  Total entries:   {}", diff_nodes.len());
+        println!("  Identical:       {} {}", same_count, same_mark);
+        println!("  Different:       {} {}", different_count, diff_mark);
+        println!("  Left only:       {} {}", orphan_left_count, left_mark);
+        println!("  Right only:      {} {}", orphan_right_count, right_mark);
+        println!("  Unchecked:       {} {}", unchecked_count, unchecked_mark);
         println!("{}", "=".repeat(80));
-
-        for node in &diff_nodes {
-            match node.status {
-                DiffStatus::Same => same_count += 1,
-                DiffStatus::Different => different_count += 1,
-                DiffStatus::OrphanLeft => orphan_left_count += 1,
-                DiffStatus::OrphanRight => orphan_right_count += 1,
-                DiffStatus::Unchecked => unchecked_count += 1,
-            }
-
-            // Check if entry should be shown based on filters
-            if !should_show_entry(
-                &node.status,
-                diff_only,
-                hide_identical,
-                hide_different,
-                hide_left_only,
-                hide_right_only,
-                hide_unchecked,
-            ) {
-                continue;
-            }
-
-            let status_symbol = match node.status {
-                DiffStatus::Same => "  ==  ",
-                DiffStatus::Different => "  !=  ",
-                DiffStatus::OrphanLeft => "  <<  ",
-                DiffStatus::OrphanRight => "  >>  ",
-                DiffStatus::Unchecked => "  ??  ",
-            };
-
-            let (status_color, reset) = if use_color {
-                (
-                    match node.status {
-                        DiffStatus::Same => "\x1b[32m",        // Green
-                        DiffStatus::Different => "\x1b[31m",   // Red
-                        DiffStatus::OrphanLeft => "\x1b[33m",  // Yellow
-                        DiffStatus::OrphanRight => "\x1b[34m", // Blue
-                        DiffStatus::Unchecked => "\x1b[36m",   // Cyan
-                    },
-                    "\x1b[0m",
-                )
-            } else {
-                ("", "")
-            };
-
-            println!(
-                "{}{}{} {}",
-                status_color,
-                status_symbol,
-                reset,
-                node.relative_path.display()
-            );
-        }
-        println!("\n{}", "=".repeat(80));
     }
-
-    println!("\n{}", "=".repeat(80));
-    let same_mark = if use_color {
-        "\x1b[32m(==)\x1b[0m"
-    } else {
-        "(==)"
-    };
-    let diff_mark = if use_color {
-        "\x1b[31m(!=)\x1b[0m"
-    } else {
-        "(!=)"
-    };
-    let left_mark = if use_color {
-        "\x1b[33m(<<)\x1b[0m"
-    } else {
-        "(<<)"
-    };
-    let right_mark = if use_color {
-        "\x1b[34m(>>)\x1b[0m"
-    } else {
-        "(>>)"
-    };
-    let unchecked_mark = if use_color {
-        "\x1b[36m(??)\x1b[0m"
-    } else {
-        "(??)"
-    };
-
-    println!("Summary:");
-    println!("  Total entries:   {}", diff_nodes.len());
-    println!("  Identical:       {} {}", same_count, same_mark);
-    println!("  Different:       {} {}", different_count, diff_mark);
-    println!("  Left only:       {} {}", orphan_left_count, left_mark);
-    println!("  Right only:      {} {}", orphan_right_count, right_mark);
-    println!("  Unchecked:       {} {}", unchecked_count, unchecked_mark);
-    println!("{}", "=".repeat(80));
 
     // Image-specific analysis if enabled
     if image_diff {
@@ -732,9 +754,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("Image Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("Image Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut image_comparisons = 0;
         for node in &diff_nodes {
@@ -752,49 +776,63 @@ fn run_scan(
                         match image_engine.compare_files(&left_path, &right_path) {
                             Ok(result) => {
                                 image_comparisons += 1;
-                                println!("\n{}", node.relative_path.display());
-                                println!(
-                                    "  Dimensions: {}x{} vs {}x{}",
-                                    result.left_dimensions.0,
-                                    result.left_dimensions.1,
-                                    result.right_dimensions.0,
-                                    result.right_dimensions.1
-                                );
-
-                                if result.same_dimensions {
-                                    println!(
-                                        "  Different pixels: {} ({:.2}%)",
-                                        result.different_pixels, result.difference_percentage
-                                    );
-                                    println!("  Mean pixel diff: {:.2}/255", result.mean_diff);
-
-                                    let similarity = 100.0 - result.difference_percentage;
-                                    let (color, reset) = if use_color {
-                                        if similarity >= 99.0 {
-                                            ("\x1b[32m", "\x1b[0m") // Green
-                                        } else if similarity >= 95.0 {
-                                            ("\x1b[33m", "\x1b[0m") // Yellow
-                                        } else {
-                                            ("\x1b[31m", "\x1b[0m") // Red
-                                        }
-                                    } else {
-                                        ("", "")
-                                    };
-                                    println!("  {}Similarity: {:.2}%{}", color, similarity, reset);
+                                if json {
+                                    if let Some(ref mut diffs) = json_image_diffs {
+                                        diffs.push(JsonImageDiffReport {
+                                            path: node.relative_path.to_string_lossy().to_string(),
+                                            result,
+                                        });
+                                    }
                                 } else {
+                                    println!("\n{}", node.relative_path.display());
                                     println!(
-                                        "  {}Different dimensions - not comparable{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        if use_color { "\x1b[0m" } else { "" }
+                                        "  Dimensions: {}x{} vs {}x{}",
+                                        result.left_dimensions.0,
+                                        result.left_dimensions.1,
+                                        result.right_dimensions.0,
+                                        result.right_dimensions.1
                                     );
+
+                                    if result.same_dimensions {
+                                        println!(
+                                            "  Different pixels: {} ({:.2}%)",
+                                            result.different_pixels, result.difference_percentage
+                                        );
+                                        println!("  Mean pixel diff: {:.2}/255", result.mean_diff);
+
+                                        let similarity = 100.0 - result.difference_percentage;
+                                        let (color, reset) = if use_color {
+                                            if similarity >= 99.0 {
+                                                ("\x1b[32m", "\x1b[0m") // Green
+                                            } else if similarity >= 95.0 {
+                                                ("\x1b[33m", "\x1b[0m") // Yellow
+                                            } else {
+                                                ("\x1b[31m", "\x1b[0m") // Red
+                                            }
+                                        } else {
+                                            ("", "")
+                                        };
+                                        println!(
+                                            "  {}Similarity: {:.2}%{}",
+                                            color, similarity, reset
+                                        );
+                                    } else {
+                                        println!(
+                                            "  {}Different dimensions - not comparable{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {
-                                println!(
-                                    "\n{}: Failed to compare - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to compare - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -806,17 +844,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if image_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} image file{}",
-                image_comparisons,
-                if image_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different images found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if image_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} image file{}",
+                    image_comparisons,
+                    if image_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different images found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -850,9 +890,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("CSV Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("CSV Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut csv_comparisons = 0;
         for node in &diff_nodes {
@@ -870,112 +912,123 @@ fn run_scan(
                         match csv_engine.compare_files(&left_path, &right_path) {
                             Ok(result) => {
                                 csv_comparisons += 1;
-                                println!("\n{}", node.relative_path.display());
+                                if json {
+                                    if let Some(ref mut diffs) = json_csv_diffs {
+                                        diffs.push(JsonCsvDiffReport {
+                                            path: node.relative_path.to_string_lossy().to_string(),
+                                            result,
+                                        });
+                                    }
+                                } else {
+                                    println!("\n{}", node.relative_path.display());
 
-                                if !result.headers_match {
-                                    println!(
-                                        "  {}Headers differ{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                    println!("    Left:  {}", result.left_headers.join(", "));
-                                    println!("    Right: {}", result.right_headers.join(", "));
-                                }
+                                    if !result.headers_match {
+                                        println!(
+                                            "  {}Headers differ{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                        println!("    Left:  {}", result.left_headers.join(", "));
+                                        println!("    Right: {}", result.right_headers.join(", "));
+                                    }
 
-                                println!("  Total rows: {}", result.total_rows);
+                                    println!("  Total rows: {}", result.total_rows);
 
-                                if result.identical_rows > 0 {
-                                    println!(
-                                        "  {}Identical rows: {}{}",
-                                        if use_color { "\x1b[32m" } else { "" },
-                                        result.identical_rows,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.identical_rows > 0 {
+                                        println!(
+                                            "  {}Identical rows: {}{}",
+                                            if use_color { "\x1b[32m" } else { "" },
+                                            result.identical_rows,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.different_rows > 0 {
-                                    println!(
-                                        "  {}Modified rows: {}{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        result.different_rows,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.different_rows > 0 {
+                                        println!(
+                                            "  {}Modified rows: {}{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            result.different_rows,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.left_only_rows > 0 {
-                                    println!(
-                                        "  {}Left-only rows: {}{}",
-                                        if use_color { "\x1b[31m" } else { "" },
-                                        result.left_only_rows,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.left_only_rows > 0 {
+                                        println!(
+                                            "  {}Left-only rows: {}{}",
+                                            if use_color { "\x1b[31m" } else { "" },
+                                            result.left_only_rows,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.right_only_rows > 0 {
-                                    println!(
-                                        "  {}Right-only rows: {}{}",
-                                        if use_color { "\x1b[34m" } else { "" },
-                                        result.right_only_rows,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.right_only_rows > 0 {
+                                        println!(
+                                            "  {}Right-only rows: {}{}",
+                                            if use_color { "\x1b[34m" } else { "" },
+                                            result.right_only_rows,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                // Show first few row differences
-                                if !result.row_diffs.is_empty() {
-                                    println!(
-                                        "\n  Row-level differences (showing first {}):",
-                                        result.row_diffs.len().min(5)
-                                    );
-                                    for diff in result.row_diffs.iter().take(5) {
-                                        match diff.diff_type {
-                                            rcompare_core::csv_diff::RowDiffType::Modified => {
-                                                println!(
-                                                    "    Row {}: {} modified column(s)",
-                                                    diff.row_num,
-                                                    diff.column_diffs.len()
-                                                );
-                                                for col_diff in &diff.column_diffs {
+                                    // Show first few row differences
+                                    if !result.row_diffs.is_empty() {
+                                        println!(
+                                            "\n  Row-level differences (showing first {}):",
+                                            result.row_diffs.len().min(5)
+                                        );
+                                        for diff in result.row_diffs.iter().take(5) {
+                                            match diff.diff_type {
+                                                rcompare_core::csv_diff::RowDiffType::Modified => {
                                                     println!(
-                                                        "      {} [{}]: {:?} -> {:?}",
-                                                        col_diff.column,
-                                                        col_diff.index,
-                                                        col_diff.left_value,
-                                                        col_diff.right_value
+                                                        "    Row {}: {} modified column(s)",
+                                                        diff.row_num,
+                                                        diff.column_diffs.len()
+                                                    );
+                                                    for col_diff in &diff.column_diffs {
+                                                        println!(
+                                                            "      {} [{}]: {:?} -> {:?}",
+                                                            col_diff.column,
+                                                            col_diff.index,
+                                                            col_diff.left_value,
+                                                            col_diff.right_value
+                                                        );
+                                                    }
+                                                }
+                                                rcompare_core::csv_diff::RowDiffType::LeftOnly => {
+                                                    println!(
+                                                        "    Row {}: {}Left only{}",
+                                                        diff.row_num,
+                                                        if use_color { "\x1b[31m" } else { "" },
+                                                        if use_color { "\x1b[0m" } else { "" }
+                                                    );
+                                                }
+                                                rcompare_core::csv_diff::RowDiffType::RightOnly => {
+                                                    println!(
+                                                        "    Row {}: {}Right only{}",
+                                                        diff.row_num,
+                                                        if use_color { "\x1b[34m" } else { "" },
+                                                        if use_color { "\x1b[0m" } else { "" }
                                                     );
                                                 }
                                             }
-                                            rcompare_core::csv_diff::RowDiffType::LeftOnly => {
-                                                println!(
-                                                    "    Row {}: {}Left only{}",
-                                                    diff.row_num,
-                                                    if use_color { "\x1b[31m" } else { "" },
-                                                    if use_color { "\x1b[0m" } else { "" }
-                                                );
-                                            }
-                                            rcompare_core::csv_diff::RowDiffType::RightOnly => {
-                                                println!(
-                                                    "    Row {}: {}Right only{}",
-                                                    diff.row_num,
-                                                    if use_color { "\x1b[34m" } else { "" },
-                                                    if use_color { "\x1b[0m" } else { "" }
-                                                );
-                                            }
                                         }
-                                    }
-                                    if result.row_diffs.len() > 5 {
-                                        println!(
-                                            "    ... and {} more row differences",
-                                            result.row_diffs.len() - 5
-                                        );
+                                        if result.row_diffs.len() > 5 {
+                                            println!(
+                                                "    ... and {} more row differences",
+                                                result.row_diffs.len() - 5
+                                            );
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!(
-                                    "\n{}: Failed to compare - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to compare - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -987,17 +1040,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if csv_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} CSV file{}",
-                csv_comparisons,
-                if csv_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different CSV files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if csv_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} CSV file{}",
+                    csv_comparisons,
+                    if csv_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different CSV files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -1031,9 +1086,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("Excel Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("Excel Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut excel_comparisons = 0;
         for node in &diff_nodes {
@@ -1051,64 +1108,78 @@ fn run_scan(
                         match excel_engine.compare_files(&left_path, &right_path) {
                             Ok(result) => {
                                 excel_comparisons += 1;
-                                println!("\n{}", node.relative_path.display());
+                                if json {
+                                    if let Some(ref mut diffs) = json_excel_diffs {
+                                        diffs.push(JsonExcelDiffReport {
+                                            path: node.relative_path.to_string_lossy().to_string(),
+                                            result,
+                                        });
+                                    }
+                                } else {
+                                    println!("\n{}", node.relative_path.display());
 
-                                if !result.sheet_names_match {
-                                    println!(
-                                        "  {}Sheet names differ{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                    println!("    Left:  {}", result.left_sheet_names.join(", "));
-                                    println!("    Right: {}", result.right_sheet_names.join(", "));
-                                }
+                                    if !result.sheet_names_match {
+                                        println!(
+                                            "  {}Sheet names differ{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                        println!(
+                                            "    Left:  {}",
+                                            result.left_sheet_names.join(", ")
+                                        );
+                                        println!(
+                                            "    Right: {}",
+                                            result.right_sheet_names.join(", ")
+                                        );
+                                    }
 
-                                println!("  Total sheets: {}", result.total_sheets);
+                                    println!("  Total sheets: {}", result.total_sheets);
 
-                                if result.identical_sheets > 0 {
-                                    println!(
-                                        "  {}Identical sheets: {}{}",
-                                        if use_color { "\x1b[32m" } else { "" },
-                                        result.identical_sheets,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.identical_sheets > 0 {
+                                        println!(
+                                            "  {}Identical sheets: {}{}",
+                                            if use_color { "\x1b[32m" } else { "" },
+                                            result.identical_sheets,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.different_sheets > 0 {
-                                    println!(
-                                        "  {}Modified sheets: {}{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        result.different_sheets,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.different_sheets > 0 {
+                                        println!(
+                                            "  {}Modified sheets: {}{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            result.different_sheets,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.left_only_sheets > 0 {
-                                    println!(
-                                        "  {}Left-only sheets: {}{}",
-                                        if use_color { "\x1b[31m" } else { "" },
-                                        result.left_only_sheets,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.left_only_sheets > 0 {
+                                        println!(
+                                            "  {}Left-only sheets: {}{}",
+                                            if use_color { "\x1b[31m" } else { "" },
+                                            result.left_only_sheets,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.right_only_sheets > 0 {
-                                    println!(
-                                        "  {}Right-only sheets: {}{}",
-                                        if use_color { "\x1b[34m" } else { "" },
-                                        result.right_only_sheets,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.right_only_sheets > 0 {
+                                        println!(
+                                            "  {}Right-only sheets: {}{}",
+                                            if use_color { "\x1b[34m" } else { "" },
+                                            result.right_only_sheets,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                // Show sheet-level differences
-                                if !result.sheet_diffs.is_empty() {
-                                    println!(
-                                        "\n  Sheet-level differences (showing first {}):",
-                                        result.sheet_diffs.len().min(3)
-                                    );
-                                    for sheet_diff in result.sheet_diffs.iter().take(3) {
-                                        match sheet_diff.diff_type {
+                                    // Show sheet-level differences
+                                    if !result.sheet_diffs.is_empty() {
+                                        println!(
+                                            "\n  Sheet-level differences (showing first {}):",
+                                            result.sheet_diffs.len().min(3)
+                                        );
+                                        for sheet_diff in result.sheet_diffs.iter().take(3) {
+                                            match sheet_diff.diff_type {
                                             rcompare_core::excel_diff::SheetDiffType::Modified => {
                                                 println!(
                                                     "    Sheet '{}': {}x{}, {} different cell(s)",
@@ -1154,21 +1225,24 @@ fn run_scan(
                                                 );
                                             }
                                         }
-                                    }
-                                    if result.sheet_diffs.len() > 3 {
-                                        println!(
-                                            "    ... and {} more sheet differences",
-                                            result.sheet_diffs.len() - 3
-                                        );
+                                        }
+                                        if result.sheet_diffs.len() > 3 {
+                                            println!(
+                                                "    ... and {} more sheet differences",
+                                                result.sheet_diffs.len() - 3
+                                            );
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!(
-                                    "\n{}: Failed to compare - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to compare - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -1180,17 +1254,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if excel_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} Excel file{}",
-                excel_comparisons,
-                if excel_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different Excel files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if excel_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} Excel file{}",
+                    excel_comparisons,
+                    if excel_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different Excel files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -1224,9 +1300,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("JSON Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("JSON Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut json_comparisons = 0;
         for node in &diff_nodes {
@@ -1243,53 +1321,61 @@ fn run_scan(
                         match json_engine.compare_json_files(&left_path, &right_path) {
                             Ok(result) => {
                                 json_comparisons += 1;
-                                println!("\n{}", node.relative_path.display());
-                                println!("  Total paths: {}", result.total_paths);
+                                if json {
+                                    if let Some(ref mut diffs) = json_json_diffs {
+                                        diffs.push(JsonJsonDiffReport {
+                                            path: node.relative_path.to_string_lossy().to_string(),
+                                            result,
+                                        });
+                                    }
+                                } else {
+                                    println!("\n{}", node.relative_path.display());
+                                    println!("  Total paths: {}", result.total_paths);
 
-                                if result.identical_paths > 0 {
-                                    println!(
-                                        "  {}Identical paths: {}{}",
-                                        if use_color { "\x1b[32m" } else { "" },
-                                        result.identical_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.identical_paths > 0 {
+                                        println!(
+                                            "  {}Identical paths: {}{}",
+                                            if use_color { "\x1b[32m" } else { "" },
+                                            result.identical_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.different_paths > 0 {
-                                    println!(
-                                        "  {}Different paths: {}{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        result.different_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.different_paths > 0 {
+                                        println!(
+                                            "  {}Different paths: {}{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            result.different_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.left_only_paths > 0 {
-                                    println!(
-                                        "  {}Left-only paths: {}{}",
-                                        if use_color { "\x1b[31m" } else { "" },
-                                        result.left_only_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.left_only_paths > 0 {
+                                        println!(
+                                            "  {}Left-only paths: {}{}",
+                                            if use_color { "\x1b[31m" } else { "" },
+                                            result.left_only_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.right_only_paths > 0 {
-                                    println!(
-                                        "  {}Right-only paths: {}{}",
-                                        if use_color { "\x1b[34m" } else { "" },
-                                        result.right_only_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.right_only_paths > 0 {
+                                        println!(
+                                            "  {}Right-only paths: {}{}",
+                                            if use_color { "\x1b[34m" } else { "" },
+                                            result.right_only_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                // Show first few path differences
-                                if !result.path_diffs.is_empty() {
-                                    println!(
-                                        "\n  Path-level differences (showing first {}):",
-                                        result.path_diffs.len().min(5)
-                                    );
-                                    for diff in result.path_diffs.iter().take(5) {
-                                        match diff.diff_type {
+                                    // Show first few path differences
+                                    if !result.path_diffs.is_empty() {
+                                        println!(
+                                            "\n  Path-level differences (showing first {}):",
+                                            result.path_diffs.len().min(5)
+                                        );
+                                        for diff in result.path_diffs.iter().take(5) {
+                                            match diff.diff_type {
                                             rcompare_core::json_diff::PathDiffType::ValueDifferent => {
                                                 println!(
                                                     "    {}: {} -> {}",
@@ -1325,21 +1411,24 @@ fn run_scan(
                                                 );
                                             }
                                         }
-                                    }
-                                    if result.path_diffs.len() > 5 {
-                                        println!(
-                                            "    ... and {} more path differences",
-                                            result.path_diffs.len() - 5
-                                        );
+                                        }
+                                        if result.path_diffs.len() > 5 {
+                                            println!(
+                                                "    ... and {} more path differences",
+                                                result.path_diffs.len() - 5
+                                            );
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!(
-                                    "\n{}: Failed to compare - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to compare - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -1351,17 +1440,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if json_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} JSON file{}",
-                json_comparisons,
-                if json_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different JSON files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if json_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} JSON file{}",
+                    json_comparisons,
+                    if json_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different JSON files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -1395,9 +1486,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("YAML Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("YAML Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut yaml_comparisons = 0;
         for node in &diff_nodes {
@@ -1414,53 +1507,61 @@ fn run_scan(
                         match yaml_engine.compare_yaml_files(&left_path, &right_path) {
                             Ok(result) => {
                                 yaml_comparisons += 1;
-                                println!("\n{}", node.relative_path.display());
-                                println!("  Total paths: {}", result.total_paths);
+                                if json {
+                                    if let Some(ref mut diffs) = json_yaml_diffs {
+                                        diffs.push(JsonJsonDiffReport {
+                                            path: node.relative_path.to_string_lossy().to_string(),
+                                            result,
+                                        });
+                                    }
+                                } else {
+                                    println!("\n{}", node.relative_path.display());
+                                    println!("  Total paths: {}", result.total_paths);
 
-                                if result.identical_paths > 0 {
-                                    println!(
-                                        "  {}Identical paths: {}{}",
-                                        if use_color { "\x1b[32m" } else { "" },
-                                        result.identical_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.identical_paths > 0 {
+                                        println!(
+                                            "  {}Identical paths: {}{}",
+                                            if use_color { "\x1b[32m" } else { "" },
+                                            result.identical_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.different_paths > 0 {
-                                    println!(
-                                        "  {}Different paths: {}{}",
-                                        if use_color { "\x1b[33m" } else { "" },
-                                        result.different_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.different_paths > 0 {
+                                        println!(
+                                            "  {}Different paths: {}{}",
+                                            if use_color { "\x1b[33m" } else { "" },
+                                            result.different_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.left_only_paths > 0 {
-                                    println!(
-                                        "  {}Left-only paths: {}{}",
-                                        if use_color { "\x1b[31m" } else { "" },
-                                        result.left_only_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.left_only_paths > 0 {
+                                        println!(
+                                            "  {}Left-only paths: {}{}",
+                                            if use_color { "\x1b[31m" } else { "" },
+                                            result.left_only_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                if result.right_only_paths > 0 {
-                                    println!(
-                                        "  {}Right-only paths: {}{}",
-                                        if use_color { "\x1b[34m" } else { "" },
-                                        result.right_only_paths,
-                                        if use_color { "\x1b[0m" } else { "" }
-                                    );
-                                }
+                                    if result.right_only_paths > 0 {
+                                        println!(
+                                            "  {}Right-only paths: {}{}",
+                                            if use_color { "\x1b[34m" } else { "" },
+                                            result.right_only_paths,
+                                            if use_color { "\x1b[0m" } else { "" }
+                                        );
+                                    }
 
-                                // Show first few path differences
-                                if !result.path_diffs.is_empty() {
-                                    println!(
-                                        "\n  Path-level differences (showing first {}):",
-                                        result.path_diffs.len().min(5)
-                                    );
-                                    for diff in result.path_diffs.iter().take(5) {
-                                        match diff.diff_type {
+                                    // Show first few path differences
+                                    if !result.path_diffs.is_empty() {
+                                        println!(
+                                            "\n  Path-level differences (showing first {}):",
+                                            result.path_diffs.len().min(5)
+                                        );
+                                        for diff in result.path_diffs.iter().take(5) {
+                                            match diff.diff_type {
                                             rcompare_core::json_diff::PathDiffType::ValueDifferent => {
                                                 println!(
                                                     "    {}: {} -> {}",
@@ -1496,21 +1597,24 @@ fn run_scan(
                                                 );
                                             }
                                         }
-                                    }
-                                    if result.path_diffs.len() > 5 {
-                                        println!(
-                                            "    ... and {} more path differences",
-                                            result.path_diffs.len() - 5
-                                        );
+                                        }
+                                        if result.path_diffs.len() > 5 {
+                                            println!(
+                                                "    ... and {} more path differences",
+                                                result.path_diffs.len() - 5
+                                            );
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!(
-                                    "\n{}: Failed to compare - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to compare - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -1522,17 +1626,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if yaml_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} YAML file{}",
-                yaml_comparisons,
-                if yaml_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different YAML files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if yaml_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} YAML file{}",
+                    yaml_comparisons,
+                    if yaml_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different YAML files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -1584,23 +1690,31 @@ fn run_scan(
                             parquet_comparisons += 1;
                             pb.inc(1);
 
-                            println!(
-                                "\n{}{}{}",
-                                if use_color { "\x1b[1;36m" } else { "" },
-                                left_entry.path.display(),
-                                if use_color { "\x1b[0m" } else { "" }
-                            );
-
-                            // Schema differences
-                            if !result.schema_diffs.is_empty() {
+                            if json {
+                                if let Some(ref mut diffs) = json_parquet_diffs {
+                                    diffs.push(JsonParquetDiffReport {
+                                        path: node.relative_path.to_string_lossy().to_string(),
+                                        result,
+                                    });
+                                }
+                            } else {
                                 println!(
-                                    "  {}Schema differences:{} {} difference(s)",
-                                    if use_color { "\x1b[1;33m" } else { "" },
-                                    if use_color { "\x1b[0m" } else { "" },
-                                    result.schema_diffs.len()
+                                    "\n{}{}{}",
+                                    if use_color { "\x1b[1;36m" } else { "" },
+                                    left_entry.path.display(),
+                                    if use_color { "\x1b[0m" } else { "" }
                                 );
-                                for diff in result.schema_diffs.iter().take(5) {
-                                    match diff.diff_type {
+
+                                // Schema differences
+                                if !result.schema_diffs.is_empty() {
+                                    println!(
+                                        "  {}Schema differences:{} {} difference(s)",
+                                        if use_color { "\x1b[1;33m" } else { "" },
+                                        if use_color { "\x1b[0m" } else { "" },
+                                        result.schema_diffs.len()
+                                    );
+                                    for diff in result.schema_diffs.iter().take(5) {
+                                        match diff.diff_type {
                                         rcompare_core::parquet_diff::SchemaDiffType::LeftOnly => {
                                             println!(
                                                 "    Column '{}': {}Left only{} (type: {})",
@@ -1630,47 +1744,47 @@ fn run_scan(
                                             );
                                         }
                                     }
+                                    }
                                 }
-                            }
 
-                            // Row statistics
-                            println!("  Total rows: {}", result.total_rows);
-                            println!(
-                                "  {}Identical rows:{} {}",
-                                if use_color { "\x1b[32m" } else { "" },
-                                if use_color { "\x1b[0m" } else { "" },
-                                result.identical_rows
-                            );
-                            println!(
-                                "  {}Different rows:{} {}",
-                                if use_color { "\x1b[31m" } else { "" },
-                                if use_color { "\x1b[0m" } else { "" },
-                                result.different_rows
-                            );
-                            println!(
-                                "  {}Left only:{} {}",
-                                if use_color { "\x1b[33m" } else { "" },
-                                if use_color { "\x1b[0m" } else { "" },
-                                result.left_only_rows
-                            );
-                            println!(
-                                "  {}Right only:{} {}",
-                                if use_color { "\x1b[34m" } else { "" },
-                                if use_color { "\x1b[0m" } else { "" },
-                                result.right_only_rows
-                            );
-
-                            // Show sample of row differences
-                            if !result.row_diffs.is_empty() {
+                                // Row statistics
+                                println!("  Total rows: {}", result.total_rows);
                                 println!(
-                                    "  Sample differences (showing first {} of {}):",
-                                    result.row_diffs.len().min(5),
-                                    result.different_rows
-                                        + result.left_only_rows
-                                        + result.right_only_rows
+                                    "  {}Identical rows:{} {}",
+                                    if use_color { "\x1b[32m" } else { "" },
+                                    if use_color { "\x1b[0m" } else { "" },
+                                    result.identical_rows
                                 );
-                                for diff in result.row_diffs.iter().take(5) {
-                                    match diff.diff_type {
+                                println!(
+                                    "  {}Different rows:{} {}",
+                                    if use_color { "\x1b[31m" } else { "" },
+                                    if use_color { "\x1b[0m" } else { "" },
+                                    result.different_rows
+                                );
+                                println!(
+                                    "  {}Left only:{} {}",
+                                    if use_color { "\x1b[33m" } else { "" },
+                                    if use_color { "\x1b[0m" } else { "" },
+                                    result.left_only_rows
+                                );
+                                println!(
+                                    "  {}Right only:{} {}",
+                                    if use_color { "\x1b[34m" } else { "" },
+                                    if use_color { "\x1b[0m" } else { "" },
+                                    result.right_only_rows
+                                );
+
+                                // Show sample of row differences
+                                if !result.row_diffs.is_empty() {
+                                    println!(
+                                        "  Sample differences (showing first {} of {}):",
+                                        result.row_diffs.len().min(5),
+                                        result.different_rows
+                                            + result.left_only_rows
+                                            + result.right_only_rows
+                                    );
+                                    for diff in result.row_diffs.iter().take(5) {
+                                        match diff.diff_type {
                                         rcompare_core::parquet_diff::RowDiffType::ValueDifferent => {
                                             println!(
                                                 "    Row {}/{}: {} modified column(s)",
@@ -1704,18 +1818,21 @@ fn run_scan(
                                             );
                                         }
                                     }
+                                    }
                                 }
                             }
                         }
                         Err(e) => {
                             pb.inc(1);
-                            println!(
-                                "\n{}Error comparing {}: {}{}",
-                                if use_color { "\x1b[1;31m" } else { "" },
-                                left_entry.path.display(),
-                                e,
-                                if use_color { "\x1b[0m" } else { "" }
-                            );
+                            if !json {
+                                println!(
+                                    "\n{}Error comparing {}: {}{}",
+                                    if use_color { "\x1b[1;31m" } else { "" },
+                                    left_entry.path.display(),
+                                    e,
+                                    if use_color { "\x1b[0m" } else { "" }
+                                );
+                            }
                         }
                     }
                 }
@@ -1724,17 +1841,19 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if parquet_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} Parquet file{}",
-                parquet_comparisons,
-                if parquet_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different Parquet files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if parquet_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} Parquet file{}",
+                    parquet_comparisons,
+                    if parquet_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different Parquet files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
     }
 
@@ -1768,9 +1887,11 @@ fn run_scan(
             None
         };
 
-        println!("\n{}", "=".repeat(80));
-        println!("Text Comparison Details");
-        println!("{}", "=".repeat(80));
+        if !json {
+            println!("\n{}", "=".repeat(80));
+            println!("Text Comparison Details");
+            println!("{}", "=".repeat(80));
+        }
 
         let mut text_comparisons = 0;
         for node in &diff_nodes {
@@ -1805,53 +1926,73 @@ fn run_scan(
                                         let mut equal = 0;
                                         for line in &diff_lines {
                                             match line.change_type {
-                                                rcompare_core::text_diff::DiffChangeType::Insert => inserted += 1,
-                                                rcompare_core::text_diff::DiffChangeType::Delete => deleted += 1,
-                                                rcompare_core::text_diff::DiffChangeType::Equal => equal += 1,
+                                                DiffChangeType::Insert => inserted += 1,
+                                                DiffChangeType::Delete => deleted += 1,
+                                                DiffChangeType::Equal => equal += 1,
                                             }
                                         }
 
-                                        println!("\n{}", node.relative_path.display());
-                                        println!("  Total lines: {}", diff_lines.len());
-                                        println!(
-                                            "  {}Equal lines:{} {}",
-                                            if use_color { "\x1b[90m" } else { "" },
-                                            if use_color { "\x1b[0m" } else { "" },
-                                            equal
-                                        );
+                                        if json {
+                                            if let Some(ref mut diffs) = json_text_diffs {
+                                                diffs.push(JsonTextDiffReport {
+                                                    path: node
+                                                        .relative_path
+                                                        .to_string_lossy()
+                                                        .to_string(),
+                                                    total_lines: diff_lines.len(),
+                                                    equal_lines: equal,
+                                                    inserted_lines: inserted,
+                                                    deleted_lines: deleted,
+                                                    lines: diff_lines,
+                                                });
+                                            }
+                                        } else {
+                                            println!("\n{}", node.relative_path.display());
+                                            println!("  Total lines: {}", diff_lines.len());
+                                            println!(
+                                                "  {}Equal lines:{} {}",
+                                                if use_color { "\x1b[90m" } else { "" },
+                                                if use_color { "\x1b[0m" } else { "" },
+                                                equal
+                                            );
 
-                                        if inserted > 0 {
-                                            println!(
-                                                "  {}Inserted lines:{} {}",
-                                                if use_color { "\x1b[32m" } else { "" },
-                                                if use_color { "\x1b[0m" } else { "" },
-                                                inserted
-                                            );
-                                        }
-                                        if deleted > 0 {
-                                            println!(
-                                                "  {}Deleted lines:{} {}",
-                                                if use_color { "\x1b[31m" } else { "" },
-                                                if use_color { "\x1b[0m" } else { "" },
-                                                deleted
-                                            );
+                                            if inserted > 0 {
+                                                println!(
+                                                    "  {}Inserted lines:{} {}",
+                                                    if use_color { "\x1b[32m" } else { "" },
+                                                    if use_color { "\x1b[0m" } else { "" },
+                                                    inserted
+                                                );
+                                            }
+                                            if deleted > 0 {
+                                                println!(
+                                                    "  {}Deleted lines:{} {}",
+                                                    if use_color { "\x1b[31m" } else { "" },
+                                                    if use_color { "\x1b[0m" } else { "" },
+                                                    deleted
+                                                );
+                                            }
                                         }
                                     }
                                     Err(e) => {
-                                        println!(
-                                            "\n{}: Failed to compare - {}",
-                                            node.relative_path.display(),
-                                            e
-                                        );
+                                        if !json {
+                                            println!(
+                                                "\n{}: Failed to compare - {}",
+                                                node.relative_path.display(),
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             }
                             (Err(e), _) | (_, Err(e)) => {
-                                println!(
-                                    "\n{}: Failed to read - {}",
-                                    node.relative_path.display(),
-                                    e
-                                );
+                                if !json {
+                                    println!(
+                                        "\n{}: Failed to read - {}",
+                                        node.relative_path.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -1863,18 +2004,44 @@ fn run_scan(
             pb.finish_and_clear();
         }
 
-        if text_comparisons > 0 {
-            println!("\n{}", "=".repeat(80));
-            println!(
-                "Analyzed {} text file{}",
-                text_comparisons,
-                if text_comparisons == 1 { "" } else { "s" }
-            );
-            println!("{}", "=".repeat(80));
-        } else {
-            println!("\nNo different text files found to analyze.");
-            println!("{}", "=".repeat(80));
+        if !json {
+            if text_comparisons > 0 {
+                println!("\n{}", "=".repeat(80));
+                println!(
+                    "Analyzed {} text file{}",
+                    text_comparisons,
+                    if text_comparisons == 1 { "" } else { "s" }
+                );
+                println!("{}", "=".repeat(80));
+            } else {
+                println!("\nNo different text files found to analyze.");
+                println!("{}", "=".repeat(80));
+            }
         }
+    }
+
+    // JSON output at the end (after all diff processing)
+    if json {
+        let report = build_json_report(
+            &left,
+            &right,
+            &diff_nodes,
+            diff_only,
+            hide_identical,
+            hide_different,
+            hide_left_only,
+            hide_right_only,
+            hide_unchecked,
+            json_text_diffs,
+            json_image_diffs,
+            json_csv_diffs,
+            json_excel_diffs,
+            json_json_diffs,
+            json_yaml_diffs,
+            json_parquet_diffs,
+        );
+        let output = serde_json::to_string_pretty(&report)?;
+        println!("{output}");
     }
 
     Ok(())
@@ -1944,6 +2111,20 @@ struct JsonReport {
     right: String,
     summary: JsonSummary,
     entries: Vec<JsonEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text_diffs: Option<Vec<JsonTextDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_diffs: Option<Vec<JsonImageDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    csv_diffs: Option<Vec<JsonCsvDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    excel_diffs: Option<Vec<JsonExcelDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    yaml_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parquet_diffs: Option<Vec<JsonParquetDiffReport>>,
 }
 
 #[derive(Serialize)]
@@ -1971,6 +2152,46 @@ struct JsonFileSide {
     is_dir: bool,
 }
 
+#[derive(Serialize)]
+struct JsonTextDiffReport {
+    path: String,
+    total_lines: usize,
+    equal_lines: usize,
+    inserted_lines: usize,
+    deleted_lines: usize,
+    lines: Vec<rcompare_core::text_diff::DiffLine>,
+}
+
+#[derive(Serialize)]
+struct JsonImageDiffReport {
+    path: String,
+    result: rcompare_core::ImageDiffResult,
+}
+
+#[derive(Serialize)]
+struct JsonCsvDiffReport {
+    path: String,
+    result: rcompare_core::CsvDiffResult,
+}
+
+#[derive(Serialize)]
+struct JsonExcelDiffReport {
+    path: String,
+    result: rcompare_core::ExcelDiffResult,
+}
+
+#[derive(Serialize)]
+struct JsonJsonDiffReport {
+    path: String,
+    result: rcompare_core::JsonDiffResult,
+}
+
+#[derive(Serialize)]
+struct JsonParquetDiffReport {
+    path: String,
+    result: rcompare_core::ParquetDiffResult,
+}
+
 fn build_json_report(
     left: &Path,
     right: &Path,
@@ -1981,6 +2202,13 @@ fn build_json_report(
     hide_left_only: bool,
     hide_right_only: bool,
     hide_unchecked: bool,
+    text_diffs: Option<Vec<JsonTextDiffReport>>,
+    image_diffs: Option<Vec<JsonImageDiffReport>>,
+    csv_diffs: Option<Vec<JsonCsvDiffReport>>,
+    excel_diffs: Option<Vec<JsonExcelDiffReport>>,
+    json_diffs: Option<Vec<JsonJsonDiffReport>>,
+    yaml_diffs: Option<Vec<JsonJsonDiffReport>>,
+    parquet_diffs: Option<Vec<JsonParquetDiffReport>>,
 ) -> JsonReport {
     let mut summary = JsonSummary {
         total: diff_nodes.len(),
@@ -2027,6 +2255,13 @@ fn build_json_report(
         right: right.to_string_lossy().to_string(),
         summary,
         entries,
+        text_diffs,
+        image_diffs,
+        csv_diffs,
+        excel_diffs,
+        json_diffs,
+        yaml_diffs,
+        parquet_diffs,
     }
 }
 
@@ -2288,6 +2523,13 @@ mod tests {
             false,
             false,
             false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
 
         assert_eq!(report.left, "/left");
@@ -2343,6 +2585,13 @@ mod tests {
             false,
             false,
             false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         );
 
         // Summary still counts all, but entries only has non-same
