@@ -1,11 +1,12 @@
 use exif as kamadak_exif;
 use image::{DynamicImage, GenericImageView, Rgba, RgbaImage};
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// EXIF metadata for an image
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ExifMetadata {
     pub make: Option<String>,
     pub model: Option<String>,
@@ -22,7 +23,7 @@ pub struct ExifMetadata {
 }
 
 /// Difference in EXIF metadata between two images
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExifDifference {
     pub tag_name: String,
     pub left_value: Option<String>,
@@ -30,7 +31,7 @@ pub struct ExifDifference {
 }
 
 /// Result of an image comparison
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImageDiffResult {
     /// Total number of pixels
     pub total_pixels: u64,
@@ -55,7 +56,7 @@ pub struct ImageDiffResult {
 }
 
 /// Comparison mode for images
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ImageCompareMode {
     /// Count pixels that differ by any amount
     Exact,

@@ -1,10 +1,11 @@
 use calamine::{open_workbook_auto, Data, DataType, Range, Reader};
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Result of an Excel workbook comparison
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExcelDiffResult {
     /// Total number of sheets
     pub total_sheets: usize,
@@ -27,7 +28,7 @@ pub struct ExcelDiffResult {
 }
 
 /// Represents a difference in a specific sheet
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SheetDiff {
     /// Sheet name
     pub sheet_name: String,
@@ -43,7 +44,7 @@ pub struct SheetDiff {
     pub cell_diffs: Vec<CellDiff>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SheetDiffType {
     /// Sheet exists in both but data differs
     Modified,
@@ -53,7 +54,7 @@ pub enum SheetDiffType {
     RightOnly,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CellDiff {
     /// Row index (0-indexed)
     pub row: usize,

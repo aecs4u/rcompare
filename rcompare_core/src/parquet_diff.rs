@@ -1,10 +1,11 @@
 use polars::prelude::*;
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Result of a Parquet/DataFrame comparison
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ParquetDiffResult {
     /// Total number of rows compared
     pub total_rows: usize,
@@ -25,7 +26,7 @@ pub struct ParquetDiffResult {
 }
 
 /// Represents a difference in a specific row
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RowDiff {
     /// Row number in left (if exists)
     pub left_row: Option<usize>,
@@ -37,7 +38,7 @@ pub struct RowDiff {
     pub column_diffs: Vec<ColumnDiff>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum RowDiffType {
     /// Row exists in both but differs
     ValueDifferent,
@@ -48,7 +49,7 @@ pub enum RowDiffType {
 }
 
 /// Represents a difference in a specific column value
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnDiff {
     /// Column name
     pub column: String,
@@ -59,7 +60,7 @@ pub struct ColumnDiff {
 }
 
 /// Represents a schema difference
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SchemaDiff {
     /// Type of schema difference
     pub diff_type: SchemaDiffType,
@@ -71,7 +72,7 @@ pub struct SchemaDiff {
     pub right_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum SchemaDiffType {
     /// Column only in left
     LeftOnly,

@@ -1,10 +1,11 @@
 use csv::{Reader, StringRecord};
 use rcompare_common::RCompareError;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Result of a CSV comparison
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CsvDiffResult {
     /// Total number of rows (excluding header)
     pub total_rows: usize,
@@ -27,7 +28,7 @@ pub struct CsvDiffResult {
 }
 
 /// Represents a difference in a specific row
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RowDiff {
     /// Row number (1-indexed, excluding header)
     pub row_num: usize,
@@ -37,7 +38,7 @@ pub struct RowDiff {
     pub column_diffs: Vec<ColumnDiff>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum RowDiffType {
     /// Row exists in both but values differ
     Modified,
@@ -47,7 +48,7 @@ pub enum RowDiffType {
     RightOnly,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ColumnDiff {
     /// Column name
     pub column: String,
@@ -60,7 +61,7 @@ pub struct ColumnDiff {
 }
 
 /// Comparison mode for CSV files
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum CsvCompareMode {
     /// Compare row by row in order
     #[default]
