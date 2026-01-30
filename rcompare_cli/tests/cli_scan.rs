@@ -1,4 +1,4 @@
-use filetime::{FileTime, set_file_mtime};
+use filetime::{set_file_mtime, FileTime};
 use rcompare_common::Vfs;
 use rcompare_core::vfs::{Writable7zVfs, WritableTarVfs, WritableZipVfs};
 use serde_json::Value;
@@ -77,8 +77,14 @@ fn assert_side_schema(side: &Value) {
 }
 
 fn assert_entry_schema(entry: &Value) {
-    let path = entry.get("path").and_then(Value::as_str).expect("path string");
-    let status = entry.get("status").and_then(Value::as_str).expect("status string");
+    let path = entry
+        .get("path")
+        .and_then(Value::as_str)
+        .expect("path string");
+    let status = entry
+        .get("status")
+        .and_then(Value::as_str)
+        .expect("status string");
     let left = entry.get("left").unwrap_or(&Value::Null);
     let right = entry.get("right").unwrap_or(&Value::Null);
 
@@ -124,8 +130,15 @@ fn scan_json_basic_statuses() {
     let left = TempDir::new().expect("left dir");
     let right = TempDir::new().expect("right dir");
 
-    fs::write(left.path().join("same.txt"), "same").unwrap();
-    fs::write(right.path().join("same.txt"), "same").unwrap();
+    let same_left = left.path().join("same.txt");
+    let same_right = right.path().join("same.txt");
+    fs::write(&same_left, "same").unwrap();
+    fs::write(&same_right, "same").unwrap();
+
+    // Set matching timestamps to ensure files are marked as "Same"
+    let mtime = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&same_left, mtime).unwrap();
+    set_file_mtime(&same_right, mtime).unwrap();
 
     fs::write(left.path().join("diff.txt"), "abc").unwrap();
     fs::write(right.path().join("diff.txt"), "abcd").unwrap();
@@ -143,8 +156,14 @@ fn scan_json_basic_statuses() {
     let map = entries_by_path(&report);
     assert_eq!(map.get("same.txt").map(String::as_str), Some("Same"));
     assert_eq!(map.get("diff.txt").map(String::as_str), Some("Different"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
-    assert_eq!(map.get("right_only.txt").map(String::as_str), Some("OrphanRight"));
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
+    assert_eq!(
+        map.get("right_only.txt").map(String::as_str),
+        Some("OrphanRight")
+    );
 }
 
 #[test]
@@ -152,8 +171,16 @@ fn scan_json_diff_only_filters_same() {
     let left = TempDir::new().expect("left dir");
     let right = TempDir::new().expect("right dir");
 
-    fs::write(left.path().join("same.txt"), "same").unwrap();
-    fs::write(right.path().join("same.txt"), "same").unwrap();
+    let same_left = left.path().join("same.txt");
+    let same_right = right.path().join("same.txt");
+    fs::write(&same_left, "same").unwrap();
+    fs::write(&same_right, "same").unwrap();
+
+    // Set matching timestamps to ensure files are marked as "Same"
+    let mtime = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&same_left, mtime).unwrap();
+    set_file_mtime(&same_right, mtime).unwrap();
+
     fs::write(left.path().join("left_only.txt"), "left").unwrap();
 
     let report = run_cli_json(&[
@@ -166,7 +193,10 @@ fn scan_json_diff_only_filters_same() {
 
     let map = entries_by_path(&report);
     assert!(!map.contains_key("same.txt"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
 }
 
 #[test]
@@ -192,7 +222,10 @@ fn scan_json_verify_hashes_detects_same_size_changes() {
         "--json",
     ]);
     let map_no_verify = entries_by_path(&report_no_verify);
-    assert_eq!(map_no_verify.get("hash.txt").map(String::as_str), Some("Same"));
+    assert_eq!(
+        map_no_verify.get("hash.txt").map(String::as_str),
+        Some("Same")
+    );
 
     let report_verify = run_cli_json(&[
         "scan",
@@ -202,7 +235,10 @@ fn scan_json_verify_hashes_detects_same_size_changes() {
         "--json",
     ]);
     let map_verify = entries_by_path(&report_verify);
-    assert_eq!(map_verify.get("hash.txt").map(String::as_str), Some("Different"));
+    assert_eq!(
+        map_verify.get("hash.txt").map(String::as_str),
+        Some("Different")
+    );
 }
 
 #[test]
@@ -238,8 +274,14 @@ fn scan_json_zip_archives() {
     let map = entries_by_path(&report);
     assert_eq!(map.get("same.txt").map(String::as_str), Some("Same"));
     assert_eq!(map.get("diff.txt").map(String::as_str), Some("Different"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
-    assert_eq!(map.get("right_only.txt").map(String::as_str), Some("OrphanRight"));
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
+    assert_eq!(
+        map.get("right_only.txt").map(String::as_str),
+        Some("OrphanRight")
+    );
 }
 
 #[test]
@@ -270,8 +312,14 @@ fn scan_json_tar_gz_archive_vs_directory() {
     let map = entries_by_path(&report);
     assert_eq!(map.get("same.txt").map(String::as_str), Some("Same"));
     assert_eq!(map.get("diff.txt").map(String::as_str), Some("Different"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
-    assert_eq!(map.get("right_only.txt").map(String::as_str), Some("OrphanRight"));
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
+    assert_eq!(
+        map.get("right_only.txt").map(String::as_str),
+        Some("OrphanRight")
+    );
 }
 
 #[test]
@@ -307,8 +355,14 @@ fn scan_json_7z_archives() {
     let map = entries_by_path(&report);
     assert_eq!(map.get("same.txt").map(String::as_str), Some("Same"));
     assert_eq!(map.get("diff.txt").map(String::as_str), Some("Different"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
-    assert_eq!(map.get("right_only.txt").map(String::as_str), Some("OrphanRight"));
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
+    assert_eq!(
+        map.get("right_only.txt").map(String::as_str),
+        Some("OrphanRight")
+    );
 }
 
 #[test]
@@ -359,7 +413,16 @@ fn scan_json_entry_schema_and_unchecked_status() {
     let map = entries_by_path(&report);
     assert_eq!(map.get("same.txt").map(String::as_str), Some("Same"));
     assert_eq!(map.get("diff.txt").map(String::as_str), Some("Different"));
-    assert_eq!(map.get("unchecked.txt").map(String::as_str), Some("Unchecked"));
-    assert_eq!(map.get("left_only.txt").map(String::as_str), Some("OrphanLeft"));
-    assert_eq!(map.get("right_only.txt").map(String::as_str), Some("OrphanRight"));
+    assert_eq!(
+        map.get("unchecked.txt").map(String::as_str),
+        Some("Unchecked")
+    );
+    assert_eq!(
+        map.get("left_only.txt").map(String::as_str),
+        Some("OrphanLeft")
+    );
+    assert_eq!(
+        map.get("right_only.txt").map(String::as_str),
+        Some("OrphanRight")
+    );
 }

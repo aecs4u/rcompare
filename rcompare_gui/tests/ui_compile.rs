@@ -8,8 +8,7 @@ fn ui_compiles() {
     let output = temp_dir.path().join("slint_ui.rs");
 
     let config = slint_build::CompilerConfiguration::new();
-    slint_build::compile_with_output_path(&input, &output, config)
-        .expect("compile slint ui");
+    slint_build::compile_with_output_path(&input, &output, config).expect("compile slint ui");
 
     let metadata = std::fs::metadata(&output).expect("output missing");
     assert!(metadata.len() > 0);

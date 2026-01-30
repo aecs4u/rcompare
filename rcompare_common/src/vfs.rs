@@ -44,27 +44,37 @@ pub trait Vfs: Send + Sync {
     /// Create a new file and return a writer
     /// Returns Unsupported error if not writable
     fn create_file(&self, _path: &Path) -> Result<Box<dyn Write + Send>, VfsError> {
-        Err(VfsError::Unsupported("Write operations not supported".to_string()))
+        Err(VfsError::Unsupported(
+            "Write operations not supported".to_string(),
+        ))
     }
 
     /// Create a directory
     fn create_dir(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Write operations not supported".to_string()))
+        Err(VfsError::Unsupported(
+            "Write operations not supported".to_string(),
+        ))
     }
 
     /// Create a directory and all parent directories
     fn create_dir_all(&self, _path: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Write operations not supported".to_string()))
+        Err(VfsError::Unsupported(
+            "Write operations not supported".to_string(),
+        ))
     }
 
     /// Rename/move a file or directory
     fn rename(&self, _from: &Path, _to: &Path) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Write operations not supported".to_string()))
+        Err(VfsError::Unsupported(
+            "Write operations not supported".to_string(),
+        ))
     }
 
     /// Set file modification time
     fn set_mtime(&self, _path: &Path, _mtime: SystemTime) -> Result<(), VfsError> {
-        Err(VfsError::Unsupported("Write operations not supported".to_string()))
+        Err(VfsError::Unsupported(
+            "Write operations not supported".to_string(),
+        ))
     }
 
     /// Write file content from bytes

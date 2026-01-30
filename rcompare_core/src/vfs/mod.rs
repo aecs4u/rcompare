@@ -1,8 +1,8 @@
-pub mod local;
 pub mod archive;
+pub mod local;
+pub mod s3;
 pub mod sftp;
 pub mod virtual_vfs;
-pub mod s3;
 pub mod webdav;
 
 #[cfg(test)]
@@ -17,13 +17,12 @@ mod tests_archive;
 #[cfg(test)]
 mod tests_virtual;
 
-pub use local::LocalVfs;
 pub use archive::{
-    ZipVfs, TarVfs, SevenZVfs, RarVfs,
-    WritableZipVfs, WritableTarVfs, Writable7zVfs,
-    CompressedFileVfs, WritableCompressedFileVfs, CompressionType,
+    CompressedFileVfs, CompressionType, RarVfs, SevenZVfs, TarVfs, Writable7zVfs,
+    WritableCompressedFileVfs, WritableTarVfs, WritableZipVfs, ZipVfs,
 };
-pub use sftp::{SftpVfs, SftpConfig, SftpAuth};
+pub use local::LocalVfs;
+pub use s3::{S3Auth, S3Config, S3Vfs};
+pub use sftp::{SftpAuth, SftpConfig, SftpVfs};
 pub use virtual_vfs::{FilteredVfs, UnionVfs};
-pub use s3::{S3Vfs, S3Config, S3Auth};
-pub use webdav::{WebDavVfs, WebDavConfig, WebDavAuth};
+pub use webdav::{WebDavAuth, WebDavConfig, WebDavVfs};

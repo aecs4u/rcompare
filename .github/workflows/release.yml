@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-release:
+    name: Build Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-release-
+
+      - name: Build CLI (release)
+        run: cargo build --package rcompare_cli --release --target ${{ matrix.target }} --verbose
+
+      - name: Build GUI (release)
+        run: cargo build --package rcompare_gui --release --target ${{ matrix.target }} --verbose
+
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          strip rcompare_cli rcompare_gui || true
+
+          # Copy binaries with platform-specific names
+          cp rcompare_cli rcompare_cli-${{ matrix.platform }}-x86_64
+          cp rcompare_gui rcompare_gui-${{ matrix.platform }}-x86_64
+
+          # Create combined archive
+          tar czf rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz rcompare_cli rcompare_gui
+
+          # Move artifacts to workspace
+          mv rcompare_cli-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
+          mv rcompare_gui-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
+          mv rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz ${{ github.workspace }}/
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target/${{ matrix.target }}/release
+
+          # Copy binaries with platform-specific names
+          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-x86_64.exe
+          Copy-Item rcompare_gui.exe -Destination rcompare_gui-${{ matrix.platform }}-x86_64.exe
+
+          # Create combined archive
+          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+
+          # Move artifacts to workspace
+          Move-Item rcompare_cli-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare_gui-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip -Destination ${{ github.workspace }}/
+
+      - name: Create Release Notes
+        id: release_notes
+        shell: bash
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## RCompare ${{ steps.get_version.outputs.version }}
+
+          ### Downloads
+
+          Download the appropriate binary for your platform below:
+
+          - **Linux**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
+          - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
+          - **macOS**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
+
+          Or download the combined archives:
+          - `rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz`
+          - `rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip`
+          - `rcompare-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz`
+
+          ### Installation
+
+          #### Linux/macOS
+          ```bash
+          # Extract archive (Linux)
+          tar xzf rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz
+
+          # Or use standalone binaries
+          chmod +x rcompare_cli-linux-x86_64
+          chmod +x rcompare_gui-linux-x86_64
+
+          # Move to PATH (optional)
+          sudo mv rcompare_cli-linux-x86_64 /usr/local/bin/rcompare_cli
+          sudo mv rcompare_gui-linux-x86_64 /usr/local/bin/rcompare_gui
+          ```
+
+          #### Windows
+          ```powershell
+          # Extract archive
+          Expand-Archive rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip
+
+          # Or use standalone binaries directly
+          # Add to PATH in System Environment Variables
+          ```
+
+          ### Features
+
+          - **Fast Comparison**: BLAKE3 hashing with parallel processing
+          - **Specialized Comparisons**: Text, CSV, JSON, Excel, Images, Parquet
+          - **Archive Support**: ZIP, TAR, 7Z, RAR (read-only)
+          - **Cloud Storage**: S3, SFTP, WebDAV support
+          - **Modern GUI**: Slint-based with tree view and auto-comparison
+          - **Powerful CLI**: Colored output, JSON export, pattern filtering
+          - **WinMerge Parity**: Whitespace handling, case-insensitive, regex rules, EXIF metadata
+
+          ### Documentation
+
+          - [README.md](https://github.com/aecs4u/rcompare/blob/main/README.md) - Getting started guide
+          - [ARCHITECTURE.md](https://github.com/aecs4u/rcompare/blob/main/ARCHITECTURE.md) - Technical architecture
+          - [FEATURE_COMPARISON.md](https://github.com/aecs4u/rcompare/blob/main/FEATURE_COMPARISON.md) - Feature matrix vs competitors
+
+          ### Changelog
+
+          See the [commit history](https://github.com/aecs4u/rcompare/commits/${{ steps.get_version.outputs.version }}) for detailed changes.
+          EOF
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: RCompare ${{ steps.get_version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            rcompare_cli-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare_gui-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

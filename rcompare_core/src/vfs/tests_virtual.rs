@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::vfs::{FilteredVfs, UnionVfs, LocalVfs};
+    use crate::vfs::{FilteredVfs, LocalVfs, UnionVfs};
     use rcompare_common::Vfs;
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -28,16 +28,24 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("file1.txt"), b"content1").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file2.rs"), b"content2").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file3.txt"), b"content3").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file1.txt"), b"content1")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file2.rs"), b"content2")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file3.txt"), b"content3")
+            .expect("Failed to write");
 
         // Filter to only show .txt files
         let filtered = FilteredVfs::new(local_vfs)
             .include("*.txt")
             .expect("Failed to add include pattern");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         // Should only see .txt files
         assert_eq!(entries.len(), 2);
@@ -52,16 +60,24 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("file1.txt"), b"content1").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file2.log"), b"content2").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file3.txt"), b"content3").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file1.txt"), b"content1")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file2.log"), b"content2")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file3.txt"), b"content3")
+            .expect("Failed to write");
 
         // Exclude .log files
         let filtered = FilteredVfs::new(local_vfs)
             .exclude("*.log")
             .expect("Failed to add exclude pattern");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         // Should not see .log files
         for entry in &entries {
@@ -75,17 +91,27 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("file.txt"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file.rs"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file.md"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file.log"), b"content").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.txt"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.rs"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.md"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.log"), b"content")
+            .expect("Failed to write");
 
         // Include only .txt and .rs files
         let filtered = FilteredVfs::new(local_vfs)
             .include_many(&["*.txt", "*.rs"])
             .expect("Failed to add include patterns");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 2);
         for entry in &entries {
@@ -100,16 +126,24 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("file.txt"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file.tmp"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("file.log"), b"content").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.txt"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.tmp"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.log"), b"content")
+            .expect("Failed to write");
 
         // Exclude .tmp and .log files
         let filtered = FilteredVfs::new(local_vfs)
             .exclude_many(&["*.tmp", "*.log"])
             .expect("Failed to add exclude patterns");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path.file_name().unwrap(), "file.txt");
@@ -121,9 +155,15 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("important.txt"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("temp.txt"), b"content").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("data.log"), b"content").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("important.txt"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("temp.txt"), b"content")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("data.log"), b"content")
+            .expect("Failed to write");
 
         // Include .txt but exclude temp.*
         let filtered = FilteredVfs::new(local_vfs)
@@ -132,7 +172,9 @@ mod tests {
             .exclude("temp.*")
             .expect("Failed to add exclude");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path.file_name().unwrap(), "important.txt");
@@ -143,14 +185,18 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
-        local_vfs.write_file(&PathBuf::from("data.txt"), b"File content").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("data.txt"), b"File content")
+            .expect("Failed to write");
 
         let filtered = FilteredVfs::new(local_vfs)
             .include("*.txt")
             .expect("Failed to add pattern");
 
         // Should be able to read the file
-        let mut reader = filtered.open_file(&PathBuf::from("data.txt")).expect("Failed to open file");
+        let mut reader = filtered
+            .open_file(&PathBuf::from("data.txt"))
+            .expect("Failed to open file");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -162,11 +208,15 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
-        local_vfs.write_file(&PathBuf::from("test.txt"), b"12345").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("test.txt"), b"12345")
+            .expect("Failed to write");
 
         let filtered = FilteredVfs::new(local_vfs);
 
-        let meta = filtered.metadata(&PathBuf::from("test.txt")).expect("Failed to get metadata");
+        let meta = filtered
+            .metadata(&PathBuf::from("test.txt"))
+            .expect("Failed to get metadata");
         assert_eq!(meta.size, 5);
         assert!(!meta.is_dir);
     }
@@ -212,12 +262,16 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
-        local_vfs.write_file(&PathBuf::from("file.txt"), b"content").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("file.txt"), b"content")
+            .expect("Failed to write");
 
         let union = UnionVfs::new().add_layer(local_vfs);
 
         // Should be able to read from the single layer
-        let entries = union.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = union
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
         assert_eq!(entries.len(), 1);
     }
 
@@ -230,15 +284,17 @@ mod tests {
         let vfs2 = Arc::new(LocalVfs::new(temp_dir2.path().to_path_buf()));
 
         // Create files in each layer
-        vfs1.write_file(&PathBuf::from("file1.txt"), b"layer1").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("file2.txt"), b"layer2").expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("file1.txt"), b"layer1")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("file2.txt"), b"layer2")
+            .expect("Failed to write");
 
-        let union = UnionVfs::new()
-            .add_layer(vfs1)
-            .add_layer(vfs2);
+        let union = UnionVfs::new().add_layer(vfs1).add_layer(vfs2);
 
         // Should see files from both layers
-        let entries = union.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = union
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
         assert!(entries.len() >= 2);
     }
 
@@ -251,16 +307,18 @@ mod tests {
         let vfs2 = Arc::new(LocalVfs::new(temp_dir2.path().to_path_buf()));
 
         // Create same file in both layers with different content
-        vfs1.write_file(&PathBuf::from("data.txt"), b"from layer1").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("data.txt"), b"from layer2").expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("data.txt"), b"from layer1")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("data.txt"), b"from layer2")
+            .expect("Failed to write");
 
         // Later layers take precedence
-        let union = UnionVfs::new()
-            .add_layer(vfs1)
-            .add_layer(vfs2);
+        let union = UnionVfs::new().add_layer(vfs1).add_layer(vfs2);
 
         // Should read from layer2 (last added)
-        let mut reader = union.open_file(&PathBuf::from("data.txt")).expect("Failed to open");
+        let mut reader = union
+            .open_file(&PathBuf::from("data.txt"))
+            .expect("Failed to open");
         let mut buffer = String::new();
         reader.read_to_string(&mut buffer).expect("Failed to read");
 
@@ -272,11 +330,15 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
-        local_vfs.write_file(&PathBuf::from("test.txt"), b"12345").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("test.txt"), b"12345")
+            .expect("Failed to write");
 
         let union = UnionVfs::new().add_layer(local_vfs);
 
-        let meta = union.metadata(&PathBuf::from("test.txt")).expect("Failed to get metadata");
+        let meta = union
+            .metadata(&PathBuf::from("test.txt"))
+            .expect("Failed to get metadata");
         assert_eq!(meta.size, 5);
     }
 
@@ -325,22 +387,26 @@ mod tests {
         let vfs2 = Arc::new(LocalVfs::new(temp_dir2.path().to_path_buf()));
 
         // Create various files
-        vfs1.write_file(&PathBuf::from("code.rs"), b"rust code").expect("Failed to write");
-        vfs1.write_file(&PathBuf::from("data.txt"), b"text data").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("lib.rs"), b"library").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("readme.md"), b"docs").expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("code.rs"), b"rust code")
+            .expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("data.txt"), b"text data")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("lib.rs"), b"library")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("readme.md"), b"docs")
+            .expect("Failed to write");
 
         // Create union
-        let union = Arc::new(UnionVfs::new()
-            .add_layer(vfs1)
-            .add_layer(vfs2));
+        let union = Arc::new(UnionVfs::new().add_layer(vfs1).add_layer(vfs2));
 
         // Apply filter to only show .rs files
         let filtered = FilteredVfs::new(union)
             .include("*.rs")
             .expect("Failed to add pattern");
 
-        let entries = filtered.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         // Should only see .rs files from both layers
         assert!(entries.len() >= 2);
@@ -358,26 +424,34 @@ mod tests {
         let vfs2 = Arc::new(LocalVfs::new(temp_dir2.path().to_path_buf()));
 
         // Create files
-        vfs1.write_file(&PathBuf::from("source.rs"), b"code").expect("Failed to write");
-        vfs1.write_file(&PathBuf::from("temp.log"), b"log").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("lib.rs"), b"library").expect("Failed to write");
-        vfs2.write_file(&PathBuf::from("debug.log"), b"debug").expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("source.rs"), b"code")
+            .expect("Failed to write");
+        vfs1.write_file(&PathBuf::from("temp.log"), b"log")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("lib.rs"), b"library")
+            .expect("Failed to write");
+        vfs2.write_file(&PathBuf::from("debug.log"), b"debug")
+            .expect("Failed to write");
 
         // Filter each VFS separately
-        let filtered1 = Arc::new(FilteredVfs::new(vfs1)
-            .exclude("*.log")
-            .expect("Failed to exclude"));
+        let filtered1 = Arc::new(
+            FilteredVfs::new(vfs1)
+                .exclude("*.log")
+                .expect("Failed to exclude"),
+        );
 
-        let filtered2 = Arc::new(FilteredVfs::new(vfs2)
-            .exclude("*.log")
-            .expect("Failed to exclude"));
+        let filtered2 = Arc::new(
+            FilteredVfs::new(vfs2)
+                .exclude("*.log")
+                .expect("Failed to exclude"),
+        );
 
         // Combine filtered VFS instances
-        let union = UnionVfs::new()
-            .add_layer(filtered1)
-            .add_layer(filtered2);
+        let union = UnionVfs::new().add_layer(filtered1).add_layer(filtered2);
 
-        let entries = union.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = union
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         // Should only see .rs files (logs filtered out)
         for entry in &entries {
@@ -391,24 +465,33 @@ mod tests {
         let local_vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         // Create test files
-        local_vfs.write_file(&PathBuf::from("important.txt"), b"keep").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("temp.txt"), b"temp").expect("Failed to write");
-        local_vfs.write_file(&PathBuf::from("data.log"), b"log").expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("important.txt"), b"keep")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("temp.txt"), b"temp")
+            .expect("Failed to write");
+        local_vfs
+            .write_file(&PathBuf::from("data.log"), b"log")
+            .expect("Failed to write");
 
         // First filter: include only .txt files
-        let filtered1 = Arc::new(FilteredVfs::new(local_vfs)
-            .include("*.txt")
-            .expect("Failed to include"));
+        let filtered1 = Arc::new(
+            FilteredVfs::new(local_vfs)
+                .include("*.txt")
+                .expect("Failed to include"),
+        );
 
         // Second filter: exclude temp files
         let filtered2 = FilteredVfs::new(filtered1)
             .exclude("temp.*")
             .expect("Failed to exclude");
 
-        let entries = filtered2.read_dir(&PathBuf::from("")).expect("Failed to read dir");
+        let entries = filtered2
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read dir");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path.file_name().unwrap(), "important.txt");
     }
-
 }

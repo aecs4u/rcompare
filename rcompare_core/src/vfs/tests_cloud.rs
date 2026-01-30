@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::vfs::{S3Vfs, S3Config, S3Auth, WebDavVfs, WebDavConfig, WebDavAuth, SftpVfs, SftpConfig, SftpAuth};
+    use crate::vfs::{
+        S3Auth, S3Config, S3Vfs, SftpAuth, SftpConfig, SftpVfs, WebDavAuth, WebDavConfig, WebDavVfs,
+    };
     use rcompare_common::Vfs;
     use std::path::PathBuf;
 
@@ -92,7 +94,9 @@ mod tests {
         // Read file
         let mut reader = vfs.open_file(&test_path).expect("Failed to open file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, test_content);
 
@@ -115,7 +119,8 @@ mod tests {
         let test_path = PathBuf::from("test-file.txt");
 
         // Create a test file first
-        vfs.write_file(&test_path, b"test").expect("Failed to write test file");
+        vfs.write_file(&test_path, b"test")
+            .expect("Failed to write test file");
 
         // Get metadata
         let metadata = vfs.metadata(&test_path);
@@ -174,8 +179,12 @@ mod tests {
             Ok(files) => {
                 println!("Found {} entries", files.len());
                 for file in files {
-                    println!("  - {}: {} bytes (dir: {})",
-                        file.path.display(), file.size, file.is_dir);
+                    println!(
+                        "  - {}: {} bytes (dir: {})",
+                        file.path.display(),
+                        file.size,
+                        file.is_dir
+                    );
                 }
             }
             Err(e) => {
@@ -206,7 +215,9 @@ mod tests {
         // Read file
         let mut reader = vfs.open_file(&test_path).expect("Failed to open file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, test_content);
 
@@ -228,7 +239,11 @@ mod tests {
 
         // Create directory
         let result = vfs.create_dir(&dir_path);
-        assert!(result.is_ok(), "Failed to create directory: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create directory: {:?}",
+            result.err()
+        );
 
         // Verify it exists
         let metadata = vfs.metadata(&dir_path);
@@ -254,7 +269,8 @@ mod tests {
         let test_content = b"Copy test";
 
         // Create source file
-        vfs.write_file(&src_path, test_content).expect("Failed to write source file");
+        vfs.write_file(&src_path, test_content)
+            .expect("Failed to write source file");
 
         // Copy file
         let result = vfs.copy_file(&src_path, &dest_path);
@@ -284,7 +300,8 @@ mod tests {
         let test_content = b"Rename test";
 
         // Create original file
-        vfs.write_file(&old_path, test_content).expect("Failed to write file");
+        vfs.write_file(&old_path, test_content)
+            .expect("Failed to write file");
 
         // Rename file
         let result = vfs.rename(&old_path, &new_path);
@@ -446,7 +463,10 @@ mod tests {
         assert!(caps.delete, "S3 VFS should support deletion");
         assert!(caps.rename, "S3 VFS should support renaming");
         assert!(caps.create_dir, "S3 VFS should support directory creation");
-        assert!(!caps.set_mtime, "S3 VFS should not support setting modification time");
+        assert!(
+            !caps.set_mtime,
+            "S3 VFS should not support setting modification time"
+        );
     }
 
     #[test]
@@ -464,7 +484,11 @@ mod tests {
         let dir_path = PathBuf::from("test-directory");
 
         let result = vfs.create_dir(&dir_path);
-        assert!(result.is_ok(), "Failed to create directory: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create directory: {:?}",
+            result.err()
+        );
 
         // Clean up
         let _ = vfs.remove_file(&dir_path);
@@ -485,7 +509,11 @@ mod tests {
         let nested_path = PathBuf::from("a/b/c/d");
 
         let result = vfs.create_dir_all(&nested_path);
-        assert!(result.is_ok(), "Failed to create nested directories: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create nested directories: {:?}",
+            result.err()
+        );
 
         // Clean up
         let _ = vfs.remove_file(&nested_path);
@@ -507,7 +535,8 @@ mod tests {
         let dest = PathBuf::from("destination.txt");
 
         // Create source file
-        vfs.write_file(&src, b"test content").expect("Failed to write source");
+        vfs.write_file(&src, b"test content")
+            .expect("Failed to write source");
 
         // Copy file
         let result = vfs.copy_file(&src, &dest);
@@ -537,7 +566,8 @@ mod tests {
         let new = PathBuf::from("new.txt");
 
         // Create file
-        vfs.write_file(&old, b"content").expect("Failed to write file");
+        vfs.write_file(&old, b"content")
+            .expect("Failed to write file");
 
         // Rename
         let result = vfs.rename(&old, &new);
@@ -614,8 +644,14 @@ mod tests {
         assert!(caps.write, "WebDAV VFS should support writing");
         assert!(caps.delete, "WebDAV VFS should support deletion");
         assert!(caps.rename, "WebDAV VFS should support renaming");
-        assert!(caps.create_dir, "WebDAV VFS should support directory creation");
-        assert!(!caps.set_mtime, "WebDAV VFS typically doesn't support setting modification time");
+        assert!(
+            caps.create_dir,
+            "WebDAV VFS should support directory creation"
+        );
+        assert!(
+            !caps.set_mtime,
+            "WebDAV VFS typically doesn't support setting modification time"
+        );
     }
 
     // ============================================================================
@@ -741,7 +777,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open empty file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read empty file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read empty file");
 
         assert_eq!(buffer.len(), 0);
 
@@ -773,7 +811,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open empty file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read empty file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read empty file");
 
         assert_eq!(buffer.len(), 0);
 
@@ -803,7 +843,11 @@ mod tests {
 
         for path in paths {
             let result = vfs.write_file(&path, b"test");
-            assert!(result.is_ok(), "Failed to write file with special chars: {:?}", path);
+            assert!(
+                result.is_ok(),
+                "Failed to write file with special chars: {:?}",
+                path
+            );
 
             let _ = vfs.remove_file(&path);
         }
@@ -863,7 +907,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open large file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read large file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read large file");
 
         assert_eq!(buffer.len(), data.len());
 
@@ -894,7 +940,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open large file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read large file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read large file");
 
         assert_eq!(buffer.len(), data.len());
 
@@ -974,7 +1022,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open file");
         let mut buffer = String::new();
-        reader.read_to_string(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_string(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, "Hello World!");
 
@@ -1016,7 +1066,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open file");
         let mut buffer = String::new();
-        reader.read_to_string(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_string(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, "WebDAV test");
 
@@ -1054,7 +1106,9 @@ mod tests {
         use std::io::Read;
         let mut reader = vfs.open_file(&path).expect("Failed to open file");
         let mut buffer = String::new();
-        reader.read_to_string(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_string(&mut buffer)
+            .expect("Failed to read file");
 
         // Note: S3Writer buffers all writes until final flush/drop
         assert!(buffer.contains("First"));
@@ -1177,7 +1231,8 @@ mod tests {
         let path = PathBuf::from("concurrent-test.txt");
 
         // Write a test file
-        vfs.write_file(&path, b"Concurrent test data").expect("Failed to write file");
+        vfs.write_file(&path, b"Concurrent test data")
+            .expect("Failed to write file");
 
         // Spawn multiple threads to read the same file
         let mut handles = vec![];
@@ -1187,9 +1242,13 @@ mod tests {
             let path_clone = path.clone();
 
             let handle = thread::spawn(move || {
-                let mut reader = vfs_clone.open_file(&path_clone).expect("Failed to open file");
+                let mut reader = vfs_clone
+                    .open_file(&path_clone)
+                    .expect("Failed to open file");
                 let mut buffer = String::new();
-                reader.read_to_string(&mut buffer).expect("Failed to read file");
+                reader
+                    .read_to_string(&mut buffer)
+                    .expect("Failed to read file");
                 assert_eq!(buffer, "Concurrent test data");
             });
 
@@ -1226,7 +1285,8 @@ mod tests {
         let path1 = PathBuf::from("file.txt");
         let path2 = PathBuf::from("/file.txt");
 
-        vfs.write_file(&path1, b"test1").expect("Failed to write path1");
+        vfs.write_file(&path1, b"test1")
+            .expect("Failed to write path1");
         let meta = vfs.metadata(&path1).expect("Failed to get metadata");
         assert_eq!(meta.size, 5);
 
@@ -1249,7 +1309,8 @@ mod tests {
         // Test paths with and without leading slash
         let path1 = PathBuf::from("file.txt");
 
-        vfs.write_file(&path1, b"test").expect("Failed to write path");
+        vfs.write_file(&path1, b"test")
+            .expect("Failed to write path");
         let meta = vfs.metadata(&path1).expect("Failed to get metadata");
         assert_eq!(meta.size, 4);
 
@@ -1286,7 +1347,11 @@ mod tests {
             private_key: PathBuf::from("/home/user/.ssh/id_rsa"),
             passphrase: None,
         };
-        if let SftpAuth::KeyFile { private_key, passphrase } = auth {
+        if let SftpAuth::KeyFile {
+            private_key,
+            passphrase,
+        } = auth
+        {
             assert_eq!(private_key, PathBuf::from("/home/user/.ssh/id_rsa"));
             assert!(passphrase.is_none());
         } else {
@@ -1362,7 +1427,11 @@ mod tests {
         };
 
         let result = SftpVfs::new(config);
-        assert!(result.is_ok(), "Failed to create SFTP VFS: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create SFTP VFS: {:?}",
+            result.err()
+        );
 
         let vfs = result.unwrap();
         let instance_id = vfs.instance_id();
@@ -1389,8 +1458,12 @@ mod tests {
             Ok(files) => {
                 println!("Found {} entries in SFTP directory", files.len());
                 for file in files {
-                    println!("  - {}: {} bytes (dir: {})",
-                        file.path.display(), file.size, file.is_dir);
+                    println!(
+                        "  - {}: {} bytes (dir: {})",
+                        file.path.display(),
+                        file.size,
+                        file.is_dir
+                    );
                 }
             }
             Err(e) => {
@@ -1423,7 +1496,9 @@ mod tests {
         // Read file
         let mut reader = vfs.open_file(&test_path).expect("Failed to open file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, test_content);
 
@@ -1447,7 +1522,8 @@ mod tests {
         let test_content = b"Metadata test content";
 
         // Write file
-        vfs.write_file(&test_path, test_content).expect("Failed to write file");
+        vfs.write_file(&test_path, test_content)
+            .expect("Failed to write file");
 
         // Get metadata
         let metadata = vfs.metadata(&test_path).expect("Failed to get metadata");
@@ -1475,7 +1551,11 @@ mod tests {
 
         // Create directory
         let result = vfs.create_dir(&dir_path);
-        assert!(result.is_ok(), "Failed to create directory: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create directory: {:?}",
+            result.err()
+        );
 
         // Verify it exists
         let metadata = vfs.metadata(&dir_path);
@@ -1503,7 +1583,8 @@ mod tests {
         let test_content = b"Copy test";
 
         // Create source file
-        vfs.write_file(&src_path, test_content).expect("Failed to write source file");
+        vfs.write_file(&src_path, test_content)
+            .expect("Failed to write source file");
 
         // Copy file
         let result = vfs.copy_file(&src_path, &dest_path);
@@ -1533,7 +1614,8 @@ mod tests {
         let test_path = PathBuf::from("to-remove.txt");
 
         // Create file
-        vfs.write_file(&test_path, b"Remove me").expect("Failed to write file");
+        vfs.write_file(&test_path, b"Remove me")
+            .expect("Failed to write file");
 
         // Verify it exists
         assert!(vfs.metadata(&test_path).is_ok(), "File should exist");
@@ -1603,7 +1685,10 @@ mod tests {
                 assert!(instance_id.starts_with("sftp://"));
             }
             Err(e) => {
-                println!("KeyFile auth test failed (expected if key doesn't exist): {:?}", e);
+                println!(
+                    "KeyFile auth test failed (expected if key doesn't exist): {:?}",
+                    e
+                );
             }
         }
     }
@@ -1627,7 +1712,10 @@ mod tests {
                 assert!(instance_id.starts_with("sftp://"));
             }
             Err(e) => {
-                println!("Agent auth test failed (expected if agent not available): {:?}", e);
+                println!(
+                    "Agent auth test failed (expected if agent not available): {:?}",
+                    e
+                );
             }
         }
     }
@@ -1685,7 +1773,9 @@ mod tests {
         // Read it back
         let mut reader = vfs.open_file(&path).expect("Failed to open large file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read large file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read large file");
 
         assert_eq!(buffer.len(), data.len());
 

@@ -56,8 +56,9 @@ impl FilteredVfs {
     /// Add multiple include patterns
     pub fn include_many(mut self, patterns: &[&str]) -> Result<Self, VfsError> {
         for pattern in patterns {
-            let pat = glob::Pattern::new(pattern)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+            let pat = glob::Pattern::new(pattern).map_err(|e| {
+                VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+            })?;
             self.include_patterns.push(pat);
         }
         Ok(self)
@@ -66,8 +67,9 @@ impl FilteredVfs {
     /// Add multiple exclude patterns
     pub fn exclude_many(mut self, patterns: &[&str]) -> Result<Self, VfsError> {
         for pattern in patterns {
-            let pat = glob::Pattern::new(pattern)
-                .map_err(|e| VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+            let pat = glob::Pattern::new(pattern).map_err(|e| {
+                VfsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+            })?;
             self.exclude_patterns.push(pat);
         }
         Ok(self)
@@ -182,12 +184,11 @@ impl UnionVfs {
     /// Find the layer that contains a given path
     fn find_layer(&self, path: &Path) -> Option<&Arc<dyn Vfs>> {
         // Search from last (highest priority) to first
-        for layer in self.layers.iter().rev() {
-            if layer.exists(path) {
-                return Some(layer);
-            }
-        }
-        None
+        self.layers
+            .iter()
+            .rev()
+            .find(|&layer| layer.exists(path))
+            .map(|v| v as _)
     }
 }
 
@@ -223,11 +224,10 @@ impl Vfs for UnionVfs {
 
         if all_entries.is_empty() {
             // Check if any layer has this as a directory
-            let is_dir = self.layers.iter().any(|l| {
-                l.metadata(path)
-                    .map(|m| m.is_dir)
-                    .unwrap_or(false)
-            });
+            let is_dir = self
+                .layers
+                .iter()
+                .any(|l| l.metadata(path).map(|m| m.is_dir).unwrap_or(false));
 
             if !is_dir {
                 return Err(VfsError::NotADirectory(path.display().to_string()));
@@ -250,12 +250,15 @@ impl Vfs for UnionVfs {
                 return layer.remove_file(path);
             }
         }
-        Err(VfsError::Unsupported("No writable layer contains this file".to_string()))
+        Err(VfsError::Unsupported(
+            "No writable layer contains this file".to_string(),
+        ))
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
         // Find source layer and writable destination layer
-        let src_layer = self.find_layer(src)
+        let src_layer = self
+            .find_layer(src)
             .ok_or_else(|| VfsError::NotFound(src.display().to_string()))?;
 
         // Find first writable layer for destination
@@ -272,7 +275,9 @@ impl Vfs for UnionVfs {
             }
         }
 
-        Err(VfsError::Unsupported("No writable layer available".to_string()))
+        Err(VfsError::Unsupported(
+            "No writable layer available".to_string(),
+        ))
     }
 
     fn is_writable(&self) -> bool {
@@ -311,12 +316,13 @@ mod tests {
         fs::write(temp.path().join("dir/nested.txt"), b"nested").unwrap();
 
         let local = Arc::new(LocalVfs::new(temp.path().to_path_buf()));
-        let filtered = FilteredVfs::new(local)
-            .exclude("*.log")
-            .unwrap();
+        let filtered = FilteredVfs::new(local).exclude("*.log").unwrap();
 
         let entries = filtered.read_dir(Path::new("")).unwrap();
-        let names: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().to_string()).collect();
+        let names: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().to_string())
+            .collect();
 
         assert!(names.contains(&"file.txt".to_string()));
         assert!(!names.contains(&"file.log".to_string()));
@@ -338,7 +344,10 @@ mod tests {
             .unwrap();
 
         let entries = filtered.read_dir(Path::new("")).unwrap();
-        let names: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().to_string()).collect();
+        let names: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().to_string())
+            .collect();
 
         assert!(names.contains(&"file.txt".to_string()));
         assert!(names.contains(&"file.rs".to_string()));
@@ -356,9 +365,7 @@ mod tests {
         let layer1 = Arc::new(LocalVfs::new(temp1.path().to_path_buf()));
         let layer2 = Arc::new(LocalVfs::new(temp2.path().to_path_buf()));
 
-        let union = UnionVfs::new()
-            .add_layer(layer1)
-            .add_layer(layer2);
+        let union = UnionVfs::new().add_layer(layer1).add_layer(layer2);
 
         // Should see files from both layers
         assert!(union.exists(Path::new("file1.txt")));
@@ -376,9 +383,7 @@ mod tests {
         let layer1 = Arc::new(LocalVfs::new(temp1.path().to_path_buf()));
         let layer2 = Arc::new(LocalVfs::new(temp2.path().to_path_buf()));
 
-        let union = UnionVfs::new()
-            .add_layer(layer1)
-            .add_layer(layer2);
+        let union = UnionVfs::new().add_layer(layer1).add_layer(layer2);
 
         // Layer 2 should take precedence
         let mut reader = union.open_file(Path::new("shared.txt")).unwrap();

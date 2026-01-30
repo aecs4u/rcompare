@@ -4,19 +4,33 @@ A high-performance file and directory comparison utility written in Rust, inspir
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-170%2B%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
 
 ## Features
 
+### Core Capabilities
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
 - **CLI + GUI**: Console output, JSON output, and a Slint UI
-- **Archive comparison**: zip, tar, tar.gz, tgz, 7z
-- **GUI views**: Folder, text, hex, image compare
-- **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching (supports `*.log`, `build/`, `/config.toml`)
-- **Copy left/right**: GUI copy operations for sync workflows
-- **Comprehensive testing**: 198 tests (153 passing + 45 integration) with CI/CD pipeline for quality assurance
+- **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
+- **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
+- **Copy operations**: GUI copy left/right operations for sync workflows
+
+### Specialized File Comparisons
+- **Text files**: Line-by-line diff with syntax highlighting, whitespace handling (5 modes), case-insensitive comparison, regex rules
+- **Binary files**: Hex view with byte-level comparison
+- **Images**: Pixel-by-pixel comparison with multiple modes, EXIF metadata comparison, configurable tolerance
+- **CSV files**: Row-by-row, column-aware structural comparison
+- **Excel files**: Sheet, row, and cell-level comparison (.xlsx, .xls)
+- **JSON files**: Path-based structural comparison with type checking
+- **YAML files**: Path-based structural comparison with type checking
+- **Parquet files**: DataFrame comparison with schema validation and row-level diffing
+
+### Quality Assurance
+- **Comprehensive testing**: 170+ tests with CI/CD pipeline
+- **Broken symlink handling**: Graceful handling during hash verification
+- **Progress indicators**: Progress bars with ETA for long-running operations
 
 ## Quick Start
 
@@ -37,10 +51,11 @@ cargo build --release
 ./target/release/rcompare_gui
 ```
 
-### Usage Example
+### Usage Examples
 
+#### Basic Comparison
 ```bash
-# Basic comparison
+# Basic directory comparison
 rcompare_cli scan ~/Documents ~/Backup/Documents
 
 # Compare with ignore patterns
@@ -58,13 +73,141 @@ rcompare_cli scan /left /right --no-verify-hashes
 # Compare archives
 rcompare_cli scan left.zip right.zip
 
-# JSON output
+# JSON output for automation
 rcompare_cli scan /left /right --json
 ```
 
-### Notes
+#### Specialized File Comparison
+```bash
+# CSV comparison with row-by-row analysis
+rcompare_cli scan /data/left /data/right --csv-diff
 
-- Archive comparisons are read-only; text/hex views are only available for local file pairs.
+# Excel comparison with sheet and cell analysis
+rcompare_cli scan /reports/left /reports/right --excel-diff
+
+# JSON structural comparison
+rcompare_cli scan /configs/left /configs/right --json-diff
+
+# YAML structural comparison
+rcompare_cli scan /k8s/left /k8s/right --yaml-diff
+
+# Parquet dataframe comparison
+rcompare_cli scan /data/left /data/right --parquet-diff
+
+# Image comparison with pixel-level analysis
+rcompare_cli scan /images/left /images/right --image-diff
+
+# Combine multiple specialized comparisons
+rcompare_cli scan /project/left /project/right --csv-diff --json-diff --excel-diff
+```
+
+#### Text Comparison Options
+```bash
+# Ignore whitespace when comparing text files
+rcompare_cli scan /code/left /code/right --ignore-whitespace all       # Ignore all whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace leading   # Ignore leading whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace trailing  # Ignore trailing whitespace
+rcompare_cli scan /code/left /code/right --ignore-whitespace changes   # Ignore whitespace changes
+
+# Case-insensitive comparison
+rcompare_cli scan /sql/left /sql/right --ignore-case
+
+# Apply regex rules for normalization
+rcompare_cli scan /logs/left /logs/right --regex-rule '\d{4}-\d{2}-\d{2}:[DATE]:Normalize dates'
+rcompare_cli scan /configs/left /configs/right --regex-rule 'v\d+\.\d+\.\d+:[VERSION]:Normalize versions'
+
+# Combine text comparison options
+rcompare_cli scan /code/left /code/right --ignore-whitespace all --ignore-case
+```
+
+#### Image Comparison Options
+```bash
+# Compare EXIF metadata (camera settings, GPS, timestamps)
+rcompare_cli scan /photos/left /photos/right --image-diff --image-exif
+
+# Adjust pixel difference tolerance (0-255, default: 1)
+rcompare_cli scan /images/left /images/right --image-diff --image-tolerance 10
+
+# Combine image comparison options
+rcompare_cli scan /photos/left /photos/right --image-diff --image-exif --image-tolerance 5
+```
+
+## Specialized Comparison Modes
+
+### CSV Comparison (`--csv-diff`)
+Analyzes CSV files with row-by-row and column-aware comparison:
+- Detects added, removed, and modified rows
+- Shows column-level differences within modified rows
+- Reports total rows, identical rows, and differences
+- Displays sample differences with column names
+
+### Excel Comparison (`--excel-diff`)
+Compares Excel workbooks (.xlsx, .xls) at multiple levels:
+- Sheet-level comparison (added/removed/modified sheets)
+- Row and column count differences
+- Cell-by-cell value comparison
+- Detects formula vs value differences
+
+### JSON Comparison (`--json-diff`)
+Structural comparison of JSON files:
+- Path-based diffing (e.g., `root.user.name`)
+- Type mismatch detection (string vs number)
+- Handles nested objects and arrays
+- Reports added/removed/modified paths
+
+### YAML Comparison (`--yaml-diff`)
+Structural comparison of YAML files:
+- Converted to JSON for unified comparison
+- Path-based diffing with type checking
+- Handles complex YAML structures
+- Reports structural differences
+
+### Parquet Comparison (`--parquet-diff`)
+DataFrame-level comparison for Parquet files:
+- Schema validation (column names and types)
+- Row-by-row value comparison
+- Support for key-based or index-based matching
+- Shows sample differences with column details
+
+### Image Comparison (`--image-diff`)
+Pixel-level comparison of image files:
+- Multiple comparison modes: exact, threshold, perceptual
+- Dimension validation
+- Pixel difference percentage
+- Mean absolute difference per channel
+- **EXIF metadata comparison** (`--image-exif`): Compare camera settings, GPS coordinates, timestamps, and more
+- **Tolerance adjustment** (`--image-tolerance`): Configure pixel difference threshold (0-255, default: 1)
+
+## GUI Features
+
+The Slint-based GUI provides an intuitive interface for file comparison:
+
+### Core Features
+- **Auto-comparison**: Automatically compares folders when both are selected
+- **Last directory memory**: Browse dialogs remember your last location
+- **Responsive layout**: Adapts to different window sizes with min/max constraints
+- **Tree view**: Collapsible folder structure with expand/collapse all
+- **Multiple views**: Folder, text diff, hex diff, and image comparison views
+- **Filter controls**: Show/hide identical, different, left-only, and right-only files
+- **Search**: Real-time search within comparison results
+
+### Comparison Views
+- **Text Diff**: Syntax-highlighted side-by-side comparison
+- **Hex Diff**: Byte-level binary comparison with offset display
+- **Image Diff**: Visual comparison with dimension and pixel difference stats
+
+### Operations
+- **Copy left→right / right→left**: File copy operations
+- **Profile management**: Save and load comparison sessions
+- **Settings**: Configure ignore patterns, symlink following, hash verification
+- **Sync dialog**: Bidirectional sync with dry-run support
+
+## Notes
+
+- Archive comparisons are read-only; text/hex views are only available for local file pairs
+- Specialized comparisons only analyze files that differ or are unchecked
+- Progress bars with ETA are shown for long-running specialized comparisons
+- Use `--no-color` to disable colored output in CI/CD environments
 
 ## Architecture
 
@@ -121,7 +264,7 @@ cargo build --release
 
 ### Testing
 
-**Test Coverage:** 198 comprehensive tests (153 passing + 45 integration) with 100% pass rate
+**Test Coverage:** 170+ comprehensive tests covering core library, VFS operations, specialized comparisons, and CLI integration
 
 ```bash
 # Run all tests
@@ -169,7 +312,7 @@ See [CI Documentation](.github/workflows/README.md) for details.
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide and examples
 
 ### Testing & CI/CD
-- [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (198 tests: 153 passing + 45 integration)
+- [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (170+ tests)
 - [CI/CD Documentation](.github/workflows/README.md) - GitHub Actions pipeline and setup
 - [CI and Pattern Improvements](docs/CI_AND_PATTERN_IMPROVEMENTS.md) - Recent improvements to ignore patterns and CI
 
@@ -181,18 +324,27 @@ See [CI Documentation](.github/workflows/README.md) for details.
 ### Completed ✅
 - Directory scanning and comparison
 - Hash caching with BLAKE3
-- CLI with colored output
+- CLI with colored output and progress bars with ETA
 - GUI with folder/text/hex/image views
+- GUI auto-comparison and last directory memory
 - Archive comparison (zip, tar, tar.gz, tgz, 7z)
 - Copy left/right operations
 - VFS abstraction layer
-- Gitignore support
-- Cross-platform support
+- Gitignore support with pattern matching
+- Cross-platform support (Linux, Windows, macOS)
+- **Specialized file comparisons:**
+  - CSV files (row-by-row, column-aware)
+  - Excel files (.xlsx, .xls with sheet/cell analysis)
+  - JSON files (structural, path-based)
+  - YAML files (structural, path-based)
+  - Parquet files (DataFrame with schema validation)
+  - Images (pixel-level with multiple modes)
 
 ### Planned 🔜
-- Three-way merge
+- Three-way merge comparison
+- Database schema and data comparison
 - Delete/move operations
-- Remote sources in the UI
+- Remote sources in the UI (S3, SFTP, WebDAV)
 - Additional comparison profiles and presets
 
 ## Technology Stack
@@ -201,14 +353,34 @@ See [CI Documentation](.github/workflows/README.md) for details.
 - **Rust** - Memory-safe systems programming
 - **BLAKE3** - Fast cryptographic hashing
 - **jwalk** - Parallel directory traversal
+- **rayon** - Data parallelism
 - **serde** - Serialization framework
 
+### File Format Support
+- **csv** - CSV parsing and processing
+- **calamine** - Excel file reading (.xlsx, .xls)
+- **serde_json** - JSON parsing
+- **serde_yaml** - YAML parsing
+- **polars** - DataFrame operations and Parquet support
+- **image** - Image decoding and processing
+- **syntect** - Syntax highlighting
+
+### Archive Support
+- **zip** - ZIP archive handling
+- **tar** - TAR archive handling
+- **sevenz-rust** - 7-Zip archive handling
+- **flate2** - GZIP compression
+- **bzip2** - BZIP2 compression
+- **xz2** - XZ compression
+- **unrar** - RAR archive handling
+
 ### CLI
-- **clap** - Command-line parsing
+- **clap** - Command-line parsing with derive macros
+- **indicatif** - Progress bars with ETA
 - **tracing** - Structured logging
 
 ### GUI
-- **Slint** - Declarative UI framework
+- **Slint 1.9** - Declarative UI framework
 - **native-dialog** - Native file dialogs
 
 ## Use Cases

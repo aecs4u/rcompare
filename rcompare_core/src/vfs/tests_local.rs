@@ -2,7 +2,6 @@
 mod tests {
     use crate::vfs::LocalVfs;
     use rcompare_common::Vfs;
-    use std::fs;
     use std::io::{Read, Write};
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -31,8 +30,14 @@ mod tests {
         assert!(caps.write, "LocalVfs should support writing");
         assert!(caps.delete, "LocalVfs should support deletion");
         assert!(caps.rename, "LocalVfs should support renaming");
-        assert!(caps.create_dir, "LocalVfs should support directory creation");
-        assert!(caps.set_mtime, "LocalVfs should support setting modification time");
+        assert!(
+            caps.create_dir,
+            "LocalVfs should support directory creation"
+        );
+        assert!(
+            caps.set_mtime,
+            "LocalVfs should support setting modification time"
+        );
     }
 
     #[test]
@@ -56,12 +61,15 @@ mod tests {
         let content = b"Hello, LocalVfs!";
 
         // Write file
-        vfs.write_file(&path, content).expect("Failed to write file");
+        vfs.write_file(&path, content)
+            .expect("Failed to write file");
 
         // Read file
         let mut reader = vfs.open_file(&path).expect("Failed to open file");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read file");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read file");
 
         assert_eq!(buffer, content);
     }
@@ -96,7 +104,8 @@ mod tests {
         let path = PathBuf::from("metadata-test.txt");
         let content = b"1234567890";
 
-        vfs.write_file(&path, content).expect("Failed to write file");
+        vfs.write_file(&path, content)
+            .expect("Failed to write file");
 
         let meta = vfs.metadata(&path).expect("Failed to get metadata");
         assert_eq!(meta.size, 10);
@@ -111,7 +120,8 @@ mod tests {
 
         let path = PathBuf::from("remove-test.txt");
 
-        vfs.write_file(&path, b"test").expect("Failed to write file");
+        vfs.write_file(&path, b"test")
+            .expect("Failed to write file");
         assert!(vfs.metadata(&path).is_ok());
 
         vfs.remove_file(&path).expect("Failed to remove file");
@@ -127,7 +137,8 @@ mod tests {
         let dest = PathBuf::from("destination.txt");
         let content = b"Copy me!";
 
-        vfs.write_file(&src, content).expect("Failed to write source");
+        vfs.write_file(&src, content)
+            .expect("Failed to write source");
         vfs.copy_file(&src, &dest).expect("Failed to copy file");
 
         // Verify both files exist and have same content
@@ -146,7 +157,8 @@ mod tests {
         let old_path = PathBuf::from("old.txt");
         let new_path = PathBuf::from("new.txt");
 
-        vfs.write_file(&old_path, b"content").expect("Failed to write file");
+        vfs.write_file(&old_path, b"content")
+            .expect("Failed to write file");
         vfs.rename(&old_path, &new_path).expect("Failed to rename");
 
         assert!(vfs.metadata(&old_path).is_err());
@@ -164,7 +176,8 @@ mod tests {
 
         let dir_path = PathBuf::from("test-dir");
 
-        vfs.create_dir(&dir_path).expect("Failed to create directory");
+        vfs.create_dir(&dir_path)
+            .expect("Failed to create directory");
 
         let meta = vfs.metadata(&dir_path).expect("Failed to get metadata");
         assert!(meta.is_dir);
@@ -177,7 +190,8 @@ mod tests {
 
         let nested_path = PathBuf::from("a/b/c/d");
 
-        vfs.create_dir_all(&nested_path).expect("Failed to create nested directories");
+        vfs.create_dir_all(&nested_path)
+            .expect("Failed to create nested directories");
 
         let meta = vfs.metadata(&nested_path).expect("Failed to get metadata");
         assert!(meta.is_dir);
@@ -189,21 +203,37 @@ mod tests {
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
         // Create some test files
-        vfs.write_file(&PathBuf::from("file1.txt"), b"content1").expect("Failed to write");
-        vfs.write_file(&PathBuf::from("file2.txt"), b"content2").expect("Failed to write");
-        vfs.create_dir(&PathBuf::from("subdir")).expect("Failed to create dir");
+        vfs.write_file(&PathBuf::from("file1.txt"), b"content1")
+            .expect("Failed to write");
+        vfs.write_file(&PathBuf::from("file2.txt"), b"content2")
+            .expect("Failed to write");
+        vfs.create_dir(&PathBuf::from("subdir"))
+            .expect("Failed to create dir");
 
-        let entries = vfs.read_dir(&PathBuf::from("")).expect("Failed to read directory");
+        let entries = vfs
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read directory");
 
         // Should have at least 3 entries
-        assert!(entries.len() >= 3, "Expected at least 3 entries, got {}", entries.len());
+        assert!(
+            entries.len() >= 3,
+            "Expected at least 3 entries, got {}",
+            entries.len()
+        );
 
-        let names: Vec<String> = entries.iter()
+        let names: Vec<String> = entries
+            .iter()
             .map(|e| e.path.file_name().unwrap().to_string_lossy().to_string())
             .collect();
 
-        assert!(names.contains(&"file1.txt".to_string()), "Missing file1.txt");
-        assert!(names.contains(&"file2.txt".to_string()), "Missing file2.txt");
+        assert!(
+            names.contains(&"file1.txt".to_string()),
+            "Missing file1.txt"
+        );
+        assert!(
+            names.contains(&"file2.txt".to_string()),
+            "Missing file2.txt"
+        );
         assert!(names.contains(&"subdir".to_string()), "Missing subdir");
     }
 
@@ -212,7 +242,9 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
-        let entries = vfs.read_dir(&PathBuf::from("")).expect("Failed to read empty directory");
+        let entries = vfs
+            .read_dir(&PathBuf::from(""))
+            .expect("Failed to read empty directory");
         assert_eq!(entries.len(), 0);
     }
 
@@ -221,10 +253,14 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
-        vfs.create_dir(&PathBuf::from("subdir")).expect("Failed to create dir");
-        vfs.write_file(&PathBuf::from("subdir/file.txt"), b"nested").expect("Failed to write");
+        vfs.create_dir(&PathBuf::from("subdir"))
+            .expect("Failed to create dir");
+        vfs.write_file(&PathBuf::from("subdir/file.txt"), b"nested")
+            .expect("Failed to write");
 
-        let entries = vfs.read_dir(&PathBuf::from("subdir")).expect("Failed to read subdirectory");
+        let entries = vfs
+            .read_dir(&PathBuf::from("subdir"))
+            .expect("Failed to read subdirectory");
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path.file_name().unwrap(), "file.txt");
@@ -257,7 +293,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
-        vfs.create_dir(&PathBuf::from("testdir")).expect("Failed to create dir");
+        vfs.create_dir(&PathBuf::from("testdir"))
+            .expect("Failed to create dir");
 
         let result = vfs.open_file(&PathBuf::from("testdir"));
         assert!(result.is_err());
@@ -268,7 +305,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
-        vfs.write_file(&PathBuf::from("file.txt"), b"content").expect("Failed to write");
+        vfs.write_file(&PathBuf::from("file.txt"), b"content")
+            .expect("Failed to write");
 
         let result = vfs.read_dir(&PathBuf::from("file.txt"));
         assert!(result.is_err());
@@ -294,7 +332,8 @@ mod tests {
 
         let path = PathBuf::from("empty.txt");
 
-        vfs.write_file(&path, b"").expect("Failed to write empty file");
+        vfs.write_file(&path, b"")
+            .expect("Failed to write empty file");
 
         let meta = vfs.metadata(&path).expect("Failed to get metadata");
         assert_eq!(meta.size, 0);
@@ -314,7 +353,8 @@ mod tests {
         let size = 1024 * 1024; // 1MB
         let data = vec![42u8; size];
 
-        vfs.write_file(&path, &data).expect("Failed to write large file");
+        vfs.write_file(&path, &data)
+            .expect("Failed to write large file");
 
         let meta = vfs.metadata(&path).expect("Failed to get metadata");
         assert_eq!(meta.size, size as u64);
@@ -339,8 +379,13 @@ mod tests {
         ];
 
         for path in paths {
-            vfs.write_file(&path, b"test").expect(&format!("Failed to write {:?}", path));
-            assert!(vfs.metadata(&path).is_ok(), "Failed to get metadata for {:?}", path);
+            vfs.write_file(&path, b"test")
+                .unwrap_or_else(|_| panic!("Failed to write {:?}", path));
+            assert!(
+                vfs.metadata(&path).is_ok(),
+                "Failed to get metadata for {:?}",
+                path
+            );
         }
     }
 
@@ -351,10 +396,12 @@ mod tests {
 
         // Create a very deep directory structure
         let deep_path = PathBuf::from("a/b/c/d/e/f/g/h/i/j");
-        vfs.create_dir_all(&deep_path).expect("Failed to create deep directories");
+        vfs.create_dir_all(&deep_path)
+            .expect("Failed to create deep directories");
 
         let file_path = deep_path.join("file.txt");
-        vfs.write_file(&file_path, b"deep file").expect("Failed to write file");
+        vfs.write_file(&file_path, b"deep file")
+            .expect("Failed to write file");
 
         assert!(vfs.metadata(&file_path).is_ok());
     }
@@ -367,10 +414,12 @@ mod tests {
         let path = PathBuf::from("overwrite.txt");
 
         // Write initial content
-        vfs.write_file(&path, b"original").expect("Failed to write file");
+        vfs.write_file(&path, b"original")
+            .expect("Failed to write file");
 
         // Overwrite with new content
-        vfs.write_file(&path, b"modified").expect("Failed to overwrite file");
+        vfs.write_file(&path, b"modified")
+            .expect("Failed to overwrite file");
 
         // Verify new content
         let mut reader = vfs.open_file(&path).expect("Failed to open file");
@@ -386,7 +435,8 @@ mod tests {
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
         // Test paths with different separators
-        vfs.write_file(&PathBuf::from("test.txt"), b"content").expect("Failed to write");
+        vfs.write_file(&PathBuf::from("test.txt"), b"content")
+            .expect("Failed to write");
 
         // Both should work
         assert!(vfs.metadata(&PathBuf::from("test.txt")).is_ok());
@@ -406,7 +456,8 @@ mod tests {
         let vfs = Arc::new(LocalVfs::new(temp_dir.path().to_path_buf()));
 
         let path = PathBuf::from("concurrent.txt");
-        vfs.write_file(&path, b"Concurrent test").expect("Failed to write file");
+        vfs.write_file(&path, b"Concurrent test")
+            .expect("Failed to write file");
 
         let mut handles = vec![];
 
@@ -438,12 +489,15 @@ mod tests {
 
         // Write binary data with all byte values
         let binary_data: Vec<u8> = (0..=255).collect();
-        vfs.write_file(&path, &binary_data).expect("Failed to write binary");
+        vfs.write_file(&path, &binary_data)
+            .expect("Failed to write binary");
 
         // Read back and verify
         let mut reader = vfs.open_file(&path).expect("Failed to open binary");
         let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer).expect("Failed to read binary");
+        reader
+            .read_to_end(&mut buffer)
+            .expect("Failed to read binary");
 
         assert_eq!(buffer, binary_data);
     }
@@ -454,7 +508,8 @@ mod tests {
         let vfs = LocalVfs::new(temp_dir.path().to_path_buf());
 
         let file_path = PathBuf::from("target.txt");
-        vfs.write_file(&file_path, b"content").expect("Failed to write file");
+        vfs.write_file(&file_path, b"content")
+            .expect("Failed to write file");
 
         #[cfg(unix)]
         {
@@ -467,14 +522,20 @@ mod tests {
             unix_fs::symlink(&full_file_path, &full_link_path).expect("Failed to create symlink");
 
             // LocalVfs follows symlinks with fs::metadata, so we should be able to read through it
-            let meta = vfs.metadata(&link_path).expect("Failed to get metadata through symlink");
+            let meta = vfs
+                .metadata(&link_path)
+                .expect("Failed to get metadata through symlink");
             assert!(!meta.is_dir);
             assert_eq!(meta.size, 7);
 
             // Should be able to read file content through symlink
-            let mut reader = vfs.open_file(&link_path).expect("Failed to open through symlink");
+            let mut reader = vfs
+                .open_file(&link_path)
+                .expect("Failed to open through symlink");
             let mut buffer = String::new();
-            reader.read_to_string(&mut buffer).expect("Failed to read through symlink");
+            reader
+                .read_to_string(&mut buffer)
+                .expect("Failed to read through symlink");
             assert_eq!(buffer, "content");
         }
     }

@@ -1,8 +1,10 @@
-use rcompare_common::{
-    Blake3Hash, CacheKey, DiffNode, DiffStatus, FileEntry, RCompareError,
-    ThreeWayDiffNode, ThreeWayDiffStatus, Vfs,
-};
+#![allow(clippy::too_many_arguments)]
+
 use crate::hash_cache::HashCache;
+use rcompare_common::{
+    Blake3Hash, CacheKey, DiffNode, DiffStatus, FileEntry, RCompareError, ThreeWayDiffNode,
+    ThreeWayDiffStatus, Vfs,
+};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -81,7 +83,11 @@ impl ComparisonEngine {
         right_vfs: Option<&dyn Vfs>,
         cancel: Option<&AtomicBool>,
     ) -> Result<Vec<DiffNode>, RCompareError> {
-        info!("Comparing {} left entries with {} right entries", left_entries.len(), right_entries.len());
+        info!(
+            "Comparing {} left entries with {} right entries",
+            left_entries.len(),
+            right_entries.len()
+        );
 
         let mut left_map: HashMap<PathBuf, FileEntry> = left_entries
             .into_iter()
@@ -96,15 +102,16 @@ impl ComparisonEngine {
         let mut diff_nodes = Vec::new();
 
         // Find all unique paths
-        let mut all_paths: Vec<PathBuf> = left_map.keys().chain(right_map.keys())
-            .cloned()
-            .collect();
+        let mut all_paths: Vec<PathBuf> =
+            left_map.keys().chain(right_map.keys()).cloned().collect();
         all_paths.sort();
         all_paths.dedup();
 
         for path in all_paths {
-            if cancel.map_or(false, |flag| flag.load(Ordering::Relaxed)) {
-                return Err(RCompareError::Comparison("Comparison cancelled".to_string()));
+            if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                return Err(RCompareError::Comparison(
+                    "Comparison cancelled".to_string(),
+                ));
             }
 
             let left = left_map.remove(&path);
@@ -172,40 +179,125 @@ impl ComparisonEngine {
         let right_path = right_root.join(&right.path);
 
         if left_vfs.is_none() && right_vfs.is_none() {
-            let left_partial = self.partial_hash_file(&left_path)?;
-            let right_partial = self.partial_hash_file(&right_path)?;
+            // Try to hash files, but handle broken symlinks gracefully
+            let left_partial = match self.partial_hash_file(&left_path) {
+                Ok(hash) => hash,
+                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("Skipping broken symlink: {}", left_path.display());
+                    return Ok(DiffStatus::Different);
+                }
+                Err(e) => return Err(e),
+            };
+
+            let right_partial = match self.partial_hash_file(&right_path) {
+                Ok(hash) => hash,
+                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("Skipping broken symlink: {}", right_path.display());
+                    return Ok(DiffStatus::Different);
+                }
+                Err(e) => return Err(e),
+            };
+
             if left_partial != right_partial {
                 return Ok(DiffStatus::Different);
             }
 
-            let same = self.verify_files(&left_path, &right_path)?;
-            return Ok(if same { DiffStatus::Same } else { DiffStatus::Different });
+            let same = match self.verify_files(&left_path, &right_path) {
+                Ok(result) => result,
+                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("Skipping broken symlink during verification");
+                    return Ok(DiffStatus::Different);
+                }
+                Err(e) => return Err(e),
+            };
+
+            return Ok(if same {
+                DiffStatus::Same
+            } else {
+                DiffStatus::Different
+            });
         }
 
-        let left_reader = self.open_reader(&left_path, left_vfs)?;
-        let right_reader = self.open_reader(&right_path, right_vfs)?;
+        let left_reader = match self.open_reader(&left_path, left_vfs) {
+            Ok(reader) => reader,
+            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Skipping broken symlink: {}", left_path.display());
+                return Ok(DiffStatus::Different);
+            }
+            Err(e) => return Err(e),
+        };
+
+        let right_reader = match self.open_reader(&right_path, right_vfs) {
+            Ok(reader) => reader,
+            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Skipping broken symlink: {}", right_path.display());
+                return Ok(DiffStatus::Different);
+            }
+            Err(e) => return Err(e),
+        };
+
         let left_hash = self.hash_reader(left_reader)?;
         let right_hash = self.hash_reader(right_reader)?;
 
-        Ok(if left_hash == right_hash { DiffStatus::Same } else { DiffStatus::Different })
+        Ok(if left_hash == right_hash {
+            DiffStatus::Same
+        } else {
+            DiffStatus::Different
+        })
     }
 
     /// Compute hash for a file
     pub fn hash_file(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
+        // Check for broken symlinks first (use symlink_metadata which doesn't follow symlinks)
+        let symlink_meta = std::fs::symlink_metadata(path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read metadata for {}: {}", path.display(), e),
+            ))
+        })?;
+
+        // If it's a symlink, try to follow it
+        if symlink_meta.file_type().is_symlink() {
+            // Try to get the real metadata by following the symlink
+            match std::fs::metadata(path) {
+                Ok(real_meta) if real_meta.is_dir() => {
+                    return Err(RCompareError::Io(std::io::Error::new(
+                        std::io::ErrorKind::IsADirectory,
+                        format!("Cannot hash directory symlink: {}", path.display()),
+                    )));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(RCompareError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Broken symlink (target does not exist): {}", path.display()),
+                    )));
+                }
+                Err(e) => {
+                    return Err(RCompareError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to follow symlink {}: {}", path.display(), e),
+                    )));
+                }
+                Ok(_) => {} // Regular file symlink, continue
+            }
+        }
+
         let metadata = std::fs::metadata(path)?;
 
         // Safety check: ensure we're not trying to hash a directory
         if metadata.is_dir() {
             return Err(RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::IsADirectory,
-                format!("Cannot hash directory: {}", path.display())
+                format!("Cannot hash directory: {}", path.display()),
             )));
         }
 
         let cache_key = CacheKey {
             path: path.to_path_buf(),
             size: metadata.len(),
-            modified: metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            modified: metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
         };
 
         // Check cache first
@@ -215,7 +307,12 @@ impl ComparisonEngine {
         }
 
         // Compute hash
-        let mut file = std::fs::File::open(path)?;
+        let mut file = std::fs::File::open(path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to open file {}: {}", path.display(), e),
+            ))
+        })?;
         let mut hasher = blake3::Hasher::new();
         let mut buffer = vec![0; 64 * 1024]; // 64KB buffer
 
@@ -256,24 +353,63 @@ impl ComparisonEngine {
         vfs: Option<&dyn Vfs>,
     ) -> Result<Box<dyn Read + Send>, RCompareError> {
         if let Some(vfs) = vfs {
-            vfs.open_file(path)
-                .map_err(|e| RCompareError::Vfs(e.to_string()))
+            vfs.open_file(path).map_err(|e| {
+                RCompareError::Vfs(format!("Failed to open {} from VFS: {}", path.display(), e))
+            })
         } else {
-            Ok(Box::new(std::fs::File::open(path)?))
+            std::fs::File::open(path)
+                .map(|f| Box::new(f) as Box<dyn Read + Send>)
+                .map_err(|e| {
+                    RCompareError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to open file {}: {}", path.display(), e),
+                    ))
+                })
         }
     }
 
     fn partial_hash_file(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
         const CHUNK_SIZE: usize = 16 * 1024;
 
-        let mut file = std::fs::File::open(path)?;
+        // Check for broken symlinks first
+        let symlink_meta = std::fs::symlink_metadata(path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read metadata for {}: {}", path.display(), e),
+            ))
+        })?;
+
+        if symlink_meta.file_type().is_symlink() {
+            match std::fs::metadata(path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(RCompareError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Broken symlink (target does not exist): {}", path.display()),
+                    )));
+                }
+                Err(e) => {
+                    return Err(RCompareError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to follow symlink {}: {}", path.display(), e),
+                    )));
+                }
+                Ok(_) => {} // Continue
+            }
+        }
+
+        let mut file = std::fs::File::open(path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to open file {}: {}", path.display(), e),
+            ))
+        })?;
         let metadata = file.metadata()?;
 
         // Safety check: ensure we're not trying to hash a directory
         if metadata.is_dir() {
             return Err(RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::IsADirectory,
-                format!("Cannot hash directory: {}", path.display())
+                format!("Cannot hash directory: {}", path.display()),
             )));
         }
 
@@ -388,14 +524,7 @@ impl ComparisonEngine {
             let right = right_map.remove(&path);
 
             let status = self.three_way_status(
-                base_root,
-                left_root,
-                right_root,
-                base_vfs,
-                left_vfs,
-                right_vfs,
-                &base,
-                &left,
+                base_root, left_root, right_root, base_vfs, left_vfs, right_vfs, &base, &left,
                 &right,
             )?;
 
@@ -438,9 +567,12 @@ impl ComparisonEngine {
                 }
 
                 // Compare hashes/content
-                let base_same_as_left = self.files_same(base_root, left_root, base_vfs, left_vfs, b, l)?;
-                let base_same_as_right = self.files_same(base_root, right_root, base_vfs, right_vfs, b, r)?;
-                let left_same_as_right = self.files_same(left_root, right_root, left_vfs, right_vfs, l, r)?;
+                let base_same_as_left =
+                    self.files_same(base_root, left_root, base_vfs, left_vfs, b, l)?;
+                let base_same_as_right =
+                    self.files_same(base_root, right_root, base_vfs, right_vfs, b, r)?;
+                let left_same_as_right =
+                    self.files_same(left_root, right_root, left_vfs, right_vfs, l, r)?;
 
                 if base_same_as_left && base_same_as_right {
                     Ok(ThreeWayDiffStatus::AllSame)
@@ -473,19 +605,9 @@ impl ComparisonEngine {
             (Some(_), None, Some(_)) => Ok(ThreeWayDiffStatus::BaseAndRight),
 
             // Left and right (both added - potential conflict or same addition)
-            (None, Some(l), Some(r)) => {
-                if l.is_dir && r.is_dir {
-                    Ok(ThreeWayDiffStatus::BothAdded)
-                } else if l.is_dir || r.is_dir {
-                    Ok(ThreeWayDiffStatus::BothAdded)
-                } else {
-                    let same = self.files_same(left_root, right_root, left_vfs, right_vfs, l, r)?;
-                    if same {
-                        Ok(ThreeWayDiffStatus::BothAdded)
-                    } else {
-                        Ok(ThreeWayDiffStatus::BothAdded)
-                    }
-                }
+            (None, Some(_l), Some(_r)) => {
+                // TODO: Distinguish between conflict (different additions) and same addition
+                Ok(ThreeWayDiffStatus::BothAdded)
             }
 
             // None present (shouldn't happen)
@@ -536,7 +658,6 @@ impl ComparisonEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::path::Path;
     use std::time::SystemTime;
     use tempfile::TempDir;
@@ -547,25 +668,23 @@ mod tests {
         let cache = HashCache::new(temp.path().to_path_buf()).unwrap();
         let engine = ComparisonEngine::new(cache);
 
-        let left = vec![
-            FileEntry {
-                path: PathBuf::from("file1.txt"),
-                size: 100,
-                modified: SystemTime::now(),
-                is_dir: false,
-            },
-        ];
+        let left = vec![FileEntry {
+            path: PathBuf::from("file1.txt"),
+            size: 100,
+            modified: SystemTime::now(),
+            is_dir: false,
+        }];
 
-        let right = vec![
-            FileEntry {
-                path: PathBuf::from("file2.txt"),
-                size: 200,
-                modified: SystemTime::now(),
-                is_dir: false,
-            },
-        ];
+        let right = vec![FileEntry {
+            path: PathBuf::from("file2.txt"),
+            size: 200,
+            modified: SystemTime::now(),
+            is_dir: false,
+        }];
 
-        let diff = engine.compare(Path::new("left"), Path::new("right"), left, right).unwrap();
+        let diff = engine
+            .compare(Path::new("left"), Path::new("right"), left, right)
+            .unwrap();
         assert_eq!(diff.len(), 2);
     }
 }

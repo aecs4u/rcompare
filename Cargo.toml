@@ -39,6 +39,7 @@ toml = "0.8"
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.17"
 
 # Diffing
 similar = { version = "2.6", features = ["inline"] }
@@ -48,6 +49,19 @@ syntect = "5.2"
 
 # Image processing
 image = "0.25"
+kamadak-exif = "0.5"
+
+# CSV processing
+csv = "1.3"
+
+# Excel processing
+calamine = "0.26"
+
+# JSON/YAML processing
+serde_yaml = "0.9"
+
+# DataFrame/Parquet processing
+polars = { version = "0.46", features = ["parquet", "lazy", "rows", "dtype-full"] }
 
 # Archive handling
 zip = "0.6"
@@ -60,6 +74,7 @@ unrar = "0.5"
 
 # Pattern matching
 glob = "0.3"
+regex = "1.10"
 
 # Concurrency
 rayon = "1.10"

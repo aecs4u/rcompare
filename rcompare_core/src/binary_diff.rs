@@ -1,10 +1,11 @@
 use rcompare_common::RCompareError;
-use std::path::Path;
+use serde::Serialize;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 /// Represents a chunk of binary data for hex viewing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HexChunk {
     pub offset: u64,
     pub left_data: Vec<u8>,
@@ -23,7 +24,11 @@ impl BinaryDiffEngine {
     }
 
     /// Compare two binary files and identify differences
-    pub fn compare_files(&self, left_path: &Path, right_path: &Path) -> Result<Vec<HexChunk>, RCompareError> {
+    pub fn compare_files(
+        &self,
+        left_path: &Path,
+        right_path: &Path,
+    ) -> Result<Vec<HexChunk>, RCompareError> {
         let mut left_file = File::open(left_path)?;
         let mut right_file = File::open(right_path)?;
 
@@ -141,7 +146,11 @@ impl BinaryDiffEngine {
     }
 
     /// Quick binary comparison (checks if files are identical)
-    pub fn are_files_identical(&self, left_path: &Path, right_path: &Path) -> Result<bool, RCompareError> {
+    pub fn are_files_identical(
+        &self,
+        left_path: &Path,
+        right_path: &Path,
+    ) -> Result<bool, RCompareError> {
         let left_meta = std::fs::metadata(left_path)?;
         let right_meta = std::fs::metadata(right_path)?;
 
@@ -198,7 +207,9 @@ mod tests {
         right.write_all(b"Hello World").unwrap();
 
         let engine = BinaryDiffEngine::default();
-        assert!(engine.are_files_identical(left.path(), right.path()).unwrap());
+        assert!(engine
+            .are_files_identical(left.path(), right.path())
+            .unwrap());
     }
 
     #[test]
@@ -210,7 +221,9 @@ mod tests {
         right.write_all(b"Hello Rust!").unwrap();
 
         let engine = BinaryDiffEngine::default();
-        assert!(!engine.are_files_identical(left.path(), right.path()).unwrap());
+        assert!(!engine
+            .are_files_identical(left.path(), right.path())
+            .unwrap());
     }
 
     #[test]

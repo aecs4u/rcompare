@@ -1,10 +1,10 @@
+use filetime::{set_file_mtime, FileTime};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
-use filetime::{set_file_mtime, FileTime};
 
 /// Helper struct to manage test directories
 struct TestFixture {
@@ -241,7 +241,8 @@ fn test_diff_only_flag() {
 
     // Should NOT show same file in the listing (but may appear in summary)
     let lines: Vec<&str> = stdout.lines().collect();
-    let result_lines: Vec<&str> = lines.iter()
+    let result_lines: Vec<&str> = lines
+        .iter()
         .skip_while(|l| !l.contains("Comparison Results"))
         .take_while(|l| !l.contains("Summary"))
         .copied()
@@ -271,8 +272,8 @@ fn test_json_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Parse JSON to verify it's valid
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
     // Verify structure
     assert!(json.get("left").is_some());
@@ -306,14 +307,19 @@ fn test_json_output_with_diff_only() {
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
     let entries = json.get("entries").unwrap().as_array().unwrap();
 
     // Should only contain the different file
     assert_eq!(entries.len(), 1);
-    assert!(entries[0].get("path").unwrap().as_str().unwrap().contains("different.txt"));
+    assert!(entries[0]
+        .get("path")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .contains("different.txt"));
 }
 
 #[test]
@@ -390,7 +396,8 @@ fn test_ignore_patterns() {
 
     // Should not include .log file (check in the results section, not summary)
     let lines: Vec<&str> = stdout.lines().collect();
-    let result_lines: Vec<&str> = lines.iter()
+    let result_lines: Vec<&str> = lines
+        .iter()
         .skip_while(|l| !l.contains("Comparison Results"))
         .take_while(|l| !l.contains("Summary"))
         .copied()
@@ -426,7 +433,8 @@ fn test_multiple_ignore_patterns() {
 
     // Extract result section
     let lines: Vec<&str> = stdout.lines().collect();
-    let result_lines: Vec<&str> = lines.iter()
+    let result_lines: Vec<&str> = lines
+        .iter()
         .skip_while(|l| !l.contains("Comparison Results"))
         .take_while(|l| !l.contains("Summary"))
         .copied()
@@ -794,7 +802,11 @@ fn test_json_entry_details() {
 
     // Find the file entry
     let file_entry = entries.iter().find(|e| {
-        e.get("path").unwrap().as_str().unwrap().contains("file.txt")
+        e.get("path")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("file.txt")
     });
 
     assert!(file_entry.is_some());
@@ -863,7 +875,8 @@ fn test_no_verify_hashes_flag() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Without hash verification, files with same size/mtime appear identical
-    assert!(stdout.contains("Identical:") && stdout.contains("2"));
+    // Count should be 1 (one file on each side, appearing identical)
+    assert!(stdout.contains("Identical:") && stdout.contains("1"));
 }
 
 #[test]
@@ -880,13 +893,13 @@ fn test_right_gitignore_ignored() {
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    let result_lines: Vec<&str> = lines.iter()
-        .skip_while(|l| !l.contains("Comparison Results"))
-        .take_while(|l| !l.contains("Summary"))
-        .copied()
-        .collect();
 
-    let result_text = result_lines.join("\n");
-    assert!(!result_text.contains("skip.txt"));
+    // .gitignore file itself should appear (not ignored)
+    assert!(stdout.contains(".gitignore"));
+
+    // skip.txt should be ignored by gitignore and not appear in results
+    assert!(!stdout.contains("skip.txt"));
+
+    // Should show only 1 right-only file (.gitignore)
+    assert!(stdout.contains("Right only:") && stdout.contains("1"));
 }

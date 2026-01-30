@@ -47,8 +47,8 @@ pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), RCompareError>
         fs::create_dir_all(parent)?;
     }
 
-    let data = toml::to_string_pretty(config)
-        .map_err(|e| RCompareError::Serialization(e.to_string()))?;
+    let data =
+        toml::to_string_pretty(config).map_err(|e| RCompareError::Serialization(e.to_string()))?;
     fs::write(path, data)?;
     Ok(())
 }

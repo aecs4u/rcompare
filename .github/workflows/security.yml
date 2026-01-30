@@ -1,0 +1,106 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  schedule:
+    # Run security audit every day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: ${{ runner.os }}-cargo-audit
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked || true
+
+      - name: Run cargo audit
+        # Note: Only denies actual vulnerabilities, allows warnings for unmaintained/unsound
+        # Specific advisories are ignored in deny.toml for transitive dependencies
+        run: cargo audit
+
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-cargo-deny
+          restore-keys: |
+            ${{ runner.os }}-cargo-deny
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked || true
+
+      - name: Run cargo deny
+        run: cargo deny check
+
+  outdated:
+    name: Dependency Updates Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-outdated
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-outdated
+          key: ${{ runner.os }}-cargo-outdated
+          restore-keys: |
+            ${{ runner.os }}-cargo-outdated
+
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated --locked || true
+
+      - name: Check for outdated dependencies
+        run: cargo outdated --exit-code 1 || echo "::warning::Outdated dependencies found. Consider updating."
+        continue-on-error: true

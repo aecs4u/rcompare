@@ -111,39 +111,31 @@ pub struct SessionProfile {
 }
 
 /// Application configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     /// Ignore patterns (e.g., "*.o", "node_modules/")
+    #[serde(default)]
     pub ignore_patterns: Vec<String>,
 
     /// Whether to follow symbolic links
+    #[serde(default)]
     pub follow_symlinks: bool,
 
     /// Whether to use hash verification
+    #[serde(default)]
     pub use_hash_verification: bool,
 
     /// Cache directory
+    #[serde(default)]
     pub cache_dir: Option<PathBuf>,
 
     /// Enable portable mode (config alongside binary)
+    #[serde(default)]
     pub portable_mode: bool,
 
     /// Saved session profiles
     #[serde(default)]
     pub profiles: Vec<SessionProfile>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            ignore_patterns: vec![],
-            follow_symlinks: false,
-            use_hash_verification: true,
-            cache_dir: None,
-            portable_mode: false,
-            profiles: vec![],
-        }
-    }
 }
 
 /// Session identifier for a comparison
