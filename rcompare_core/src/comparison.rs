@@ -119,18 +119,33 @@ use tracing::{debug, info};
 pub struct ComparisonEngine {
     cache: HashCache,
     verify_hashes: bool,
+    /// Threshold in bytes for using streaming comparison (default: 100MB)
+    /// Files larger than this will be compared in chunks to avoid loading entirely into memory
+    streaming_threshold: u64,
 }
 
 impl ComparisonEngine {
+    /// Default streaming threshold: 100MB
+    const DEFAULT_STREAMING_THRESHOLD: u64 = 100 * 1024 * 1024;
+
     pub fn new(cache: HashCache) -> Self {
         Self {
             cache,
             verify_hashes: false,
+            streaming_threshold: Self::DEFAULT_STREAMING_THRESHOLD,
         }
     }
 
     pub fn with_hash_verification(mut self, enabled: bool) -> Self {
         self.verify_hashes = enabled;
+        self
+    }
+
+    /// Set the threshold for streaming comparison (in bytes)
+    /// Files larger than this will be compared using chunk-by-chunk streaming
+    /// to avoid loading them entirely into memory. Default is 100MB.
+    pub fn with_streaming_threshold(mut self, threshold: u64) -> Self {
+        self.streaming_threshold = threshold;
         self
     }
 
@@ -344,13 +359,32 @@ impl ComparisonEngine {
                 return Ok(DiffStatus::Different);
             }
 
-            let same = match self.verify_files(&left_path, &right_path) {
-                Ok(result) => result,
-                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    debug!("Skipping broken symlink during verification");
-                    return Ok(DiffStatus::Different);
+            // For large files, use streaming comparison to avoid loading into memory
+            let use_streaming = left.size >= self.streaming_threshold;
+
+            let same = if use_streaming {
+                debug!(
+                    "Using streaming comparison for large files ({} bytes): {}",
+                    left.size,
+                    left_path.display()
+                );
+                match self.compare_files_streaming(&left_path, &right_path) {
+                    Ok(result) => result,
+                    Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                        debug!("Skipping broken symlink during streaming comparison");
+                        return Ok(DiffStatus::Different);
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
+            } else {
+                match self.verify_files(&left_path, &right_path) {
+                    Ok(result) => result,
+                    Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                        debug!("Skipping broken symlink during verification");
+                        return Ok(DiffStatus::Different);
+                    }
+                    Err(e) => return Err(e),
+                }
             };
 
             return Ok(if same {
@@ -663,6 +697,71 @@ impl ComparisonEngine {
         Ok(left_hash == right_hash)
     }
 
+    /// Compare two large files using streaming chunk-by-chunk comparison
+    /// This avoids loading the entire files into memory, making it suitable for very large files (>100MB).
+    /// Returns true if files are identical, false if different.
+    /// Exits early on first chunk mismatch for better performance.
+    fn compare_files_streaming(&self, left_path: &Path, right_path: &Path) -> Result<bool, RCompareError> {
+        use std::fs::File;
+        use std::io::Read;
+
+        // Open both files
+        let mut left_file = File::open(left_path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to open left file {}: {}", left_path.display(), e),
+            ))
+        })?;
+
+        let mut right_file = File::open(right_path).map_err(|e| {
+            RCompareError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to open right file {}: {}", right_path.display(), e),
+            ))
+        })?;
+
+        // Use 1MB chunks for streaming comparison
+        const STREAM_CHUNK_SIZE: usize = 1024 * 1024;
+        let mut left_buffer = vec![0u8; STREAM_CHUNK_SIZE];
+        let mut right_buffer = vec![0u8; STREAM_CHUNK_SIZE];
+
+        loop {
+            let left_read = left_file.read(&mut left_buffer)?;
+            let right_read = right_file.read(&mut right_buffer)?;
+
+            // If read different amounts, files are different
+            if left_read != right_read {
+                debug!(
+                    "Streaming comparison: read size mismatch ({} vs {}) for {} vs {}",
+                    left_read,
+                    right_read,
+                    left_path.display(),
+                    right_path.display()
+                );
+                return Ok(false);
+            }
+
+            // If reached EOF on both, files are identical
+            if left_read == 0 {
+                debug!(
+                    "Streaming comparison: files identical {}",
+                    left_path.display()
+                );
+                return Ok(true);
+            }
+
+            // Compare this chunk
+            if left_buffer[..left_read] != right_buffer[..right_read] {
+                debug!(
+                    "Streaming comparison: chunk mismatch for {} vs {}",
+                    left_path.display(),
+                    right_path.display()
+                );
+                return Ok(false);
+            }
+        }
+    }
+
     /// Compare three lists of file entries (base, left, right) for three-way merge
     pub fn compare_three_way(
         &self,
@@ -971,5 +1070,118 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results[0].1.is_ok(), "First file should hash successfully");
         assert!(results[1].1.is_err(), "Second file should error (not found)");
+    }
+
+    #[test]
+    fn test_streaming_comparison_identical_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache);
+
+        let file1 = temp.path().join("file1.dat");
+        let file2 = temp.path().join("file2.dat");
+
+        // Create identical large content (2MB)
+        let content = vec![42u8; 2 * 1024 * 1024];
+        std::fs::write(&file1, &content).unwrap();
+        std::fs::write(&file2, &content).unwrap();
+
+        let result = engine.compare_files_streaming(&file1, &file2).unwrap();
+        assert!(result, "Identical files should return true");
+    }
+
+    #[test]
+    fn test_streaming_comparison_different_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache);
+
+        let file1 = temp.path().join("file1.dat");
+        let file2 = temp.path().join("file2.dat");
+
+        // Create different large content (2MB each)
+        let content1 = vec![42u8; 2 * 1024 * 1024];
+        let content2 = vec![43u8; 2 * 1024 * 1024];
+        std::fs::write(&file1, &content1).unwrap();
+        std::fs::write(&file2, &content2).unwrap();
+
+        let result = engine.compare_files_streaming(&file1, &file2).unwrap();
+        assert!(!result, "Different files should return false");
+    }
+
+    #[test]
+    fn test_streaming_comparison_different_sizes() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache);
+
+        let file1 = temp.path().join("file1.dat");
+        let file2 = temp.path().join("file2.dat");
+
+        // Create files of different sizes
+        let content1 = vec![42u8; 2 * 1024 * 1024];
+        let content2 = vec![42u8; 1024 * 1024]; // Half the size
+        std::fs::write(&file1, &content1).unwrap();
+        std::fs::write(&file2, &content2).unwrap();
+
+        let result = engine.compare_files_streaming(&file1, &file2).unwrap();
+        assert!(!result, "Files of different sizes should return false");
+    }
+
+    #[test]
+    fn test_streaming_threshold_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+
+        // Create engine with 1MB threshold
+        let engine = ComparisonEngine::new(cache)
+            .with_streaming_threshold(1024 * 1024);
+
+        assert_eq!(engine.streaming_threshold, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_compare_files_uses_streaming_for_large_files() {
+        use rcompare_common::FileEntry;
+        use std::time::SystemTime;
+
+        let temp = tempfile::tempdir().unwrap();
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+
+        // Set threshold to 1MB, enable verification
+        let engine = ComparisonEngine::new(cache)
+            .with_streaming_threshold(1024 * 1024)
+            .with_hash_verification(true);
+
+        let file1 = temp.path().join("file1.dat");
+        let file2 = temp.path().join("file2.dat");
+
+        // Create identical 2MB files (above threshold)
+        let content = vec![42u8; 2 * 1024 * 1024];
+        std::fs::write(&file1, &content).unwrap();
+        std::fs::write(&file2, &content).unwrap();
+
+        let metadata1 = std::fs::metadata(&file1).unwrap();
+        let metadata2 = std::fs::metadata(&file2).unwrap();
+
+        let entry1 = FileEntry {
+            path: "file1.dat".into(),
+            size: metadata1.len(),
+            modified: metadata1.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            is_dir: false,
+        };
+
+        let entry2 = FileEntry {
+            path: "file2.dat".into(),
+            size: metadata2.len(),
+            modified: metadata2.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            is_dir: false,
+        };
+
+        let status = engine
+            .compare_files(temp.path(), temp.path(), None, None, &entry1, &entry2)
+            .unwrap();
+
+        assert_eq!(status, DiffStatus::Same, "Large identical files should be detected as same using streaming");
     }
 }

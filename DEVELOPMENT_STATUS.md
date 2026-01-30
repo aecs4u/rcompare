@@ -15,7 +15,7 @@ Current implementation status of RCompare features and components.
 | Phase 1: Core Foundation | ✅ Complete | 100% |
 | Phase 2: Specialized Formats | ✅ Complete | 100% |
 | Phase 3: Patch System & FFI | ✅ Complete | 100% |
-| Phase 4: Advanced Features | 🚧 In Progress | 35% |
+| Phase 4: Advanced Features | 🚧 In Progress | 40% |
 | Phase 5: Reporting & Workflow | 📋 Planned | 0% |
 | Phase 6: Cloud & Remote | 📋 Planned | 30% |
 | Phase 7: AI & Integration | 🔮 Future | 0% |
@@ -137,24 +137,30 @@ Current implementation status of RCompare features and components.
 - No multi-comparison tabs
 - No three-way merge UI
 
-### 🚧 Performance (33% Complete)
+### 🚧 Performance (67% Complete)
 
 - [x] ✅ Parallel hash computing (completed - Phase 4)
   - `hash_files_parallel()` API with rayon work-stealing
   - Adaptive buffer sizing (64KB → 1MB)
   - Progress callback support
   - 2-3x speedup on 4-8 core systems
-- [ ] Streaming large file comparison (not started)
+- [x] ✅ Streaming large file comparison (completed - Phase 4)
+  - Chunk-by-chunk comparison (1MB chunks)
+  - Configurable threshold (default: 100MB)
+  - Constant memory usage (~2MB)
+  - Early exit on mismatch
+  - Handles multi-GB files without OOM
 - [ ] SQLite index for large trees (not started)
 
 **Current Performance**:
 - Hash speed (single): ~3GB/s (BLAKE3)
 - Hash speed (parallel): 6-9GB/s (4-8 cores) ✅
-- Memory: ~100-200 bytes per file
+- Memory (comparison): Constant ~2MB for streaming (files >100MB) ✅
+- Memory (metadata): ~100-200 bytes per file
+- File size limit: None (streaming handles any size) ✅
 - Traversal: I/O-bound with jwalk parallelism
 
 **Remaining Targets** (Phase 4):
-- Streaming comparison for 1GB+ files
 - SQLite backend for 1M+ file comparisons
 
 ### 📋 Cloud Storage (30% Complete)
@@ -404,6 +410,7 @@ None currently reported.
 ## Next Milestones
 
 ### Recently Completed
+- ✅ Streaming large file comparison (Phase 4) - Constant memory for multi-GB files
 - ✅ Post-copy verification (Phase 4) - BLAKE3 hash with retry logic
 - ✅ Implement parallel hash computing (Phase 4) - 2-3x speedup
 - ✅ Add FFI build to CI/CD (Phase 4) - Multi-platform testing

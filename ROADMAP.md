@@ -85,7 +85,13 @@ This document outlines the development roadmap for RCompare, organized by priori
   - Progress callback support
   - Result: 2-3x faster on 4-8 core systems (6-9GB/s)
 
-- 📋 Streaming large file comparison
+- ✅ **Streaming large file comparison** (completed)
+  - Chunk-by-chunk comparison (1MB chunks)
+  - Configurable threshold (default: 100MB)
+  - Constant memory usage (~2MB)
+  - Early exit on mismatch
+  - Handles multi-GB files without OOM
+
 - 📋 SQLite index for very large trees
 
 ### CLI Improvements ✅
