@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use rcompare_core::{ComparisonEngine, FolderScanner, HashCache};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rcompare_common::{AppConfig, FileEntry};
+use rcompare_core::{ComparisonEngine, FolderScanner, HashCache};
 use std::fs;
 use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
@@ -235,10 +235,7 @@ criterion_group!(
     bench_scanner_with_custom_ignore
 );
 
-criterion_group!(
-    cache_benches,
-    bench_hash_cache_operations
-);
+criterion_group!(cache_benches, bench_hash_cache_operations);
 
 criterion_group!(
     comparison_benches,
@@ -246,10 +243,7 @@ criterion_group!(
     bench_comparison_all_different
 );
 
-criterion_group!(
-    workflow_benches,
-    bench_full_scan_and_compare
-);
+criterion_group!(workflow_benches, bench_full_scan_and_compare);
 
 criterion_main!(
     scanner_benches,
