@@ -187,6 +187,37 @@ impl ComparisonEngine {
         right_vfs: Option<&dyn Vfs>,
         cancel: Option<&AtomicBool>,
     ) -> Result<Vec<DiffNode>, RCompareError> {
+        self.compare_with_vfs_and_progress::<fn(usize, usize)>(
+            left_root,
+            right_root,
+            left_entries,
+            right_entries,
+            left_vfs,
+            right_vfs,
+            cancel,
+            None,
+        )
+    }
+
+    /// Compare directory entries with VFS support, cancellation, and progress callback
+    ///
+    /// # Arguments
+    ///
+    /// * `progress_fn` - Optional callback function that receives (current, total) progress updates
+    pub fn compare_with_vfs_and_progress<F>(
+        &self,
+        left_root: &Path,
+        right_root: &Path,
+        left_entries: Vec<FileEntry>,
+        right_entries: Vec<FileEntry>,
+        left_vfs: Option<&dyn Vfs>,
+        right_vfs: Option<&dyn Vfs>,
+        cancel: Option<&AtomicBool>,
+        progress_fn: Option<F>,
+    ) -> Result<Vec<DiffNode>, RCompareError>
+    where
+        F: Fn(usize, usize),
+    {
         info!(
             "Comparing {} left entries with {} right entries",
             left_entries.len(),
@@ -211,11 +242,18 @@ impl ComparisonEngine {
         all_paths.sort();
         all_paths.dedup();
 
-        for path in all_paths {
+        let total = all_paths.len();
+
+        for (idx, path) in all_paths.into_iter().enumerate() {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison(
                     "Comparison cancelled".to_string(),
                 ));
+            }
+
+            // Report progress
+            if let Some(ref progress) = progress_fn {
+                progress(idx + 1, total);
             }
 
             let left = left_map.remove(&path);

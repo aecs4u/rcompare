@@ -83,13 +83,19 @@ rcompare_cli scan /left /right -L
 
 ## Using the GUI
 
-### Launch the GUI
+RCompare provides two graphical interfaces:
+- **Slint GUI** (rcompare_gui): Native, lightweight, cross-platform
+- **PySide6 GUI** (Python frontend): Feature-rich with advanced diff viewers
+
+### Slint GUI (Native)
+
+#### Launch the GUI
 
 ```bash
 rcompare_gui
 ```
 
-### GUI Features
+#### GUI Features
 
 1. **Select Directories**: Click "Select Left..." and "Select Right..." to choose directories
 2. **Compare**: Click the "Compare" button to run the comparison
@@ -100,6 +106,126 @@ rcompare_gui
    - 🔵 Blue background: Right only
 4. **Status Bar**: Shows summary statistics at the bottom
 5. **Refresh**: Click "Refresh" to re-run the comparison
+
+### PySide6 GUI (Python Frontend)
+
+The PySide6 frontend provides advanced features including specialized diff viewers for text, images, CSV, Excel, JSON, and binary files.
+
+#### Installation
+
+```bash
+# Install Python dependencies
+pip install PySide6 Pillow openpyxl
+
+# Or use requirements file (if available)
+pip install -r frontend/requirements.txt
+```
+
+#### Launch the PySide6 GUI
+
+```bash
+# From the repository root
+python frontend/main.py
+
+# Or if installed as a package
+rcompare-pyside6
+```
+
+#### PySide6 Features
+
+1. **Directory Comparison**: Full directory tree comparison with expand/collapse
+2. **Specialized Diff Viewers**:
+   - **Text Diff**: Line-by-line comparison with syntax highlighting
+   - **Image Diff**: Side-by-side image comparison with pixel differences
+   - **CSV Diff**: Row/column comparison for CSV files
+   - **Excel Diff**: Sheet and cell-level comparison
+   - **JSON/YAML Diff**: Structural comparison with formatting
+   - **Binary Diff**: Hex viewer for binary files
+3. **File Operations**: Copy left/right with progress tracking
+4. **Export**: JSON output for automation and scripting
+5. **Settings**: Configurable comparison options and display preferences
+
+## C/C++ Integration (FFI)
+
+RCompare provides a C-compatible Foreign Function Interface (FFI) for integrating patch parsing and manipulation into C/C++ applications. This is particularly useful for KDE applications and other C++ projects that need libkomparediff2-compatible functionality.
+
+### Building the FFI Library
+
+```bash
+# Build the static library
+cargo build --package rcompare_ffi --release
+
+# Library location:
+# Linux/macOS: target/release/librcompare_ffi.a
+# Windows:     target/release/rcompare_ffi.lib
+
+# Header file:
+# rcompare_ffi/include/rcompare.h
+```
+
+### Basic C Example
+
+```c
+#include "rcompare.h"
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    const char* diff_text =
+        "--- a/file.txt\n"
+        "+++ b/file.txt\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n";
+
+    // Parse diff
+    PatchSetHandle* handle = NULL;
+    int result = rcompare_parse_diff(
+        (const uint8_t*)diff_text,
+        strlen(diff_text),
+        &handle
+    );
+
+    if (result != 0) {
+        fprintf(stderr, "Parse failed\n");
+        return 1;
+    }
+
+    // Access metadata
+    size_t file_count = rcompare_patchset_file_count(handle);
+    printf("Files: %zu\n", file_count);
+
+    // Cleanup
+    rcompare_free_patchset(handle);
+    return 0;
+}
+```
+
+### CMake Integration
+
+```cmake
+# Add RCompare FFI to your project
+add_subdirectory(path/to/rcompare/rcompare_ffi)
+
+# Link to your target
+target_link_libraries(your_target PRIVATE rcompare)
+```
+
+### FFI Features
+
+- **Parse multiple diff formats**: Unified, context, normal, RCS, ed
+- **Auto-detect generators**: CVS, Perforce, Subversion, plain diff
+- **Patch operations**: Apply/unapply individual or all differences
+- **File blending**: Merge original file content with patch hunks
+- **Serialization**: Convert patch model back to unified diff format
+- **Memory safe**: Opaque handle pattern with proper lifetime management
+
+### Documentation
+
+For complete API reference and examples, see:
+- [rcompare_ffi/README.md](rcompare_ffi/README.md)
+- [rcompare_ffi/include/rcompare.h](rcompare_ffi/include/rcompare.h)
+- C examples: `rcompare_ffi/examples/`
 
 ## Understanding the Output
 
@@ -328,20 +454,63 @@ rcompare_cli scan \
 - **Issues**: Report bugs on GitHub
 - **CLI Help**: `rcompare_cli --help`
 
+## Current Features
+
+RCompare currently provides:
+
+### Core Comparison Engine
+- ✅ BLAKE3 hashing with persistent cache
+- ✅ Parallel directory traversal
+- ✅ Gitignore pattern support
+- ✅ Cross-platform support (Linux, Windows, macOS)
+
+### Specialized Format Support
+- ✅ Text diff viewer with syntax highlighting
+- ✅ Archive comparison (ZIP, TAR, 7Z)
+- ✅ Binary hex viewer
+- ✅ Image comparison with pixel diff
+- ✅ CSV and Excel comparison
+- ✅ JSON and YAML structural diff
+- ✅ Parquet DataFrame comparison
+
+### Patch System
+- ✅ Multi-format diff parser (unified, context, normal, RCS, ed)
+- ✅ Patch apply/unapply operations
+- ✅ File blending with original content
+- ✅ C/C++ FFI layer (libkomparediff2-compatible)
+
+### User Interfaces
+- ✅ CLI with progress indicators and JSON output
+- ✅ Native Slint GUI
+- ✅ PySide6 GUI with specialized viewers
+- ✅ Copy operations (left/right)
+
 ## What's Next?
 
-Current version (0.1.0) provides basic comparison. Future enhancements:
+Future enhancements planned:
 
-- Text diff viewer with syntax highlighting
-- Archive comparison (ZIP, TAR)
-- File operations (copy, move, delete)
-- Three-way merge
-- Binary hex comparison
-- Image diff visualization
-- Batch scripting support
+### Phase 4: Performance & GUI (In Progress)
+- 🚧 Parallel hash computing (2-3x speedup)
+- 📋 Three-way merge
+- 📋 Tabs for multiple comparisons
+- 📋 Synced scrolling with diff map
+
+### Phase 5: Reporting & Workflow
+- 📋 HTML/Markdown/CSV report export
+- 📋 JUnit XML for CI integration
+- 📋 Diff statistics dashboard
+- 📋 Comparison presets (save/load)
+
+### Phase 6-7: Cloud & Advanced
+- 📋 Additional cloud providers (GCS, Azure, Dropbox)
+- 📋 Watch mode for continuous monitoring
+- 📋 Semantic diff (AST-based)
+- 📋 Plugin/extension system
+
+See [ROADMAP.md](ROADMAP.md) for detailed development timeline.
 
 ---
 
-**Version**: 0.1.0
-**Last Updated**: 2026-01-24
+**Version**: 0.3.0-dev
+**Last Updated**: 2026-01-30
 **License**: MIT OR Apache-2.0

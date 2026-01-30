@@ -463,19 +463,31 @@ fn run_scan(
     }
 
     // Compare directories
+    // Calculate total items to compare
+    let total_items = {
+        let mut paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        for entry in &left_entries {
+            paths.insert(entry.path.clone());
+        }
+        for entry in &right_entries {
+            paths.insert(entry.path.clone());
+        }
+        paths.len() as u64
+    };
+
     let pb_compare = if show_progress {
-        let pb = ProgressBar::new_spinner();
+        let pb = ProgressBar::new(total_items);
         pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.green} {msg} [{elapsed_precise}]")
-                .unwrap(),
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} files ({percent}%) [{elapsed_precise}] {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
         );
         if verify_hashes {
             pb.set_message("Comparing and hashing files...");
         } else {
             pb.set_message("Comparing files...");
         }
-        pb.enable_steady_tick(std::time::Duration::from_millis(100));
         Some(pb)
     } else {
         info!("Comparing directories...");
@@ -483,14 +495,32 @@ fn run_scan(
     };
 
     let comparison_engine = ComparisonEngine::new(hash_cache).with_hash_verification(verify_hashes);
-    let diff_nodes = comparison_engine.compare_with_vfs(
-        left_source.root(),
-        right_source.root(),
-        left_entries,
-        right_entries,
-        left_source.vfs(),
-        right_source.vfs(),
-    )?;
+
+    // Use progress callback if progress bar is enabled
+    let diff_nodes = if let Some(ref pb) = pb_compare {
+        let pb_clone = pb.clone();
+        comparison_engine.compare_with_vfs_and_progress(
+            left_source.root(),
+            right_source.root(),
+            left_entries,
+            right_entries,
+            left_source.vfs(),
+            right_source.vfs(),
+            None,
+            Some(move |current, _total| {
+                pb_clone.set_position(current as u64);
+            }),
+        )?
+    } else {
+        comparison_engine.compare_with_vfs(
+            left_source.root(),
+            right_source.root(),
+            left_entries,
+            right_entries,
+            left_source.vfs(),
+            right_source.vfs(),
+        )?
+    };
 
     if let Some(pb) = &pb_compare {
         pb.finish_with_message(format!(
