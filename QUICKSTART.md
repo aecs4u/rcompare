@@ -406,6 +406,84 @@ OPTIONS:
   -V, --version                 Print version
 ```
 
+### Exit Codes
+
+The CLI uses diff-aware exit codes for automation and scripting:
+
+- **0**: No differences found (directories are identical)
+- **1**: Error occurred (invalid arguments, I/O error, etc.)
+- **2**: Differences found between directories
+
+**Example usage in scripts:**
+
+```bash
+#!/bin/bash
+rcompare_cli scan /source /backup --verify-hashes
+
+case $? in
+  0)
+    echo "✓ Backup is up to date"
+    ;;
+  2)
+    echo "⚠ Backup has differences"
+    exit 1
+    ;;
+  *)
+    echo "✗ Comparison failed"
+    exit 1
+    ;;
+esac
+```
+
+### JSON Output Format
+
+Use `--json` for machine-readable output. The JSON schema is versioned for compatibility:
+
+```bash
+rcompare_cli scan /left /right --json > results.json
+```
+
+**JSON Schema** (version 1.1.0):
+
+```json
+{
+  "schema_version": "1.1.0",
+  "left": "/path/to/left",
+  "right": "/path/to/right",
+  "summary": {
+    "total": 100,
+    "same": 80,
+    "different": 10,
+    "orphan_left": 5,
+    "orphan_right": 5,
+    "unchecked": 0
+  },
+  "entries": [
+    {
+      "path": "file.txt",
+      "status": "Different",
+      "left": {
+        "size": 1024,
+        "modified_unix": 1706633400,
+        "is_dir": false
+      },
+      "right": {
+        "size": 2048,
+        "modified_unix": 1706633500,
+        "is_dir": false
+      }
+    }
+  ],
+  "text_diffs": [...],
+  "image_diffs": [...],
+  "csv_diffs": [...]
+}
+```
+
+**Schema Versions:**
+- `1.0.0`: Basic comparison results
+- `1.1.0`: Added specialized diff reports (current)
+
 ## Examples
 
 ### Example 1: Basic Backup Check

@@ -214,7 +214,7 @@ fn main() {
             image_exif,
             image_tolerance,
         } => {
-            if let Err(e) = run_scan(
+            match run_scan(
                 left,
                 right,
                 ignore,
@@ -244,8 +244,16 @@ fn main() {
                 image_exif,
                 image_tolerance,
             ) {
-                error!("Scan failed: {}", e);
-                std::process::exit(1);
+                Ok(scan_result) => {
+                    // Exit with appropriate code based on scan results
+                    // 0: No differences found
+                    // 2: Differences found
+                    std::process::exit(scan_result.exit_code());
+                }
+                Err(e) => {
+                    error!("Scan failed: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
     }
@@ -304,6 +312,42 @@ fn build_text_diff_config(
     Ok(config)
 }
 
+/// Result of a scan operation with diff statistics
+#[derive(Debug)]
+struct ScanResult {
+    /// Total number of entries compared
+    #[allow(dead_code)]
+    total: usize,
+    /// Number of identical files/directories
+    identical: usize,
+    /// Number of different files
+    different: usize,
+    /// Number of files only in left
+    left_only: usize,
+    /// Number of files only in right
+    right_only: usize,
+    /// Number of unchecked files (same size, different timestamp)
+    unchecked: usize,
+}
+
+impl ScanResult {
+    /// Returns true if any differences were found
+    fn has_differences(&self) -> bool {
+        self.different > 0 || self.left_only > 0 || self.right_only > 0 || self.unchecked > 0
+    }
+
+    /// Get appropriate exit code based on scan results
+    /// - 0: No differences found (success)
+    /// - 2: Differences found
+    fn exit_code(&self) -> i32 {
+        if self.has_differences() {
+            2
+        } else {
+            0
+        }
+    }
+}
+
 fn run_scan(
     left: PathBuf,
     right: PathBuf,
@@ -333,7 +377,7 @@ fn run_scan(
     regex_rules: Vec<String>,
     image_exif: bool,
     image_tolerance: u8,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<ScanResult, Box<dyn std::error::Error>> {
     // Validate paths
     if !left.exists() {
         return Err(format!("Left path does not exist: {}", left.display()).into());
@@ -2074,7 +2118,27 @@ fn run_scan(
         println!("{output}");
     }
 
-    Ok(())
+    // Calculate final statistics for exit code
+    let mut scan_result = ScanResult {
+        total: diff_nodes.len(),
+        identical: 0,
+        different: 0,
+        left_only: 0,
+        right_only: 0,
+        unchecked: 0,
+    };
+
+    for node in &diff_nodes {
+        match node.status {
+            DiffStatus::Same => scan_result.identical += 1,
+            DiffStatus::Different => scan_result.different += 1,
+            DiffStatus::OrphanLeft => scan_result.left_only += 1,
+            DiffStatus::OrphanRight => scan_result.right_only += 1,
+            DiffStatus::Unchecked => scan_result.unchecked += 1,
+        }
+    }
+
+    Ok(scan_result)
 }
 
 /// Check if a file is likely a text file based on extension
@@ -2137,6 +2201,10 @@ fn is_text_file(path: &Path) -> bool {
 
 #[derive(Serialize)]
 struct JsonReport {
+    /// Schema version for JSON output (semver format)
+    /// Version 1.0.0: Initial schema with basic comparison results
+    /// Version 1.1.0: Added specialized diff reports (text, image, CSV, etc.)
+    schema_version: String,
     left: String,
     right: String,
     summary: JsonSummary,
@@ -2281,6 +2349,7 @@ fn build_json_report(
     }
 
     JsonReport {
+        schema_version: "1.1.0".to_string(),
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
         summary,
