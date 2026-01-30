@@ -133,17 +133,31 @@ Documented in QUICKSTART.md with scripting examples.
 
 ## Copy Operations
 
-### Post-Copy Verification
-**Status**: Not implemented  
+### ✅ Post-Copy Verification (Completed)
+**Status**: Implemented in Phase 4
 **Impact**: Medium - Data integrity
 
-**Description**: Verify BLAKE3 hash after copy to detect corruption.
-
 **Implementation**:
-- Hash source before copy
-- Hash destination after copy
-- Compare and report mismatches
-- Retry failed copies
+- BLAKE3 hash verification with adaptive buffer sizing
+- Source hash computed before copy
+- Destination hash computed after copy
+- Automatic hash comparison and mismatch detection
+- Configurable retry logic for failed copies (up to N retries)
+- Corrupted files automatically deleted and retried
+- Comprehensive test coverage
+
+**API**:
+```rust
+let ops = FileOperations::with_verification(
+    dry_run: false,
+    use_trash: false,
+    verify: true,
+    max_retries: 3
+);
+let result = ops.copy_file(&source, &dest)?;
+assert!(result.verified);
+assert_eq!(result.source_hash, result.dest_hash);
+```
 
 ### Resumable Copies
 **Status**: Not implemented  

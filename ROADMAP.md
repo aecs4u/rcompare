@@ -111,8 +111,12 @@ This document outlines the development roadmap for RCompare, organized by priori
 - 📋 Tabs for multiple comparisons
 - 📋 Synced scrolling with gutter diff map
 
-### Copy Operations 📋
-- 📋 Post-copy checksum verification
+### Copy Operations 🚧
+- ✅ **Post-copy verification** (completed)
+  - BLAKE3 hash verification
+  - Automatic retry logic (configurable max retries)
+  - Hash mismatch detection with detailed reporting
+  - Corrupted file cleanup and retry
 - 📋 Resumable copies
 
 ---
