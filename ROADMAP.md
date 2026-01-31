@@ -112,8 +112,14 @@ This document outlines the development roadmap for RCompare, organized by priori
   - Static library artifact uploads
   - Comprehensive FFI testing
 
-### GUI Enhancements 📋
-- 📋 Three-way merge (core + UI)
+### GUI Enhancements 🚧
+- 🚧 **Three-way merge** (core completed, UI pending)
+  - ✅ Core `MergeEngine` with conflict detection
+  - ✅ Auto-merge for non-conflicting changes
+  - ✅ Four conflict types (BothModified, ModifyDelete, BothAdded, TypeConflict)
+  - ✅ 12 comprehensive tests
+  - 📋 Three-pane GUI layout
+  - 📋 Conflict resolution UI
 - 📋 Tabs for multiple comparisons
 - 📋 Synced scrolling with gutter diff map
 

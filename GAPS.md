@@ -126,17 +126,50 @@ Documented in QUICKSTART.md with scripting examples.
 - Tab persistence across sessions
 - Keyboard shortcuts (Ctrl+Tab, etc.)
 
-### Three-Way Merge
-**Status**: Not implemented  
+### ✅ Three-Way Merge (Completed - Core)
+**Status**: Core logic implemented in Phase 4
 **Impact**: High - Advanced workflow
 
 **Description**: Compare base, left, and right versions for merge conflict resolution.
 
 **Implementation**:
-- Core merge engine in rcompare_core
-- Three-pane GUI layout
-- Conflict detection and resolution UI
-- Auto-merge non-conflicting changes
+- ✅ Core merge engine in rcompare_core
+  - `MergeEngine` with conflict detection
+  - Auto-merge for non-conflicting changes
+  - Comprehensive conflict type detection
+  - 12 tests covering all scenarios
+- 📋 Three-pane GUI layout (pending)
+- 📋 Conflict detection and resolution UI (pending)
+
+**API**:
+```rust
+use rcompare_core::MergeEngine;
+use std::collections::HashMap;
+
+let engine = MergeEngine::new();
+let results = engine.merge(&base, &left, &right)?;
+
+for result in results {
+    match result.resolution {
+        MergeResolution::UseLeft => // Auto-resolved: use left
+        MergeResolution::UseRight => // Auto-resolved: use right
+        MergeResolution::AutoMerged => // Both changed to same
+        MergeResolution::ManualRequired => // Conflict needs resolution
+        MergeResolution::UseBase => // Both deleted or unchanged
+    }
+}
+```
+
+**Conflict Detection**:
+- BothModified: Both sides modified the same file differently
+- ModifyDelete: Modified on one side, deleted on other
+- BothAdded: Added on both sides with different content
+- TypeConflict: Directory vs file conflict
+
+**Performance**:
+- O(n) where n = unique paths across all three trees
+- Constant memory per file (metadata only)
+- Size/timestamp comparison (no content hashing in merge logic)
 
 ---
 

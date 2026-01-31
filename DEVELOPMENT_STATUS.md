@@ -15,7 +15,7 @@ Current implementation status of RCompare features and components.
 | Phase 1: Core Foundation | ✅ Complete | 100% |
 | Phase 2: Specialized Formats | ✅ Complete | 100% |
 | Phase 3: Patch System & FFI | ✅ Complete | 100% |
-| Phase 4: Advanced Features | 🚧 In Progress | 40% |
+| Phase 4: Advanced Features | 🚧 In Progress | 45% |
 | Phase 5: Reporting & Workflow | 📋 Planned | 0% |
 | Phase 6: Cloud & Remote | 📋 Planned | 30% |
 | Phase 7: AI & Integration | 🔮 Future | 0% |
@@ -184,12 +184,21 @@ Current implementation status of RCompare features and components.
 - [ ] JUnit XML (not started)
 - [ ] Diff statistics dashboard (not started)
 
-### 📋 Advanced Workflows (0% Complete)
+### 🚧 Advanced Workflows (33% Complete)
 
-- [ ] Three-way merge (not started)
+- [x] ✅ **Three-way merge** (core completed - Phase 4)
+  - `MergeEngine` with conflict detection
+  - Four conflict types: BothModified, ModifyDelete, BothAdded, TypeConflict
+  - Auto-merge for non-conflicting changes
+  - Size/timestamp-based comparison
+  - 12 comprehensive tests
+  - GUI integration pending
+- [x] ✅ **Post-copy verification** (completed - Phase 4)
+  - BLAKE3 hash verification
+  - Automatic retry logic (configurable)
+  - Hash mismatch detection
 - [ ] Watch mode (not started)
 - [ ] Resumable copies (not started)
-- [ ] Post-copy verification (not started)
 - [ ] Comparison presets (not started)
 - [ ] .rcompare-ignore file (not started)
 
@@ -202,11 +211,11 @@ Current implementation status of RCompare features and components.
 | Crate | Tests | Status |
 |-------|-------|--------|
 | rcompare_common | 6 | ✅ Passing |
-| rcompare_core | 219 | ✅ Passing |
+| rcompare_core | 231 | ✅ Passing |
 | rcompare_ffi | 37 | ✅ Passing |
 | rcompare_cli | 8 | ✅ Passing |
 | rcompare_gui | 0 | ⚠️ No tests |
-| **Total** | **270** | **✅ All passing** |
+| **Total** | **282** | **✅ All passing** |
 
 ### Test Coverage
 
@@ -410,6 +419,7 @@ None currently reported.
 ## Next Milestones
 
 ### Recently Completed
+- ✅ Three-way merge core logic (Phase 4) - Conflict detection with auto-merge
 - ✅ Streaming large file comparison (Phase 4) - Constant memory for multi-GB files
 - ✅ Post-copy verification (Phase 4) - BLAKE3 hash with retry logic
 - ✅ Implement parallel hash computing (Phase 4) - 2-3x speedup
@@ -424,7 +434,7 @@ None currently reported.
 - Streaming large file comparison
 
 ### Medium-term (Q2 2026)
-- Three-way merge (core + UI)
+- Three-way merge GUI (core completed)
 - GUI tabs for multiple comparisons
 - Resumable copy operations
 - Comparison presets
@@ -441,10 +451,10 @@ None currently reported.
 
 Want to help? High-priority areas:
 
-1. **Three-way merge** (core logic for merge conflict resolution)
+1. **Three-way merge GUI** (core logic completed, UI integration needed)
 2. **Integration tests** (specialized formats coverage)
 3. **HTML report generation** (visual diff reports)
-4. **Streaming large file comparison** (1GB+ files)
+4. **Resumable copy operations** (checkpoint-based file transfers)
 5. **Documentation** (user guide, tutorials)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

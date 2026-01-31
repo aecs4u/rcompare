@@ -80,6 +80,71 @@ pub struct ThreeWayDiffNode {
     pub status: ThreeWayDiffStatus,
 }
 
+/// Resolution strategy for a merge conflict
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeResolution {
+    /// Use the base version
+    UseBase,
+    /// Use the left version
+    UseLeft,
+    /// Use the right version
+    UseRight,
+    /// Auto-merged successfully (non-conflicting changes)
+    AutoMerged,
+    /// Manual merge required (conflict)
+    ManualRequired,
+}
+
+/// Represents a merge conflict that needs resolution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeConflict {
+    /// Path to the conflicting file
+    pub path: PathBuf,
+    /// Type of conflict
+    pub conflict_type: ConflictType,
+    /// Base file entry (if exists)
+    pub base: Option<FileEntry>,
+    /// Left file entry (if exists)
+    pub left: Option<FileEntry>,
+    /// Right file entry (if exists)
+    pub right: Option<FileEntry>,
+}
+
+/// Type of merge conflict
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConflictType {
+    /// Both sides modified the same file differently
+    BothModified,
+    /// File was modified on one side and deleted on the other
+    ModifyDelete,
+    /// File was added on both sides with different content
+    BothAdded,
+    /// Directory vs file conflict
+    TypeConflict,
+}
+
+/// Result of a three-way merge operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeResult {
+    /// Path to the file being merged
+    pub path: PathBuf,
+    /// How the merge was resolved
+    pub resolution: MergeResolution,
+    /// Conflict information (if any)
+    pub conflict: Option<MergeConflict>,
+    /// The source chosen for the merge (if resolved)
+    pub resolved_source: Option<MergeSource>,
+}
+
+/// Source of the merged content
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeSource {
+    Base,
+    Left,
+    Right,
+    Merged,
+}
+
 /// Hash result for a file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileHash {
