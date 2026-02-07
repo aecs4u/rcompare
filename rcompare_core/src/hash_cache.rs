@@ -44,7 +44,7 @@
 //!
 //! // Check if hash is cached
 //! if let Some(hash) = cache.get(&key) {
-//!     println!("Cached hash found: {}", hex::encode(hash));
+//!     println!("Cached hash found: {}", hash.to_hex());
 //! } else {
 //!     // Compute and cache the hash
 //!     // cache.insert(key, computed_hash);

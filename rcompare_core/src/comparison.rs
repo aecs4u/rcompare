@@ -48,7 +48,7 @@
 //! )?;
 //!
 //! for diff in &diffs {
-//!     println!("{:?}: {}", diff.status, diff.path.display());
+//!     println!("{:?}: {}", diff.status, diff.relative_path.display());
 //! }
 //! # Ok(())
 //! # }
@@ -71,7 +71,7 @@
 //! let left_entries = scanner.scan(Path::new("/left"))?;
 //! let right_entries = scanner.scan(Path::new("/right"))?;
 //!
-//! let diffs = engine.three_way_compare(
+//! let diffs = engine.compare_three_way(
 //!     Path::new("/base"),
 //!     Path::new("/left"),
 //!     Path::new("/right"),
@@ -461,7 +461,7 @@ impl ComparisonEngine {
     /// let results = engine.hash_files_parallel(paths.iter().map(|p| *p));
     /// for (path, result) in results {
     ///     match result {
-    ///         Ok(hash) => println!("{}: {}", path.display(), hex::encode(hash)),
+    ///         Ok(hash) => println!("{}: {}", path.display(), hash.to_hex()),
     ///         Err(e) => eprintln!("{}: Error - {}", path.display(), e),
     ///     }
     /// }

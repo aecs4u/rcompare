@@ -201,17 +201,55 @@ assert!(result.verified);
 assert_eq!(result.source_hash, result.dest_hash);
 ```
 
-### Resumable Copies
-**Status**: Not implemented  
+### ✅ Resumable Copies (Completed)
+**Status**: Implemented in Phase 4
 **Impact**: Medium - Large file transfers
 
-**Description**: Resume interrupted copy operations from where they left off.
+**Description**: Resume interrupted copy operations from where they left off, perfect for large files over unreliable connections.
 
 **Implementation**:
-- Track copy progress in database
-- Partial file support
-- Resume from last checkpoint
-- Cleanup on completion
+- Checkpoint system with JSON-based progress tracking
+- Automatic detection of partial copies
+- BLAKE3 hash verification for partial and complete files
+- 4MB chunk-based copying with 100MB checkpoint intervals
+- 50MB threshold (files below this use regular copy)
+- Automatic cleanup of checkpoints on success
+- Resume validation (size, partial hash verification)
+
+**API**:
+```rust
+let checkpoint_dir = PathBuf::from("/path/to/checkpoints");
+let engine = ResumableCopy::new(checkpoint_dir);
+
+// Copy with automatic resume support
+let result = engine.copy_resumable(&source, &dest, None)?;
+
+// With progress callback
+let result = engine.copy_resumable(&source, &dest, Some(Box::new(|copied, total| {
+    println!("Progress: {}/{} bytes", copied, total);
+})))?;
+
+// Result includes resume information
+assert!(result.success);
+assert!(result.verified);
+if result.resumed {
+    println!("Resumed from checkpoint");
+}
+```
+
+**Features**:
+- Automatic resume from last checkpoint
+- Hash-based integrity verification
+- Partial file validation before resume
+- Graceful fallback to fresh copy if checkpoint invalid
+- Checkpoint cleanup after successful copy
+- Progress callback support
+
+**Performance**:
+- 4MB chunks for efficient I/O
+- Constant memory usage (~8MB for buffers)
+- Checkpoint every 100MB to minimize re-copy on resume
+- Minimal overhead for small files (<50MB)
 
 ---
 

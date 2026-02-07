@@ -22,9 +22,10 @@ fn run_cli_json(args: &[&str]) -> Value {
         .output()
         .expect("failed to run rcompare_cli");
 
+    let code = output.status.code().unwrap_or(-1);
     assert!(
-        output.status.success(),
-        "command failed: {}\n{}",
+        code == 0 || code == 2,
+        "command failed: {} (expected 0 or 2)\n{}",
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );

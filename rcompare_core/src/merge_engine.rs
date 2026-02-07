@@ -3,7 +3,7 @@ use rcompare_common::types::{
     ConflictType, FileEntry, MergeConflict, MergeResolution, MergeResult, MergeSource,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Engine for three-way merge operations
 pub struct MergeEngine {
@@ -65,7 +65,7 @@ impl MergeEngine {
     /// Merge a single file entry from the three sides
     fn merge_entry(
         &self,
-        path: &PathBuf,
+        path: &Path,
         base: Option<FileEntry>,
         left: Option<FileEntry>,
         right: Option<FileEntry>,
@@ -85,7 +85,7 @@ impl MergeEngine {
 
             // Only base exists (both deleted)
             (Some(_), None, None) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::UseBase,
                 conflict: None,
                 resolved_source: Some(MergeSource::Base),
@@ -93,7 +93,7 @@ impl MergeEngine {
 
             // Only left exists (added on left)
             (None, Some(_), None) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::UseLeft,
                 conflict: None,
                 resolved_source: Some(MergeSource::Left),
@@ -101,7 +101,7 @@ impl MergeEngine {
 
             // Only right exists (added on right)
             (None, None, Some(_)) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::UseRight,
                 conflict: None,
                 resolved_source: Some(MergeSource::Right),
@@ -118,7 +118,7 @@ impl MergeEngine {
     /// Merge when all three versions exist
     fn merge_all_exist(
         &self,
-        path: &PathBuf,
+        path: &Path,
         base: &FileEntry,
         left: &FileEntry,
         right: &FileEntry,
@@ -126,10 +126,10 @@ impl MergeEngine {
         // Check for type conflicts (directory vs file)
         if base.is_dir != left.is_dir || base.is_dir != right.is_dir {
             return Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::ManualRequired,
                 conflict: Some(MergeConflict {
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                     conflict_type: ConflictType::TypeConflict,
                     base: Some(base.clone()),
                     left: Some(left.clone()),
@@ -142,7 +142,7 @@ impl MergeEngine {
         // If it's a directory, no content conflict
         if base.is_dir {
             return Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::AutoMerged,
                 conflict: None,
                 resolved_source: Some(MergeSource::Merged),
@@ -156,7 +156,7 @@ impl MergeEngine {
         match (left_modified, right_modified) {
             // No changes on either side
             (false, false) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::UseBase,
                 conflict: None,
                 resolved_source: Some(MergeSource::Base),
@@ -164,7 +164,7 @@ impl MergeEngine {
 
             // Only left modified
             (true, false) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: if self.auto_resolve {
                     MergeResolution::UseLeft
                 } else {
@@ -176,7 +176,7 @@ impl MergeEngine {
 
             // Only right modified
             (false, true) => Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: if self.auto_resolve {
                     MergeResolution::UseRight
                 } else {
@@ -191,7 +191,7 @@ impl MergeEngine {
                 // Check if they're modified to the same content
                 if self.is_same_content(left, right) {
                     Ok(MergeResult {
-                        path: path.clone(),
+                        path: path.to_path_buf(),
                         resolution: MergeResolution::AutoMerged,
                         conflict: None,
                         resolved_source: Some(MergeSource::Left), // Either works
@@ -199,10 +199,10 @@ impl MergeEngine {
                 } else {
                     // Conflict: both sides modified differently
                     Ok(MergeResult {
-                        path: path.clone(),
+                        path: path.to_path_buf(),
                         resolution: MergeResolution::ManualRequired,
                         conflict: Some(MergeConflict {
-                            path: path.clone(),
+                            path: path.to_path_buf(),
                             conflict_type: ConflictType::BothModified,
                             base: Some(base.clone()),
                             left: Some(left.clone()),
@@ -218,17 +218,17 @@ impl MergeEngine {
     /// Merge when both sides added the same file
     fn merge_both_added(
         &self,
-        path: &PathBuf,
+        path: &Path,
         left: &FileEntry,
         right: &FileEntry,
     ) -> Result<MergeResult, RCompareError> {
         // Check for type conflicts
         if left.is_dir != right.is_dir {
             return Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::ManualRequired,
                 conflict: Some(MergeConflict {
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                     conflict_type: ConflictType::TypeConflict,
                     base: None,
                     left: Some(left.clone()),
@@ -241,7 +241,7 @@ impl MergeEngine {
         // If both added the same content, auto-merge
         if self.is_same_content(left, right) {
             Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::AutoMerged,
                 conflict: None,
                 resolved_source: Some(MergeSource::Left), // Either works
@@ -249,10 +249,10 @@ impl MergeEngine {
         } else {
             // Conflict: both added with different content
             Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::ManualRequired,
                 conflict: Some(MergeConflict {
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                     conflict_type: ConflictType::BothAdded,
                     base: None,
                     left: Some(left.clone()),
@@ -269,7 +269,7 @@ impl MergeEngine {
     /// * `is_left_modified` - true if left was modified and right deleted, false for opposite
     fn merge_modify_delete(
         &self,
-        path: &PathBuf,
+        path: &Path,
         base: &FileEntry,
         modified: &FileEntry,
         is_left_modified: bool,
@@ -280,7 +280,7 @@ impl MergeEngine {
         if !was_modified {
             // File wasn't actually modified, just use the deletion
             Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: if self.auto_resolve {
                     if is_left_modified {
                         MergeResolution::UseRight
@@ -296,10 +296,10 @@ impl MergeEngine {
         } else {
             // Conflict: modified on one side, deleted on other
             Ok(MergeResult {
-                path: path.clone(),
+                path: path.to_path_buf(),
                 resolution: MergeResolution::ManualRequired,
                 conflict: Some(MergeConflict {
-                    path: path.clone(),
+                    path: path.to_path_buf(),
                     conflict_type: ConflictType::ModifyDelete,
                     base: Some(base.clone()),
                     left: if is_left_modified {
@@ -386,9 +386,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), entry.clone());
-        left.insert(path.clone(), entry.clone());
-        right.insert(path.clone(), entry.clone());
+        base.insert(path.to_path_buf(), entry.clone());
+        left.insert(path.to_path_buf(), entry.clone());
+        right.insert(path.to_path_buf(), entry.clone());
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -413,9 +413,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), left_entry);
-        right.insert(path.clone(), right_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), left_entry);
+        right.insert(path.to_path_buf(), right_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -441,9 +441,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), left_entry);
-        right.insert(path.clone(), right_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), left_entry);
+        right.insert(path.to_path_buf(), right_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -468,9 +468,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), modified_entry.clone());
-        right.insert(path.clone(), modified_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), modified_entry.clone());
+        right.insert(path.to_path_buf(), modified_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -496,9 +496,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), left_entry);
-        right.insert(path.clone(), right_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), left_entry);
+        right.insert(path.to_path_buf(), right_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -522,8 +522,8 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        left.insert(path.clone(), entry.clone());
-        right.insert(path.clone(), entry);
+        left.insert(path.to_path_buf(), entry.clone());
+        right.insert(path.to_path_buf(), entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -547,8 +547,8 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        left.insert(path.clone(), left_entry);
-        right.insert(path.clone(), right_entry);
+        left.insert(path.to_path_buf(), left_entry);
+        right.insert(path.to_path_buf(), right_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -576,8 +576,8 @@ mod tests {
         let mut left = HashMap::new();
         let right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), left_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), left_entry);
         // right doesn't have the file (deleted)
 
         let results = engine.merge(&base, &left, &right).unwrap();
@@ -604,9 +604,9 @@ mod tests {
         let mut left = HashMap::new();
         let mut right = HashMap::new();
 
-        base.insert(path.clone(), base_entry);
-        left.insert(path.clone(), left_entry);
-        right.insert(path.clone(), right_entry);
+        base.insert(path.to_path_buf(), base_entry);
+        left.insert(path.to_path_buf(), left_entry);
+        right.insert(path.to_path_buf(), right_entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -630,7 +630,7 @@ mod tests {
         let mut left = HashMap::new();
         let right = HashMap::new();
 
-        left.insert(path.clone(), entry);
+        left.insert(path.to_path_buf(), entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -651,7 +651,7 @@ mod tests {
         let left = HashMap::new();
         let mut right = HashMap::new();
 
-        right.insert(path.clone(), entry);
+        right.insert(path.to_path_buf(), entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 
@@ -672,7 +672,7 @@ mod tests {
         let left = HashMap::new();
         let right = HashMap::new();
 
-        base.insert(path.clone(), entry);
+        base.insert(path.to_path_buf(), entry);
 
         let results = engine.merge(&base, &left, &right).unwrap();
 

@@ -40,6 +40,11 @@ impl PatchSetHandle {
 /// Parse diff text and create a PatchSet handle.
 /// Returns 0 on success, -1 on error.
 /// On success, `*out` is set to the handle (caller must free with `rcompare_free_patchset`).
+///
+/// # Safety
+///
+/// - `input` must point to a valid byte buffer of at least `len` bytes.
+/// - `out` must point to a valid, writable `*mut PatchSetHandle` location.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_parse_diff(
     input: *const u8,
@@ -67,6 +72,11 @@ pub unsafe extern "C" fn rcompare_parse_diff(
 }
 
 /// Free a PatchSet handle and all cached strings.
+///
+/// # Safety
+///
+/// - `handle` must be a pointer returned by `rcompare_parse_diff`, or null.
+/// - Must not be called more than once for the same handle.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_free_patchset(handle: *mut PatchSetHandle) {
     if !handle.is_null() {
@@ -75,6 +85,11 @@ pub unsafe extern "C" fn rcompare_free_patchset(handle: *mut PatchSetHandle) {
 }
 
 /// Free a string allocated by `rcompare_serialize_diff`.
+///
+/// # Safety
+///
+/// - `s` must be a pointer returned by `rcompare_serialize_diff`, or null.
+/// - Must not be called more than once for the same string.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_free_string(s: *mut c_char) {
     if !s.is_null() {
@@ -84,6 +99,9 @@ pub unsafe extern "C" fn rcompare_free_string(s: *mut c_char) {
 
 // ===== PatchSet accessors =====
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_patchset_file_count(h: *const PatchSetHandle) -> usize {
     if h.is_null() {
@@ -92,6 +110,9 @@ pub unsafe extern "C" fn rcompare_patchset_file_count(h: *const PatchSetHandle) 
     (*h).patch_set.files.len()
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_patchset_format(h: *const PatchSetHandle) -> u32 {
     if h.is_null() {
@@ -100,6 +121,9 @@ pub unsafe extern "C" fn rcompare_patchset_format(h: *const PatchSetHandle) -> u
     (*h).patch_set.format as u32
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_patchset_generator(h: *const PatchSetHandle) -> u32 {
     if h.is_null() {
@@ -112,6 +136,9 @@ pub unsafe extern "C" fn rcompare_patchset_generator(h: *const PatchSetHandle) -
 
 macro_rules! fp_string_accessor {
     ($name:ident, $field:ident) => {
+        /// # Safety
+        ///
+        /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
         #[no_mangle]
         pub unsafe extern "C" fn $name(
             h: *mut PatchSetHandle,
@@ -136,6 +163,9 @@ fp_string_accessor!(rcompare_filepatch_dest_timestamp, dest_timestamp);
 fp_string_accessor!(rcompare_filepatch_source_revision, source_revision);
 fp_string_accessor!(rcompare_filepatch_dest_revision, dest_revision);
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_filepatch_hunk_count(
     h: *const PatchSetHandle,
@@ -151,6 +181,9 @@ pub unsafe extern "C" fn rcompare_filepatch_hunk_count(
     ps.files[idx].hunks.len()
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_filepatch_is_blended(
     h: *const PatchSetHandle,
@@ -168,6 +201,9 @@ pub unsafe extern "C" fn rcompare_filepatch_is_blended(
 
 // ===== Hunk accessors =====
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_source_start(
     h: *const PatchSetHandle,
@@ -177,6 +213,9 @@ pub unsafe extern "C" fn rcompare_hunk_source_start(
     get_hunk(h, fi, hi).map_or(0, |hk| hk.source_start)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_source_count(
     h: *const PatchSetHandle,
@@ -186,6 +225,9 @@ pub unsafe extern "C" fn rcompare_hunk_source_count(
     get_hunk(h, fi, hi).map_or(0, |hk| hk.source_count)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_dest_start(
     h: *const PatchSetHandle,
@@ -195,6 +237,9 @@ pub unsafe extern "C" fn rcompare_hunk_dest_start(
     get_hunk(h, fi, hi).map_or(0, |hk| hk.dest_start)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_dest_count(
     h: *const PatchSetHandle,
@@ -204,6 +249,9 @@ pub unsafe extern "C" fn rcompare_hunk_dest_count(
     get_hunk(h, fi, hi).map_or(0, |hk| hk.dest_count)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_function_name(
     h: *mut PatchSetHandle,
@@ -226,6 +274,9 @@ pub unsafe extern "C" fn rcompare_hunk_function_name(
     }
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_diff_count(
     h: *const PatchSetHandle,
@@ -235,6 +286,9 @@ pub unsafe extern "C" fn rcompare_hunk_diff_count(
     get_hunk(h, fi, hi).map_or(0, |hk| hk.differences.len())
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_hunk_type(
     h: *const PatchSetHandle,
@@ -249,6 +303,9 @@ pub unsafe extern "C" fn rcompare_hunk_type(
 
 // ===== Difference accessors =====
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_type(
     h: *const PatchSetHandle,
@@ -259,6 +316,9 @@ pub unsafe extern "C" fn rcompare_diff_type(
     get_diff(h, fi, hi, di).map_or(0, |d| d.diff_type as u32)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_source_line_no(
     h: *const PatchSetHandle,
@@ -269,6 +329,9 @@ pub unsafe extern "C" fn rcompare_diff_source_line_no(
     get_diff(h, fi, hi, di).map_or(0, |d| d.source_line_no)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_dest_line_no(
     h: *const PatchSetHandle,
@@ -279,6 +342,9 @@ pub unsafe extern "C" fn rcompare_diff_dest_line_no(
     get_diff(h, fi, hi, di).map_or(0, |d| d.dest_line_no)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_source_line_count(
     h: *const PatchSetHandle,
@@ -289,6 +355,9 @@ pub unsafe extern "C" fn rcompare_diff_source_line_count(
     get_diff(h, fi, hi, di).map_or(0, |d| d.source_line_count())
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_dest_line_count(
     h: *const PatchSetHandle,
@@ -299,6 +368,9 @@ pub unsafe extern "C" fn rcompare_diff_dest_line_count(
     get_diff(h, fi, hi, di).map_or(0, |d| d.dest_line_count())
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_source_line_at(
     h: *mut PatchSetHandle,
@@ -325,6 +397,9 @@ pub unsafe extern "C" fn rcompare_diff_source_line_at(
     }
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_dest_line_at(
     h: *mut PatchSetHandle,
@@ -351,6 +426,9 @@ pub unsafe extern "C" fn rcompare_diff_dest_line_at(
     }
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_applied(
     h: *const PatchSetHandle,
@@ -361,6 +439,9 @@ pub unsafe extern "C" fn rcompare_diff_applied(
     get_diff(h, fi, hi, di).map_or(0, |d| d.applied as i32)
 }
 
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_diff_conflict(
     h: *const PatchSetHandle,
@@ -375,6 +456,11 @@ pub unsafe extern "C" fn rcompare_diff_conflict(
 
 /// Blend original file content into a FilePatch.
 /// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// - `h` must be a valid handle from `rcompare_parse_diff`, or null.
+/// - `content` must point to a valid byte buffer of at least `len` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_blend_file(
     h: *mut PatchSetHandle,
@@ -401,6 +487,10 @@ pub unsafe extern "C" fn rcompare_blend_file(
 }
 
 /// Apply a single difference by flat index.
+///
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_apply_difference(
     h: *mut PatchSetHandle,
@@ -421,6 +511,10 @@ pub unsafe extern "C" fn rcompare_apply_difference(
 }
 
 /// Unapply a single difference by flat index.
+///
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_unapply_difference(
     h: *mut PatchSetHandle,
@@ -441,6 +535,10 @@ pub unsafe extern "C" fn rcompare_unapply_difference(
 }
 
 /// Apply all differences in a FilePatch.
+///
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_apply_all(
     h: *mut PatchSetHandle,
@@ -460,6 +558,10 @@ pub unsafe extern "C" fn rcompare_apply_all(
 }
 
 /// Unapply all differences in a FilePatch.
+///
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_unapply_all(
     h: *mut PatchSetHandle,
@@ -482,6 +584,10 @@ pub unsafe extern "C" fn rcompare_unapply_all(
 
 /// Serialize the PatchSet to unified diff text.
 /// Returns a newly allocated C string (caller must free with `rcompare_free_string`).
+///
+/// # Safety
+///
+/// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
 pub unsafe extern "C" fn rcompare_serialize_diff(
     h: *const PatchSetHandle,

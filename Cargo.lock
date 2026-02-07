@@ -6393,6 +6393,7 @@ dependencies = [
  "filetime",
  "flate2",
  "glob",
+ "hex",
  "ignore",
  "image",
  "jwalk",

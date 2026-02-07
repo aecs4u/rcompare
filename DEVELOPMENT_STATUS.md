@@ -15,7 +15,7 @@ Current implementation status of RCompare features and components.
 | Phase 1: Core Foundation | ✅ Complete | 100% |
 | Phase 2: Specialized Formats | ✅ Complete | 100% |
 | Phase 3: Patch System & FFI | ✅ Complete | 100% |
-| Phase 4: Advanced Features | 🚧 In Progress | 45% |
+| Phase 4: Advanced Features | 🚧 In Progress | 50% |
 | Phase 5: Reporting & Workflow | 📋 Planned | 0% |
 | Phase 6: Cloud & Remote | 📋 Planned | 30% |
 | Phase 7: AI & Integration | 🔮 Future | 0% |
@@ -184,7 +184,7 @@ Current implementation status of RCompare features and components.
 - [ ] JUnit XML (not started)
 - [ ] Diff statistics dashboard (not started)
 
-### 🚧 Advanced Workflows (33% Complete)
+### 🚧 Advanced Workflows (50% Complete)
 
 - [x] ✅ **Three-way merge** (core completed - Phase 4)
   - `MergeEngine` with conflict detection
@@ -197,8 +197,13 @@ Current implementation status of RCompare features and components.
   - BLAKE3 hash verification
   - Automatic retry logic (configurable)
   - Hash mismatch detection
+- [x] ✅ **Resumable copies** (completed - Phase 4)
+  - Checkpoint-based progress tracking with JSON
+  - Automatic resume from interruption
+  - BLAKE3 hash verification for partial files
+  - 4MB chunks, 100MB checkpoint intervals
+  - 5 comprehensive tests
 - [ ] Watch mode (not started)
-- [ ] Resumable copies (not started)
 - [ ] Comparison presets (not started)
 - [ ] .rcompare-ignore file (not started)
 
@@ -419,6 +424,7 @@ None currently reported.
 ## Next Milestones
 
 ### Recently Completed
+- ✅ Resumable copy operations (Phase 4) - Checkpoint-based large file transfers
 - ✅ Three-way merge core logic (Phase 4) - Conflict detection with auto-merge
 - ✅ Streaming large file comparison (Phase 4) - Constant memory for multi-GB files
 - ✅ Post-copy verification (Phase 4) - BLAKE3 hash with retry logic
@@ -454,7 +460,7 @@ Want to help? High-priority areas:
 1. **Three-way merge GUI** (core logic completed, UI integration needed)
 2. **Integration tests** (specialized formats coverage)
 3. **HTML report generation** (visual diff reports)
-4. **Resumable copy operations** (checkpoint-based file transfers)
+4. **Watch mode** (continuous monitoring of directory changes)
 5. **Documentation** (user guide, tutorials)
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

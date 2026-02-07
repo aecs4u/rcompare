@@ -102,10 +102,13 @@ fn run_cli(args: &[&str]) -> std::process::Output {
         .expect("Failed to execute command")
 }
 
-/// Helper to run CLI and expect success
+/// Helper to run CLI and expect it to complete without error.
+/// The CLI exits with code 0 (all identical) or 2 (differences found).
+/// Both are considered success; only non-{0,2} codes indicate errors.
 fn run_cli_success(args: &[&str]) -> std::process::Output {
     let output = run_cli(args);
-    if !output.status.success() {
+    let code = output.status.code().unwrap_or(-1);
+    if code != 0 && code != 2 {
         eprintln!("STDOUT:\n{}", String::from_utf8_lossy(&output.stdout));
         eprintln!("STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
         panic!("Command failed with status: {}", output.status);

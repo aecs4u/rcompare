@@ -21,7 +21,7 @@ specialized = ["csv-diff", "excel-diff", "json-diff", "parquet-diff", "image-dif
 # Individual specialized format features
 csv-diff = ["dep:csv"]
 excel-diff = ["dep:calamine"]
-json-diff = ["dep:serde_json", "dep:serde_yaml"]
+json-diff = ["dep:serde_yaml"]
 parquet-diff = ["dep:polars"]
 image-diff = ["dep:image", "dep:kamadak-exif"]
 
@@ -44,6 +44,7 @@ blake3.workspace = true
 # Serialization
 bincode.workspace = true
 toml.workspace = true
+hex.workspace = true
 
 # Diffing
 similar.workspace = true
@@ -61,8 +62,8 @@ csv = { workspace = true, optional = true }
 # Excel processing (optional - enabled with excel-diff feature)
 calamine = { workspace = true, optional = true }
 
-# JSON/YAML processing (optional - enabled with json-diff feature)
-serde_json = { workspace = true, optional = true }
+# JSON/YAML processing
+serde_json = { workspace = true }
 serde_yaml = { workspace = true, optional = true }
 
 # DataFrame/Parquet processing (optional - enabled with parquet-diff feature)

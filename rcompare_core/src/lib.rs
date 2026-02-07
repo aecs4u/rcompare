@@ -45,7 +45,7 @@
 //!
 //! // Process results
 //! for diff in &diffs {
-//!     println!("{:?}: {}", diff.status, diff.path.display());
+//!     println!("{:?}: {}", diff.status, diff.relative_path.display());
 //! }
 //! # Ok(())
 //! # }
@@ -56,34 +56,20 @@
 //! RCompare provides specialized diff engines for various file types:
 //!
 //! ```no_run
-//! use rcompare_core::{TextDiffEngine, ImageDiffEngine, CsvDiffEngine};
-//! use rcompare_common::{WhitespaceMode, ImageCompareMode, CsvCompareMode};
+//! use rcompare_core::TextDiffEngine;
+//! use rcompare_core::text_diff::{TextDiffConfig, WhitespaceMode};
 //! use std::path::Path;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Text comparison with syntax highlighting
-//! let text_engine = TextDiffEngine::new();
+//! let config = TextDiffConfig {
+//!     whitespace_mode: WhitespaceMode::IgnoreAll,
+//!     ..Default::default()
+//! };
+//! let text_engine = TextDiffEngine::with_config(config);
 //! let text_diff = text_engine.compare_files(
 //!     Path::new("left.rs"),
 //!     Path::new("right.rs"),
-//!     WhitespaceMode::IgnoreAll,
-//! )?;
-//!
-//! // Image comparison with pixel-level analysis
-//! let image_engine = ImageDiffEngine::new();
-//! let image_diff = image_engine.compare_files(
-//!     Path::new("left.png"),
-//!     Path::new("right.png"),
-//!     ImageCompareMode::PixelByPixel,
-//!     0.01, // 1% tolerance
-//! )?;
-//!
-//! // CSV structural comparison
-//! let csv_engine = CsvDiffEngine::new();
-//! let csv_diff = csv_engine.compare_files(
-//!     Path::new("data1.csv"),
-//!     Path::new("data2.csv"),
-//!     CsvCompareMode::StructuredWithHeader,
 //! )?;
 //! # Ok(())
 //! # }
@@ -95,9 +81,9 @@
 //!
 //! ```no_run
 //! use rcompare_core::{FolderScanner, ComparisonEngine};
-//! use rcompare_core::vfs::{ZipVfs, TarVfs};
+//! use rcompare_core::vfs::ZipVfs;
 //! use rcompare_core::HashCache;
-//! use rcompare_common::AppConfig;
+//! use rcompare_common::{AppConfig, Vfs};
 //! use std::path::Path;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,8 +92,8 @@
 //! let engine = ComparisonEngine::new(cache);
 //!
 //! // Compare ZIP archives
-//! let left_zip = ZipVfs::new(Path::new("left.zip"))?;
-//! let right_zip = ZipVfs::new(Path::new("right.zip"))?;
+//! let left_zip = ZipVfs::new(Path::new("left.zip").to_path_buf())?;
+//! let right_zip = ZipVfs::new(Path::new("right.zip").to_path_buf())?;
 //!
 //! let left_entries = scanner.scan_vfs(&left_zip, Path::new("/"))?;
 //! let right_entries = scanner.scan_vfs(&right_zip, Path::new("/"))?;
@@ -117,8 +103,8 @@
 //!     Path::new("/"),
 //!     left_entries,
 //!     right_entries,
-//!     Some(&left_zip),
-//!     Some(&right_zip),
+//!     Some(&left_zip as &dyn Vfs),
+//!     Some(&right_zip as &dyn Vfs),
 //! )?;
 //! # Ok(())
 //! # }
@@ -163,6 +149,7 @@ pub mod merge_engine;
 pub mod patch_engine;
 pub mod patch_parser;
 pub mod patch_serializer;
+pub mod resumable_copy;
 pub mod scanner;
 pub mod text_diff;
 pub mod vfs;
@@ -192,6 +179,7 @@ pub use merge_engine::MergeEngine;
 pub use patch_engine::PatchEngine;
 pub use patch_parser::PatchParser;
 pub use patch_serializer::PatchSerializer;
+pub use resumable_copy::{CopyCheckpoint, ResumableCopy, ResumableResult};
 pub use scanner::FolderScanner;
 pub use text_diff::TextDiffEngine;
 pub use vfs::LocalVfs;

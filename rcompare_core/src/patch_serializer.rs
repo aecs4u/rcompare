@@ -104,33 +104,33 @@ impl PatchSerializer {
             DifferenceType::Unchanged => {
                 for line in &diff.source_lines {
                     output.push(' ');
-                    output.push_str(&strip_trailing_newline(line));
+                    output.push_str(strip_trailing_newline(line));
                     output.push('\n');
                 }
             }
             DifferenceType::Change => {
                 for line in &diff.source_lines {
                     output.push('-');
-                    output.push_str(&strip_trailing_newline(line));
+                    output.push_str(strip_trailing_newline(line));
                     output.push('\n');
                 }
                 for line in &diff.dest_lines {
                     output.push('+');
-                    output.push_str(&strip_trailing_newline(line));
+                    output.push_str(strip_trailing_newline(line));
                     output.push('\n');
                 }
             }
             DifferenceType::Delete => {
                 for line in &diff.source_lines {
                     output.push('-');
-                    output.push_str(&strip_trailing_newline(line));
+                    output.push_str(strip_trailing_newline(line));
                     output.push('\n');
                 }
             }
             DifferenceType::Insert => {
                 for line in &diff.dest_lines {
                     output.push('+');
-                    output.push_str(&strip_trailing_newline(line));
+                    output.push_str(strip_trailing_newline(line));
                     output.push('\n');
                 }
             }
