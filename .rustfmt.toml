@@ -1,0 +1,30 @@
+# RustFmt Configuration for RCompare
+
+# Edition
+edition = "2021"
+
+# Formatting preferences
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+
+# Imports
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+# Code organization
+reorder_imports = true
+reorder_modules = true
+
+# Comments and documentation
+wrap_comments = true
+format_code_in_doc_comments = true
+normalize_comments = true
+normalize_doc_attributes = true
+
+# Misc
+use_small_heuristics = "Default"
+fn_single_line = false
+where_single_line = false
+force_explicit_abi = true

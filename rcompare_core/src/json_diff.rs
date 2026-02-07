@@ -1,7 +1,7 @@
 use rcompare_common::RCompareError;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use serde_yaml::Value as YamlValue;
+use serde_yml::Value as YamlValue;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -121,14 +121,14 @@ impl JsonDiffEngine {
             ))
         })?;
 
-        let left_yaml: YamlValue = serde_yaml::from_str(&left_content).map_err(|e| {
+        let left_yaml: YamlValue = serde_yml::from_str(&left_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Failed to parse left YAML: {}", e),
             ))
         })?;
 
-        let right_yaml: YamlValue = serde_yaml::from_str(&right_content).map_err(|e| {
+        let right_yaml: YamlValue = serde_yml::from_str(&right_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Failed to parse right YAML: {}", e),

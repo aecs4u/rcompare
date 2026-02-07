@@ -1,0 +1,14 @@
+# Clippy Configuration for RCompare
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Documentation
+missing-docs-in-crate-items = false
+
+# Allowed complex functions
+too-many-arguments-threshold = 8
+type-complexity-threshold = 500
+
+# Prefer specific lints
+avoid-breaking-exported-api = true
