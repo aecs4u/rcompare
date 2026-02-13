@@ -83,7 +83,7 @@ rayon = "1.10"
 crossbeam = "0.8"
 
 # Platform-specific paths
-directories = "5.0"
+directories = "6.0"
 
 # Trash
 trash = "5.0"
