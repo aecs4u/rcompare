@@ -154,9 +154,11 @@ class CliBridge:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=600,
         )
-        if result.returncode != 0:
+        # rcompare_cli uses exit code 2 when differences are found.
+        if result.returncode not in (0, 2):
+            details = result.stderr.strip() or "no stderr output"
             raise RuntimeError(
-                f"rcompare_cli failed (exit {result.returncode}): {result.stderr.strip()}"
+                f"rcompare_cli failed (exit {result.returncode}): {details}"
             )
 
         return self.parse_scan_report(result.stdout)
