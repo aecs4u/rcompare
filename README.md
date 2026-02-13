@@ -1,6 +1,6 @@
 # RCompare
 
-A high-performance file and directory comparison utility written in Rust, inspired by Beyond Compare and following the architectural patterns of Czkawka.
+A high-performance file and directory comparison toolkit with a Rust core, CLI, and two desktop frontends (Slint and PySide6), inspired by Beyond Compare and following architectural patterns similar to Czkawka.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
@@ -13,10 +13,11 @@ A high-performance file and directory comparison utility written in Rust, inspir
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
-- **CLI + GUI**: Console output, JSON output, and a Slint UI
+- **CLI + GUI frontends**: Console output, JSON output, Slint GUI (`rcompare_gui`), and PySide6 GUI (`rcompare_pyside`)
 - **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
 - **Copy operations**: GUI copy left/right operations for sync workflows
+- **Per-user persistence**: Last paths, filters, options, and session profile data in the PySide app
 
 ### Specialized File Comparisons
 - **Text files**: Line-by-line diff with syntax highlighting, whitespace handling (5 modes), case-insensitive comparison, regex rules
@@ -54,8 +55,13 @@ cargo build --release --no-default-features --features "archives,csv-diff"
 # Run CLI
 ./target/release/rcompare_cli scan /path/to/left /path/to/right
 
-# Run GUI
+# Run Slint GUI
 ./target/release/rcompare_gui
+
+# Run PySide GUI (Python >= 3.10)
+cd rcompare_pyside
+uv sync
+uv run python -m rcompare_pyside
 ```
 
 ### Feature Flags
@@ -229,27 +235,24 @@ Pixel-level comparison of image files:
 
 ## GUI Features
 
-The Slint-based GUI provides an intuitive interface for file comparison:
+RCompare currently ships two GUI frontends:
 
-### Core Features
-- **Auto-comparison**: Automatically compares folders when both are selected
-- **Last directory memory**: Browse dialogs remember your last location
-- **Responsive layout**: Adapts to different window sizes with min/max constraints
-- **Tree view**: Collapsible folder structure with expand/collapse all
-- **Multiple views**: Folder, text diff, hex diff, and image comparison views
-- **Filter controls**: Show/hide identical, different, left-only, and right-only files
-- **Search**: Real-time search within comparison results
+### Slint GUI (`rcompare_gui`)
+- Fast native Rust desktop UI with folder scan/compare workflows
+- Folder/text/hex/image views
+- Copy actions and filtering support
 
-### Comparison Views
-- **Text Diff**: Syntax-highlighted side-by-side comparison
-- **Hex Diff**: Byte-level binary comparison with offset display
-- **Image Diff**: Visual comparison with dimension and pixel difference stats
-
-### Operations
-- **Copy left→right / right→left**: File copy operations
-- **Profile management**: Save and load comparison sessions
-- **Settings**: Configure ignore patterns, symlink following, hash verification
-- **Sync dialog**: Bidirectional sync with dry-run support
+### PySide6 GUI (`rcompare_pyside`)
+- **Multi-session tabs** and persistent per-user state
+- **Folder view options**: compare structure, files-only, ignore structure, always-show-folders
+- **Diff option presets**: differences/orphans/newer-side focused views
+- **Multi-selection** in LH/RH trees with synchronized scrolling/expand state
+- **Rich right-click commands**: copy/move/delete/rename/touch/new-folder, attributes, exclude, synchronize
+- **File-type aware double-click**: opens/reuses text/image/hex compare tabs
+- **Synchronize Folders preview** with summary and planned operations
+- **Session Profiles dialog** and auto-save of last session profile on close
+- **KDE-style Options and Help dialogs**, plus startup splash with license viewer
+- **Logfire-integrated logging** with stdlib fallback
 
 ## Notes
 
@@ -268,6 +271,7 @@ rcompare/
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
 ├── rcompare_gui/         # Graphical interface (Slint)
+├── rcompare_pyside/      # Graphical interface (PySide6)
 └── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 
@@ -379,6 +383,12 @@ RCOMPARE_GUI_SMOKE_TEST=1 cargo test -p rcompare_gui
 
 # Headless CI (compile-only GUI test)
 cargo test -p rcompare_gui --test ui_compile
+
+# PySide GUI lint/smoke checks
+cd rcompare_pyside
+uv sync
+uv run ruff check rcompare_pyside
+QT_QPA_PLATFORM=offscreen uv run python -m rcompare_pyside
 ```
 
 ### Continuous Integration
@@ -402,6 +412,7 @@ See [CI Documentation](.github/workflows/README.md) for details.
 
 ### User Guides
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide and examples
+- [ROADMAP.md](ROADMAP.md) - Current roadmap and planned milestones
 
 ### Testing & CI/CD
 - [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (170+ tests)
@@ -417,8 +428,8 @@ See [CI Documentation](.github/workflows/README.md) for details.
 - Directory scanning and comparison
 - Hash caching with BLAKE3
 - CLI with colored output and progress bars with ETA
-- GUI with folder/text/hex/image views
-- GUI auto-comparison and last directory memory
+- Slint GUI with folder/text/hex/image views
+- PySide GUI with multi-tab sessions, profile persistence, sync preview, rich context commands
 - Archive comparison (zip, tar, tar.gz, tgz, 7z)
 - Copy left/right operations
 - VFS abstraction layer
@@ -435,7 +446,6 @@ See [CI Documentation](.github/workflows/README.md) for details.
 ### Planned 🔜
 - Three-way merge comparison
 - Database schema and data comparison
-- Delete/move operations
 - Remote sources in the UI (S3, SFTP, WebDAV)
 - Additional comparison profiles and presets
 
@@ -474,6 +484,8 @@ See [CI Documentation](.github/workflows/README.md) for details.
 ### GUI
 - **Slint 1.9** - Declarative UI framework
 - **native-dialog** - Native file dialogs
+- **PySide6** - Python desktop frontend
+- **logfire** - Structured application logging/telemetry backend
 
 ## Use Cases
 
@@ -615,31 +627,19 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for det
 - ✅ Documentation updated for API changes
 - ✅ Examples added/updated if relevant
 
-Contributions are welcome! Please feel free to submit pull requests or open issues.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
 ## Design Philosophy
 
 RCompare follows the Czkawka model:
 
 - **Memory Safety**: Written in safe Rust with minimal unsafe code
 - **Performance**: Zero-cost abstractions and parallel processing
-- **Privacy**: No telemetry, completely offline
+- **Privacy-first defaults**: Works offline; optional remote telemetry depends on explicit Logfire token/configuration
 - **Modularity**: Clean separation between core logic and UI
 
 ## License
 
-This project is licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+This repository currently includes the MIT license text in [LICENSE](LICENSE).
+The Cargo workspace metadata is `MIT OR Apache-2.0`.
 
 ## Acknowledgments
 

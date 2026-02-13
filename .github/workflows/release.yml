@@ -28,12 +28,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows
-          - os: macos-latest
+            arch: x86_64
+          - os: macos-13
             target: x86_64-apple-darwin
             platform: macos
+            arch: x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
 
     steps:
       - name: Checkout code
@@ -100,16 +111,16 @@ jobs:
           strip rcompare_cli rcompare_gui || true
 
           # Copy binaries with platform-specific names
-          cp rcompare_cli rcompare_cli-${{ matrix.platform }}-x86_64
-          cp rcompare_gui rcompare_gui-${{ matrix.platform }}-x86_64
+          cp rcompare_cli rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}
+          cp rcompare_gui rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}
 
           # Create combined archive
-          tar czf rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz rcompare_cli rcompare_gui
+          tar czf rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz rcompare_cli rcompare_gui
 
           # Move artifacts to workspace
-          mv rcompare_cli-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
-          mv rcompare_gui-${{ matrix.platform }}-x86_64 ${{ github.workspace }}/
-          mv rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.tar.gz ${{ github.workspace }}/
+          mv rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }} ${{ github.workspace }}/
+          mv rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }} ${{ github.workspace }}/
+          mv rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ${{ github.workspace }}/
 
       - name: Package binaries (Windows)
         if: runner.os == 'Windows'
@@ -118,16 +129,16 @@ jobs:
           cd target/${{ matrix.target }}/release
 
           # Copy binaries with platform-specific names
-          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-x86_64.exe
-          Copy-Item rcompare_gui.exe -Destination rcompare_gui-${{ matrix.platform }}-x86_64.exe
+          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}.exe
+          Copy-Item rcompare_gui.exe -Destination rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}.exe
 
           # Create combined archive
-          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip
+          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
 
           # Move artifacts to workspace
-          Move-Item rcompare_cli-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
-          Move-Item rcompare_gui-${{ matrix.platform }}-x86_64.exe -Destination ${{ github.workspace }}/
-          Move-Item rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.zip -Destination ${{ github.workspace }}/
+          Move-Item rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}.exe -Destination ${{ github.workspace }}/
+          Move-Item rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Destination ${{ github.workspace }}/
 
       - name: Create Release Notes
         id: release_notes
@@ -140,14 +151,18 @@ jobs:
 
           Download the appropriate binary for your platform below:
 
-          - **Linux**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
+          - **Linux x86_64**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
+          - **Linux arm64**: `rcompare_cli-linux-arm64`, `rcompare_gui-linux-arm64`
           - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
-          - **macOS**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
+          - **macOS x86_64**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
+          - **macOS arm64**: `rcompare_cli-macos-arm64`, `rcompare_gui-macos-arm64`
 
           Or download the combined archives:
           - `rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz`
+          - `rcompare-${{ steps.get_version.outputs.version }}-linux-arm64.tar.gz`
           - `rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip`
           - `rcompare-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz`
+          - `rcompare-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz`
 
           ### Installation
 
@@ -204,8 +219,8 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            rcompare_cli-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
-            rcompare_gui-${{ matrix.platform }}-x86_64${{ runner.os == 'Windows' && '.exe' || '' }}
-            rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-x86_64.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+            rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
