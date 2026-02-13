@@ -676,10 +676,6 @@ class MainWindow(QMainWindow):
         self._act_mode_files_only.triggered.connect(self._on_folder_view_options_changed)
         self._act_mode_ignore_structure.triggered.connect(self._on_folder_view_options_changed)
 
-        # Search helpers
-        self._act_search_focus.triggered.connect(self._on_focus_filter_search)
-        self._act_search_clear.triggered.connect(self._on_clear_filter_search)
-
         # 3-Way toggle
         self._tb_three_way.toggled.connect(self._on_three_way_toggled)
 
