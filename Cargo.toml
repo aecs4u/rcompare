@@ -51,7 +51,7 @@ syntect = "5.2"
 
 # Image processing
 image = "0.25"
-kamadak-exif = "0.5"
+kamadak-exif = "0.6"
 
 # CSV processing
 csv = "1.3"
