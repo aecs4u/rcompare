@@ -89,7 +89,8 @@ class DiffTextEdit(QPlainTextEdit):
     def paint_line_numbers(self, event: QPaintEvent) -> None:
         """Paint line numbers in the gutter area."""
         painter = QPainter(self._line_number_area)
-        painter.fillRect(event.rect(), QColor("#f0f0f0"))
+        # Use palette color instead of hardcoded #f0f0f0
+        painter.fillRect(event.rect(), self.palette().color(self.palette().ColorRole.AlternateBase))
 
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -101,7 +102,8 @@ class DiffTextEdit(QPlainTextEdit):
                 # Draw line background color if we have one
                 if block_number < len(self._line_colors):
                     bg = self._line_colors[block_number]
-                    if bg.isValid() and bg != QColor(Qt.white):
+                    # Compare against palette base color instead of hardcoded white
+                    if bg.isValid() and bg != self.palette().color(self.palette().ColorRole.Base):
                         painter.fillRect(
                             0, top,
                             self._line_number_area.width(),
@@ -116,7 +118,8 @@ class DiffTextEdit(QPlainTextEdit):
                     number = str(block_number + 1)
 
                 if number:
-                    painter.setPen(QColor("#808080"))
+                    # Use palette color instead of hardcoded #808080
+                    painter.setPen(self.palette().color(self.palette().ColorRole.Dark))
                     painter.drawText(
                         0, top,
                         self._line_number_area.width() - 4,
@@ -145,7 +148,8 @@ class DiffTextEdit(QPlainTextEdit):
                 height = round(self.blockBoundingRect(block).height())
                 if block_number < len(self._line_colors):
                     bg = self._line_colors[block_number]
-                    if bg.isValid() and bg != QColor(Qt.white):
+                    # Compare against palette base color instead of hardcoded white
+                    if bg.isValid() and bg != self.palette().color(self.palette().ColorRole.Base):
                         painter.fillRect(
                             0, top, self.viewport().width(), height, bg
                         )
