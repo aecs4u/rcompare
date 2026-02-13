@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect, QSize, Signal
-from PySide6.QtGui import QColor, QPainter, QTextFormat, QPaintEvent, QResizeEvent
+from PySide6.QtGui import QColor, QPainter, QTextFormat, QPaintEvent, QResizeEvent, QTextOption
 from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
 
 
@@ -32,7 +32,7 @@ class DiffTextEdit(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
-        self.setWordWrapMode(0)  # QTextOption.NoWrap
+        self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
 
         self._line_number_area = LineNumberArea(self)
