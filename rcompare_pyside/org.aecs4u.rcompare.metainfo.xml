@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.aecs4u.rcompare</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>RCompare</name>
+  <summary>Advanced file and directory comparison tool</summary>
+  
+  <description>
+    <p>
+      RCompare is a powerful file and directory comparison utility inspired by Beyond Compare,
+      built with Rust for high performance and a PySide6 frontend for a native KDE experience.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Folder comparison with detailed diff status</li>
+      <li>Text diff with syntax highlighting and side-by-side view</li>
+      <li>Hex comparison for binary files</li>
+      <li>Image comparison with pixel-level diff detection</li>
+      <li>CSV, Excel, JSON, YAML, and Parquet file comparison</li>
+      <li>Directory synchronization with preview</li>
+      <li>Profile management for reusable comparison configurations</li>
+      <li>Multi-tab workspace for concurrent comparisons</li>
+    </ul>
+  </description>
+  
+  <launchable type="desktop-id">org.aecs4u.rcompare.desktop</launchable>
+  
+  <screenshots>
+    <screenshot type="default">
+      <caption>Folder comparison view showing file differences</caption>
+      <image>https://raw.githubusercontent.com/aecs4u/rcompare/main/docs/Screenshot_20260126_171913.png</image>
+    </screenshot>
+  </screenshots>
+  
+  <url type="homepage">https://github.com/aecs4u/rcompare</url>
+  <url type="bugtracker">https://github.com/aecs4u/rcompare/issues</url>
+  <url type="help">https://github.com/aecs4u/rcompare/wiki</url>
+  <url type="vcs-browser">https://github.com/aecs4u/rcompare</url>
+  
+  <provides>
+    <binary>rcompare-gui</binary>
+  </provides>
+  
+  <releases>
+    <release version="0.1.2" date="2026-02-13">
+      <description>
+        <p>PySide6 GUI frontend and KDE compliance improvements</p>
+        <ul>
+          <li>New PySide6-based GUI with KDE-compliant menus and shortcuts</li>
+          <li>Extended CLI JSON output for all diff types</li>
+          <li>Menu restructure: File, Edit, View, Tools, Settings, Help</li>
+          <li>Standard KDE shortcuts: F1, F3, Ctrl+T, Ctrl+W, Ctrl+,</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-01-26">
+      <description>
+        <p>Initial PySide6 frontend release</p>
+      </description>
+    </release>
+  </releases>
+  
+  <content_rating type="oars-1.1" />
+  
+  <developer id="org.aecs4u">
+    <name>AECS4U</name>
+  </developer>
+  
+  <categories>
+    <category>Utility</category>
+    <category>FileManager</category>
+  </categories>
+  
+  <keywords>
+    <keyword>compare</keyword>
+    <keyword>diff</keyword>
+    <keyword>merge</keyword>
+    <keyword>synchronize</keyword>
+    <keyword>files</keyword>
+    <keyword>directories</keyword>
+  </keywords>
+</component>

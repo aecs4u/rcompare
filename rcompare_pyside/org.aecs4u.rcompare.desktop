@@ -1,0 +1,19 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=RCompare
+GenericName=File Comparison Tool
+Comment=Compare files and directories with advanced diff capabilities
+Icon=org.aecs4u.rcompare
+Exec=rcompare-gui %F
+Terminal=false
+Categories=Utility;FileTools;Qt;KDE;
+Keywords=compare;diff;merge;synchronize;files;directories;folders;
+MimeType=inode/directory;
+StartupNotify=true
+StartupWMClass=rcompare-gui
+Actions=CompareDirectories;
+
+[Desktop Action CompareDirectories]
+Name=Compare Two Directories
+Exec=rcompare-gui --compare %F
