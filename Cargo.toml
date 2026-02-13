@@ -102,7 +102,7 @@ aws-sdk-s3 = "1.119"
 aws-credential-types = "1.2"
 
 # Cloud storage - WebDAV and HTTP
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 bytes = "1.5"
 async-trait = "0.1"
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
