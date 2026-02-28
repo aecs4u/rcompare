@@ -12,6 +12,7 @@ export struct FileItem {
     depth: int,
     is-dir: bool,
     expanded: bool,
+    selected: bool,
 }
 
 export struct TextSegment {
@@ -193,6 +194,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-different: true;
     in-out property <bool> show-left-only: true;
     in-out property <bool> show-right-only: true;
+    in-out property <bool> show-files-only: false;
     in-out property <string> search-text: "";
 
     // Three-way comparison properties
@@ -865,6 +867,49 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                TouchArea {
+                    min-width: 54px;
+                    height: 18px;
+                    clicked => { show-files-only = !show-files-only; filter-changed(); }
+
+                    Rectangle {
+                        background: show-files-only ? #ffffff : transparent;
+                        border-width: 1px;
+                        border-color: show-files-only ? #6d96d6 : #c0c7d0;
+                        border-radius: 2px;
+
+                        HorizontalBox {
+                            padding: 4px;
+                            spacing: 2px;
+
+                            Rectangle {
+                                width: 12px;
+                                height: 12px;
+                                background: show-files-only ? #6d96d6 : #ffffff;
+                                border-width: 1px;
+                                border-color: #a0b0c0;
+
+                                if show-files-only: Text {
+                                    text: "✓";
+                                    color: #ffffff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: "Files";
+                                vertical-alignment: center;
+                                font-size: 9px;
+                                font-weight: 600;
+                                color: #3a4654;
+                            }
+                        }
+                    }
+                }
+
                 Text {
                     text: "Search:";
                     vertical-alignment: center;
@@ -973,7 +1018,7 @@ export component MainWindow inherits Window {
 
                                 Rectangle {
                                     height: 20px;
-                                    background: item.path == selected-path ? selected-bg
+                                    background: item.selected ? selected-bg
                                         : base-row.has-hover ? (
                                             item.status-code == 0 ? hover-same
                                             : item.status-code == 1 ? hover-diff
@@ -986,7 +1031,7 @@ export component MainWindow inherits Window {
                                         : item.status-code == 2 ? diff-left
                                         : item.status-code == 3 ? diff-right
                                         : diff-unknown;
-                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-width: item.selected ? 1px : 0px;
                                     border-color: selected-border;
 
                                     Rectangle {
@@ -1038,7 +1083,7 @@ export component MainWindow inherits Window {
                                             min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1047,7 +1092,7 @@ export component MainWindow inherits Window {
                                             width: 90px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1056,7 +1101,7 @@ export component MainWindow inherits Window {
                                             width: 140px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1065,7 +1110,7 @@ export component MainWindow inherits Window {
                                             width: 40px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
                                     }
@@ -1171,7 +1216,7 @@ export component MainWindow inherits Window {
 
                                 Rectangle {
                                     height: 20px;
-                                    background: item.path == selected-path ? selected-bg
+                                    background: item.selected ? selected-bg
                                         : left-row.has-hover ? (
                                             item.status-code == 0 ? hover-same
                                             : item.status-code == 1 ? hover-diff
@@ -1184,7 +1229,7 @@ export component MainWindow inherits Window {
                                         : item.status-code == 2 ? diff-left
                                         : item.status-code == 3 ? diff-right
                                         : diff-unknown;
-                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-width: item.selected ? 1px : 0px;
                                     border-color: selected-border;
 
                                     Rectangle {
@@ -1236,7 +1281,7 @@ export component MainWindow inherits Window {
                                             min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1245,7 +1290,7 @@ export component MainWindow inherits Window {
                                             width: 90px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1254,7 +1299,7 @@ export component MainWindow inherits Window {
                                             width: 140px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1263,7 +1308,7 @@ export component MainWindow inherits Window {
                                             width: 40px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
                                     }
@@ -1368,7 +1413,7 @@ export component MainWindow inherits Window {
 
                                 Rectangle {
                                     height: 20px;
-                                    background: item.path == selected-path ? selected-bg
+                                    background: item.selected ? selected-bg
                                         : right-row.has-hover ? (
                                             item.status-code == 0 ? hover-same
                                             : item.status-code == 1 ? hover-diff
@@ -1381,7 +1426,7 @@ export component MainWindow inherits Window {
                                         : item.status-code == 2 ? diff-left
                                         : item.status-code == 3 ? diff-right
                                         : diff-unknown;
-                                    border-width: item.path == selected-path ? 1px : 0px;
+                                    border-width: item.selected ? 1px : 0px;
                                     border-color: selected-border;
 
                                     Rectangle {
@@ -1433,7 +1478,7 @@ export component MainWindow inherits Window {
                                             min-width: 200px;
                                             horizontal-stretch: 1;
                                             overflow: elide;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1442,7 +1487,7 @@ export component MainWindow inherits Window {
                                             width: 90px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1451,7 +1496,7 @@ export component MainWindow inherits Window {
                                             width: 140px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
 
@@ -1460,7 +1505,7 @@ export component MainWindow inherits Window {
                                             width: 40px;
                                             vertical-alignment: center;
                                             horizontal-alignment: right;
-                                            color: item.path == selected-path ? selected-text : #000000;
+                                            color: item.selected ? selected-text : #000000;
                                             font-size: 11px;
                                         }
                                     }

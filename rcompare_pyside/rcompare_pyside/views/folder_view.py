@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QModelIndex
+from PySide6.QtCore import Qt, Signal, QModelIndex, QTimer
 from PySide6.QtGui import QColor, QPainter, QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
     QHBoxLayout,
     QMenu,
     QSplitter,
@@ -69,6 +70,8 @@ class FolderView(QWidget):
 
     # Emitted on double-click.  Arguments: (relative_path, is_directory)
     file_activated = Signal(str, bool)
+    # Emitted from context menu. Arguments: (command, relative_path, side)
+    context_command = Signal(str, str, str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -105,6 +108,7 @@ class FolderView(QWidget):
 
         # Connect synchronisation signals ------------------------------
         self._connect_sync()
+        self._has_persisted_widths = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,6 +117,9 @@ class FolderView(QWidget):
     def set_tree(self, root: TreeNode) -> None:
         """Replace the comparison data with a new tree."""
         self._source_model.set_tree(root)
+        if not self._has_persisted_widths:
+            # Defer column sizing until after model-reset/layout updates complete.
+            QTimer.singleShot(0, self._resize_visible_columns)
 
     def expand_all(self) -> None:
         """Expand every node in both trees."""
@@ -130,13 +137,33 @@ class FolderView(QWidget):
         show_different: bool,
         show_left_only: bool,
         show_right_only: bool,
+        show_files_only: bool = False,
         search_text: str = "",
+        diff_option_mode: Optional[str] = None,
     ) -> None:
         """Apply visibility and search filters."""
         self._proxy_model.set_filter_flags(
-            show_identical, show_different, show_left_only, show_right_only,
+            show_identical, show_different, show_left_only, show_right_only, show_files_only,
         )
+        if diff_option_mode is not None:
+            self._proxy_model.set_diff_option_mode(diff_option_mode)
         self._proxy_model.set_search_text(search_text)
+
+    def set_diff_option_mode(self, mode: str) -> None:
+        self._proxy_model.set_diff_option_mode(mode)
+
+    def selected_paths(self) -> list[str]:
+        """Return unique selected relative paths from both trees."""
+        paths: set[str] = set()
+        for tree in (self._left_tree, self._right_tree):
+            sel_model = tree.selectionModel()
+            if sel_model is None:
+                continue
+            for index in sel_model.selectedRows(COL_NAME):
+                node: Optional[TreeNode] = index.data(Qt.UserRole + 1)
+                if node is not None and node.path:
+                    paths.add(node.path)
+        return sorted(paths)
 
     @property
     def left_tree(self) -> QTreeView:
@@ -154,6 +181,37 @@ class FolderView(QWidget):
     def proxy_model(self) -> ComparisonFilterProxy:
         return self._proxy_model
 
+    def column_widths(self) -> dict[str, int]:
+        """Return current visible column widths for persistence."""
+        return {
+            "left_name": self._left_tree.columnWidth(COL_NAME),
+            "left_size": self._left_tree.columnWidth(COL_LEFT_SIZE),
+            "left_date": self._left_tree.columnWidth(COL_LEFT_DATE),
+            "right_name": self._right_tree.columnWidth(COL_NAME),
+            "right_size": self._right_tree.columnWidth(COL_RIGHT_SIZE),
+            "right_date": self._right_tree.columnWidth(COL_RIGHT_DATE),
+        }
+
+    def set_column_widths(self, widths: dict[str, int]) -> None:
+        """Apply persisted column widths for both trees."""
+        applied = False
+
+        def _set(tree: QTreeView, column: int, value: object) -> None:
+            nonlocal applied
+            if isinstance(value, int) and value > 0:
+                tree.setColumnWidth(column, value)
+                applied = True
+
+        _set(self._left_tree, COL_NAME, widths.get("left_name"))
+        _set(self._left_tree, COL_LEFT_SIZE, widths.get("left_size"))
+        _set(self._left_tree, COL_LEFT_DATE, widths.get("left_date"))
+        _set(self._right_tree, COL_NAME, widths.get("right_name"))
+        _set(self._right_tree, COL_RIGHT_SIZE, widths.get("right_size"))
+        _set(self._right_tree, COL_RIGHT_DATE, widths.get("right_date"))
+
+        if applied:
+            self._has_persisted_widths = True
+
     # ------------------------------------------------------------------
     # Tree construction helpers
     # ------------------------------------------------------------------
@@ -165,10 +223,14 @@ class FolderView(QWidget):
         tree.setItemDelegate(self._delegate)
 
         tree.setAlternatingRowColors(False)
-        tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         tree.setUniformRowHeights(True)
         tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        header = tree.header()
+        if header is not None:
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
         tree.customContextMenuRequested.connect(self._on_context_menu)
         tree.doubleClicked.connect(self._on_double_click)
@@ -186,6 +248,22 @@ class FolderView(QWidget):
         self._right_tree.setColumnHidden(COL_LEFT_SIZE, True)
         self._right_tree.setColumnHidden(COL_LEFT_DATE, True)
         self._right_tree.setColumnHidden(COL_STATUS, True)
+
+    def _resize_visible_columns(self) -> None:
+        """Auto-size visible columns for both LH/RH trees after loading data."""
+        self._resize_tree_columns(self._left_tree, (COL_NAME, COL_LEFT_SIZE, COL_LEFT_DATE))
+        self._resize_tree_columns(self._right_tree, (COL_NAME, COL_RIGHT_SIZE, COL_RIGHT_DATE))
+
+    def _resize_tree_columns(self, tree: QTreeView, columns: tuple[int, ...]) -> None:
+        for col in columns:
+            tree.resizeColumnToContents(col)
+
+        # Keep the name column practical for browsing deep paths.
+        name_width = tree.columnWidth(COL_NAME)
+        if name_width < 240:
+            tree.setColumnWidth(COL_NAME, 240)
+        elif name_width > 720:
+            tree.setColumnWidth(COL_NAME, 720)
 
     # ------------------------------------------------------------------
     # Synchronisation
@@ -289,24 +367,107 @@ class FolderView(QWidget):
         if node is None:
             return
 
+        side = "left" if tree is self._left_tree else "right"
+
         menu = QMenu(self)
 
-        copy_left_to_right = QAction("Copy Left to Right", menu)
-        copy_left_to_right.setData(("copy_lr", node.path))
-        menu.addAction(copy_left_to_right)
+        def _add_action(
+            parent_menu: QMenu,
+            text: str,
+            command: str,
+            *,
+            shortcut: Optional[str] = None,
+            enabled: bool = True,
+            checkable: bool = False,
+            checked: bool = False,
+        ) -> QAction:
+            action = QAction(text, parent_menu)
+            action.setData((command, node.path))
+            action.setEnabled(enabled)
+            action.setCheckable(checkable)
+            if checkable:
+                action.setChecked(checked)
+            if shortcut:
+                action.setShortcut(shortcut)
+                action.setShortcutVisibleInContextMenu(True)
+            parent_menu.addAction(action)
+            return action
 
-        copy_right_to_left = QAction("Copy Right to Left", menu)
-        copy_right_to_left.setData(("copy_rl", node.path))
-        menu.addAction(copy_right_to_left)
-
+        _add_action(menu, "Close Folder", "close_folder", enabled=node.is_dir)
+        _add_action(menu, "Open Subfolders", "open_subfolders", enabled=node.is_dir)
+        _add_action(menu, "Close Subfolders", "close_subfolders", enabled=node.is_dir)
         menu.addSeparator()
 
-        open_external = QAction("Open in External Editor", menu)
-        open_external.setData(("open_ext", node.path))
-        menu.addAction(open_external)
+        _add_action(menu, "Set as Base Folder", "set_base_folder")
+        _add_action(menu, "Set as Base on Other Side", "set_base_other")
+        _add_action(menu, "Open in New View", "open_new_view", enabled=not node.is_dir)
+
+        open_with_menu = menu.addMenu("Open With")
+        _add_action(open_with_menu, "Open in External Editor", "open_ext")
+
+        _add_action(
+            menu,
+            "Compare Contents...",
+            "compare_contents",
+            shortcut="F7",
+            enabled=not node.is_dir,
+        )
+        _add_action(menu, "Align With...", "align_with", shortcut="F6")
+        menu.addSeparator()
+
+        _add_action(menu, "Copy Left to Right", "copy_lr")
+        _add_action(menu, "Copy Right to Left", "copy_rl")
+        _add_action(menu, "Copy to Folder...", "copy_to_folder")
+        _add_action(menu, "Move to Folder...", "move_to_folder")
+        _add_action(menu, "Delete...", "delete_item")
+        _add_action(menu, "Rename", "rename_item", shortcut="F2")
+        _add_action(menu, "Attributes...", "attributes")
+        _add_action(menu, "Touch...", "touch_item")
+        _add_action(menu, "Exclude", "exclude_item")
+        _add_action(menu, "New Folder...", "new_folder", shortcut="Ins")
+        _add_action(menu, "Copy Filename", "copy_filename")
+        _add_action(menu, "Ignored", "ignored_toggle", checkable=True, checked=False)
+        _add_action(menu, "Refresh Selection", "refresh_selection", shortcut="Shift+F5")
+
+        menu.addSeparator()
+        sync_menu = menu.addMenu("Synchronize")
+        _add_action(sync_menu, "Open Synchronize Dialog", "sync_dialog")
 
         action = menu.exec(tree.viewport().mapToGlobal(pos))
-        if action is not None:
-            # The actual handling of these actions is left to whoever
-            # connects to a higher-level signal or overrides this method.
-            pass
+        if action is None:
+            return
+
+        payload = action.data()
+        if (
+            isinstance(payload, tuple)
+            and len(payload) == 2
+            and isinstance(payload[0], str)
+            and isinstance(payload[1], str)
+        ):
+            command = payload[0]
+            if command == "close_folder":
+                tree.collapse(index)
+                return
+            if command == "open_subfolders":
+                tree.expandRecursively(index)
+                return
+            if command == "close_subfolders":
+                self._collapse_subfolders(tree, index)
+                return
+            self.context_command.emit(payload[0], payload[1], side)
+
+    def _collapse_subfolders(self, tree: QTreeView, root_index: QModelIndex) -> None:
+        """Recursively collapse all descendants and then the root index."""
+        model = tree.model()
+        if model is None:
+            return
+
+        def _walk(idx: QModelIndex) -> None:
+            child_count = model.rowCount(idx)
+            for row in range(child_count):
+                child = model.index(row, 0, idx)
+                if child.isValid():
+                    _walk(child)
+            tree.collapse(idx)
+
+        _walk(root_index)

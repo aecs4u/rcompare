@@ -1,18 +1,12 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError};
 use regex::Regex;
 use std::sync::LazyLock;
 
 // RCS add command: aN M — add M lines after line N
-static RCS_ADD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^a(\d+)\s+(\d+)$").unwrap()
-});
+static RCS_ADD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^a(\d+)\s+(\d+)$").unwrap());
 
 // RCS delete command: dN M — delete M lines starting at line N
-static RCS_DELETE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^d(\d+)\s+(\d+)$").unwrap()
-});
+static RCS_DELETE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^d(\d+)\s+(\d+)$").unwrap());
 
 /// Parse RCS diff format into a list of FilePatches.
 ///
@@ -30,11 +24,7 @@ pub fn parse_rcs(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
             i += 1;
 
-            let mut diff = PatchDifference::new(
-                DifferenceType::Insert,
-                after_line,
-                after_line + 1,
-            );
+            let mut diff = PatchDifference::new(DifferenceType::Insert, after_line, after_line + 1);
             for _ in 0..count {
                 if i < lines.len() {
                     diff.dest_lines.push(format!("{}\n", lines[i]));
@@ -53,8 +43,7 @@ pub fn parse_rcs(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
             i += 1;
 
-            let mut diff =
-                PatchDifference::new(DifferenceType::Delete, start_line, start_line);
+            let mut diff = PatchDifference::new(DifferenceType::Delete, start_line, start_line);
             // RCS delete has no content lines — we add empty placeholders
             for _ in 0..count {
                 diff.source_lines.push(String::new());
@@ -117,8 +106,14 @@ new line";
         let lines: Vec<&str> = input.lines().collect();
         let result = parse_rcs(&lines).unwrap();
         assert_eq!(result[0].hunks.len(), 2);
-        assert_eq!(result[0].hunks[0].differences[0].diff_type, DifferenceType::Delete);
-        assert_eq!(result[0].hunks[1].differences[0].diff_type, DifferenceType::Insert);
+        assert_eq!(
+            result[0].hunks[0].differences[0].diff_type,
+            DifferenceType::Delete
+        );
+        assert_eq!(
+            result[0].hunks[1].differences[0].diff_type,
+            DifferenceType::Insert
+        );
     }
 
     #[test]

@@ -254,6 +254,25 @@ RCompare currently ships two GUI frontends:
 - **KDE-style Options and Help dialogs**, plus startup splash with license viewer
 - **Logfire-integrated logging** with stdlib fallback
 
+## Screenshots
+
+### Main Folder Compare
+![PySide main folder compare](docs/screenshots/pyside_main_folder.png)
+
+### Text, Hex, and Image Compare Views
+![PySide text compare view](docs/screenshots/pyside_text_compare.png)
+![PySide hex compare view](docs/screenshots/pyside_hex_compare.png)
+![PySide image compare view](docs/screenshots/pyside_image_compare.png)
+
+### Sync, Profiles, and Options Dialogs
+![PySide synchronize folders dialog](docs/screenshots/pyside_sync_dialog.png)
+![PySide profiles dialog](docs/screenshots/pyside_profiles_dialog.png)
+![PySide options dialog](docs/screenshots/pyside_options_dialog.png)
+
+### Help and Splash
+![PySide help dialog](docs/screenshots/pyside_help_dialog.png)
+![PySide splash dialog](docs/screenshots/pyside_splash.png)
+
 ## Notes
 
 - Archive comparisons are read-only; text/hex views are only available for local file pairs
@@ -404,6 +423,9 @@ RCompare uses GitHub Actions for automated testing:
 See [CI Documentation](.github/workflows/README.md) for details.
 
 ## Documentation
+
+Documentation is consolidated in:
+- [Documentation Hub](docs/README.md) - Single entrypoint to all Markdown docs
 
 ### Architecture & Design
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture specification

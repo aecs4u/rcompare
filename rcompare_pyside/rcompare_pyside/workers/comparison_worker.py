@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QProcess, Signal
 from ..utils.cli_bridge import CliBridge, ScanReport
+from ..utils.telemetry import log_error, log_exception, log_info
 
 
 class ComparisonWorker(QObject):
@@ -73,12 +74,18 @@ class ComparisonWorker(QObject):
 
         cmd = self._cli_bridge.build_command(args)
         self._stderr_buffer = ""
+        log_info(
+            "starting async scan process",
+            command=cmd[0] if cmd else "",
+            args=cmd[1:] if len(cmd) > 1 else [],
+        )
         self.progress.emit("Starting comparison...")
         self._process.start(cmd[0], cmd[1:])
 
     def cancel(self) -> None:
         """Cancel a running comparison."""
         if self._process.state() != QProcess.NotRunning:
+            log_info("cancelling comparison process")
             self._process.kill()
 
     def is_running(self) -> bool:
@@ -92,6 +99,7 @@ class ComparisonWorker(QObject):
         stderr = self._stderr_buffer.strip()
 
         if exit_status == QProcess.CrashExit:
+            log_error("comparison process crashed")
             self.error.emit("Comparison process crashed")
             return
 
@@ -100,13 +108,21 @@ class ComparisonWorker(QObject):
         #   2 => differences found (successful comparison)
         if exit_code not in (0, 2):
             details = stderr or "no stderr output"
+            log_error("comparison process failed", exit_code=exit_code, details=details)
             self.error.emit(f"Comparison failed (exit {exit_code}): {details}")
             return
 
         try:
             report = self._cli_bridge.parse_scan_report(stdout)
+            log_info(
+                "comparison process completed",
+                exit_code=exit_code,
+                entries=len(report.entries),
+                different=report.summary.different,
+            )
             self.finished.emit(report)
         except Exception as e:
+            log_exception("failed to parse comparison result")
             self.error.emit(f"Failed to parse results: {e}")
 
     def _on_stderr(self) -> None:

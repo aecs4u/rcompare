@@ -223,11 +223,7 @@ pub struct PatchDifference {
 }
 
 impl PatchDifference {
-    pub fn new(
-        diff_type: DifferenceType,
-        source_line_no: usize,
-        dest_line_no: usize,
-    ) -> Self {
+    pub fn new(diff_type: DifferenceType, source_line_no: usize, dest_line_no: usize) -> Self {
         Self {
             diff_type,
             source_line_no,
@@ -268,10 +264,14 @@ mod tests {
     fn test_file_patch_difference_count() {
         let mut fp = FilePatch::new();
         let mut hunk = Hunk::new(1, 1);
-        hunk.differences.push(PatchDifference::new(DifferenceType::Unchanged, 1, 1));
-        hunk.differences.push(PatchDifference::new(DifferenceType::Change, 2, 2));
-        hunk.differences.push(PatchDifference::new(DifferenceType::Insert, 0, 3));
-        hunk.differences.push(PatchDifference::new(DifferenceType::Unchanged, 3, 4));
+        hunk.differences
+            .push(PatchDifference::new(DifferenceType::Unchanged, 1, 1));
+        hunk.differences
+            .push(PatchDifference::new(DifferenceType::Change, 2, 2));
+        hunk.differences
+            .push(PatchDifference::new(DifferenceType::Insert, 0, 3));
+        hunk.differences
+            .push(PatchDifference::new(DifferenceType::Unchanged, 3, 4));
         fp.hunks.push(hunk);
         assert_eq!(fp.difference_count(), 2); // Change + Insert, not Unchanged
     }

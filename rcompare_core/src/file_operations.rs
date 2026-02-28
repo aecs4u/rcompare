@@ -52,7 +52,12 @@ impl FileOperations {
         }
     }
 
-    pub fn with_verification(dry_run: bool, use_trash: bool, verify: bool, max_retries: u32) -> Self {
+    pub fn with_verification(
+        dry_run: bool,
+        use_trash: bool,
+        verify: bool,
+        max_retries: u32,
+    ) -> Self {
         Self {
             dry_run,
             use_trash,
@@ -128,13 +133,21 @@ impl FileOperations {
 
         // Retry loop for copy with verification
         loop {
-            debug!("Copying {} to {} (attempt {})", source.display(), dest.display(), retries + 1);
+            debug!(
+                "Copying {} to {} (attempt {})",
+                source.display(),
+                dest.display(),
+                retries + 1
+            );
             bytes = fs::copy(source, dest)?;
 
             // Preserve timestamps
             if let Ok(metadata) = fs::metadata(source) {
                 if let Ok(modified) = metadata.modified() {
-                    let _ = filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
+                    let _ = filetime::set_file_mtime(
+                        dest,
+                        filetime::FileTime::from_system_time(modified),
+                    );
                 }
             }
 
@@ -178,7 +191,9 @@ impl FileOperations {
                             success: false,
                             error: Some(format!(
                                 "Hash mismatch after {} retries (source: {:?}, dest: {:?})",
-                                retries, source_hash, Some(dest_hash)
+                                retries,
+                                source_hash,
+                                Some(dest_hash)
                             )),
                             bytes_processed: bytes,
                             source_hash,
@@ -560,7 +575,10 @@ mod tests {
 
         assert!(result.success);
         assert!(dest.exists());
-        assert_eq!(fs::read_to_string(&dest).unwrap(), "test content for verification");
+        assert_eq!(
+            fs::read_to_string(&dest).unwrap(),
+            "test content for verification"
+        );
         assert!(result.verified);
         assert!(result.source_hash.is_some());
         assert!(result.dest_hash.is_some());

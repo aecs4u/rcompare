@@ -140,10 +140,7 @@ macro_rules! fp_string_accessor {
         ///
         /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
         #[no_mangle]
-        pub unsafe extern "C" fn $name(
-            h: *mut PatchSetHandle,
-            idx: usize,
-        ) -> *const c_char {
+        pub unsafe extern "C" fn $name(h: *mut PatchSetHandle, idx: usize) -> *const c_char {
             if h.is_null() {
                 return ptr::null();
             }
@@ -290,11 +287,7 @@ pub unsafe extern "C" fn rcompare_hunk_diff_count(
 ///
 /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
-pub unsafe extern "C" fn rcompare_hunk_type(
-    h: *const PatchSetHandle,
-    fi: usize,
-    hi: usize,
-) -> u32 {
+pub unsafe extern "C" fn rcompare_hunk_type(h: *const PatchSetHandle, fi: usize, hi: usize) -> u32 {
     get_hunk(h, fi, hi).map_or(0, |hk| match hk.hunk_type {
         HunkType::Normal => 0,
         HunkType::AddedByBlend => 1,
@@ -540,10 +533,7 @@ pub unsafe extern "C" fn rcompare_unapply_difference(
 ///
 /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
-pub unsafe extern "C" fn rcompare_apply_all(
-    h: *mut PatchSetHandle,
-    fi: usize,
-) -> i32 {
+pub unsafe extern "C" fn rcompare_apply_all(h: *mut PatchSetHandle, fi: usize) -> i32 {
     if h.is_null() {
         return -1;
     }
@@ -563,10 +553,7 @@ pub unsafe extern "C" fn rcompare_apply_all(
 ///
 /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
-pub unsafe extern "C" fn rcompare_unapply_all(
-    h: *mut PatchSetHandle,
-    fi: usize,
-) -> i32 {
+pub unsafe extern "C" fn rcompare_unapply_all(h: *mut PatchSetHandle, fi: usize) -> i32 {
     if h.is_null() {
         return -1;
     }
@@ -589,9 +576,7 @@ pub unsafe extern "C" fn rcompare_unapply_all(
 ///
 /// `h` must be a valid handle from `rcompare_parse_diff`, or null.
 #[no_mangle]
-pub unsafe extern "C" fn rcompare_serialize_diff(
-    h: *const PatchSetHandle,
-) -> *mut c_char {
+pub unsafe extern "C" fn rcompare_serialize_diff(h: *const PatchSetHandle) -> *mut c_char {
     if h.is_null() {
         return ptr::null_mut();
     }
@@ -612,6 +597,7 @@ unsafe fn get_hunk<'a>(
     if h.is_null() {
         return None;
     }
+    #[allow(clippy::needless_borrow)]
     (&(*h).patch_set.files).get(fi)?.hunks.get(hi)
 }
 
@@ -686,7 +672,8 @@ mod tests {
     #[test]
     fn test_parse_null_output() {
         unsafe {
-            let result = rcompare_parse_diff(SAMPLE_DIFF.as_ptr(), SAMPLE_DIFF.len(), ptr::null_mut());
+            let result =
+                rcompare_parse_diff(SAMPLE_DIFF.as_ptr(), SAMPLE_DIFF.len(), ptr::null_mut());
             assert_eq!(result, -1, "Should return error for null output pointer");
         }
     }
@@ -712,11 +699,8 @@ mod tests {
             // Test with truly malformed diff structure (incomplete header)
             let malformed = "--- a/file.txt\n+++ b/file.txt\n@@ invalid hunk header";
             let mut handle: *mut PatchSetHandle = ptr::null_mut();
-            let result = rcompare_parse_diff(
-                malformed.as_ptr(),
-                malformed.len(),
-                &mut handle as *mut _,
-            );
+            let result =
+                rcompare_parse_diff(malformed.as_ptr(), malformed.len(), &mut handle as *mut _);
             // Parser may be lenient and return empty patchset (success)
             // or may fail - both are acceptable behaviors
             if result == 0 {
@@ -756,7 +740,10 @@ mod tests {
 
             assert_eq!(rcompare_patchset_file_count(handle), 1);
             assert_ne!(rcompare_patchset_format(handle), DiffFormat::Unknown as u32);
-            assert_ne!(rcompare_patchset_generator(handle), DiffGenerator::Unknown as u32);
+            assert_ne!(
+                rcompare_patchset_generator(handle),
+                DiffGenerator::Unknown as u32
+            );
 
             rcompare_free_patchset(handle);
         }
@@ -766,8 +753,14 @@ mod tests {
     fn test_patchset_accessors_null_handle() {
         unsafe {
             assert_eq!(rcompare_patchset_file_count(ptr::null()), 0);
-            assert_eq!(rcompare_patchset_format(ptr::null()), DiffFormat::Unknown as u32);
-            assert_eq!(rcompare_patchset_generator(ptr::null()), DiffGenerator::Unknown as u32);
+            assert_eq!(
+                rcompare_patchset_format(ptr::null()),
+                DiffFormat::Unknown as u32
+            );
+            assert_eq!(
+                rcompare_patchset_generator(ptr::null()),
+                DiffGenerator::Unknown as u32
+            );
         }
     }
 
@@ -972,7 +965,10 @@ mod tests {
 
             // Test first difference
             let diff_type = rcompare_diff_type(handle, 0, 0, 0);
-            assert!(diff_type <= 2, "Diff type should be 0=Unchanged, 1=Insert, 2=Delete");
+            assert!(
+                diff_type <= 2,
+                "Diff type should be 0=Unchanged, 1=Insert, 2=Delete"
+            );
 
             let _source_line_no = rcompare_diff_source_line_no(handle, 0, 0, 0);
             let _dest_line_no = rcompare_diff_dest_line_no(handle, 0, 0, 0);
@@ -1065,15 +1061,15 @@ mod tests {
             );
 
             let original_content = "line1\nline2\nline3\n";
-            let result = rcompare_blend_file(
-                handle,
-                0,
-                original_content.as_ptr(),
-                original_content.len(),
-            );
+            let result =
+                rcompare_blend_file(handle, 0, original_content.as_ptr(), original_content.len());
 
             assert_eq!(result, 0, "Blend should succeed");
-            assert_eq!(rcompare_filepatch_is_blended(handle, 0), 1, "Should be marked as blended");
+            assert_eq!(
+                rcompare_filepatch_is_blended(handle, 0),
+                1,
+                "Should be marked as blended"
+            );
 
             rcompare_free_patchset(handle);
         }

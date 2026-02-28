@@ -218,7 +218,9 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         self._show_different: bool = True
         self._show_left_only: bool = True
         self._show_right_only: bool = True
+        self._show_files_only: bool = False
         self._search_text: str = ""
+        self._diff_option_mode: str = "show_differences"
 
     # ------------------------------------------------------------------
     # Public API
@@ -230,17 +232,24 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         show_different: bool,
         show_left_only: bool,
         show_right_only: bool,
+        show_files_only: bool = False,
     ) -> None:
         """Update which DiffStatus values are visible."""
         self._show_identical = show_identical
         self._show_different = show_different
         self._show_left_only = show_left_only
         self._show_right_only = show_right_only
+        self._show_files_only = show_files_only
         self.invalidateFilter()
 
     def set_search_text(self, text: str) -> None:
         """Update the name search filter."""
         self._search_text = text.strip().lower()
+        self.invalidateFilter()
+
+    def set_diff_option_mode(self, mode: str) -> None:
+        """Update the high-level diff option mode."""
+        self._diff_option_mode = (mode or "show_differences").strip().lower()
         self.invalidateFilter()
 
     # ------------------------------------------------------------------
@@ -257,7 +266,13 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         if node is None:
             return True
 
-        # For directory nodes, accept if any descendant passes the filter
+        # Files-only mode hides directory rows themselves but keeps
+        # directories that have accepted descendants so matching files
+        # remain reachable in the tree.
+        if node.is_dir and self._show_files_only:
+            return self._any_descendant_accepted(node)
+
+        # For directory nodes, accept if they match directly or any descendant passes
         if node.is_dir and node.children:
             if self._accepts_node(node):
                 return True
@@ -267,6 +282,9 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
 
     def _accepts_node(self, node: TreeNode) -> bool:
         """Check if a single node passes the status and search filters."""
+        if self._show_files_only and node.is_dir:
+            return False
+
         # Status filter
         status = node.status
         if status == DiffStatus.SAME and not self._show_identical:
@@ -278,10 +296,58 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         if status == DiffStatus.ORPHAN_RIGHT and not self._show_right_only:
             return False
 
+        if not self._accepts_diff_option_mode(node):
+            return False
+
         # Search text filter
         if self._search_text and self._search_text not in node.name.lower():
             return False
 
+        return True
+
+    def _accepts_diff_option_mode(self, node: TreeNode) -> bool:
+        mode = self._diff_option_mode
+        status = node.status
+
+        def left_newer() -> bool:
+            return (
+                node.left_modified is not None
+                and node.right_modified is not None
+                and node.left_modified > node.right_modified
+            )
+
+        def right_newer() -> bool:
+            return (
+                node.left_modified is not None
+                and node.right_modified is not None
+                and node.right_modified > node.left_modified
+            )
+
+        if mode == "show_differences":
+            return status in {
+                DiffStatus.DIFFERENT,
+                DiffStatus.ORPHAN_LEFT,
+                DiffStatus.ORPHAN_RIGHT,
+                DiffStatus.UNCHECKED,
+            }
+        if mode == "show_no_orphans":
+            return status not in {DiffStatus.ORPHAN_LEFT, DiffStatus.ORPHAN_RIGHT}
+        if mode == "show_differences_no_orphans":
+            return status in {DiffStatus.DIFFERENT, DiffStatus.UNCHECKED}
+        if mode == "show_orphans":
+            return status in {DiffStatus.ORPHAN_LEFT, DiffStatus.ORPHAN_RIGHT}
+        if mode == "show_left_newer":
+            return left_newer()
+        if mode == "show_right_newer":
+            return right_newer()
+        if mode == "show_left_newer_left_orphans":
+            return left_newer() or status == DiffStatus.ORPHAN_LEFT
+        if mode == "show_right_newer_right_orphans":
+            return right_newer() or status == DiffStatus.ORPHAN_RIGHT
+        if mode == "show_left_orphans":
+            return status == DiffStatus.ORPHAN_LEFT
+        if mode == "show_right_orphans":
+            return status == DiffStatus.ORPHAN_RIGHT
         return True
 
     def _any_descendant_accepted(self, node: TreeNode) -> bool:

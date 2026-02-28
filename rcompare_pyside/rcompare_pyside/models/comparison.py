@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Optional
+from typing import Iterable, Optional
 
 from ..utils.cli_bridge import DiffEntry, DiffStatus, ScanReport
 
@@ -37,9 +37,47 @@ class TreeNode:
 
 def build_tree(report: ScanReport) -> TreeNode:
     """Build a hierarchical tree from flat DiffEntry list."""
+    return _build_tree_from_entries(report.entries)
+
+
+def build_tree_with_options(
+    report: ScanReport,
+    mode: str = "compare_structure",
+    *,
+    always_show_folders: bool = True,
+) -> TreeNode:
+    """Build a tree according to folder-view options.
+
+    Modes:
+    - ``compare_structure``: default hierarchical tree.
+    - ``files_only``: focus on files; directories are optional.
+    - ``ignore_structure``: flat list of files (path shown as name).
+    """
+    mode = (mode or "compare_structure").strip().lower()
+
+    if mode == "compare_structure":
+        return _build_tree_from_entries(report.entries)
+
+    if mode == "files_only":
+        filtered: list[DiffEntry] = []
+        for entry in report.entries:
+            is_dir = _entry_is_dir(entry)
+            if is_dir and not always_show_folders:
+                continue
+            filtered.append(entry)
+        return _build_tree_from_entries(filtered)
+
+    if mode == "ignore_structure":
+        return _build_flat_file_tree(report.entries)
+
+    return _build_tree_from_entries(report.entries)
+
+
+def _build_tree_from_entries(entries: Iterable[DiffEntry]) -> TreeNode:
+    """Build a hierarchical tree from a sequence of entries."""
     root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
 
-    for entry in report.entries:
+    for entry in entries:
         parts = PurePosixPath(entry.path).parts
         current = root
         for i, part in enumerate(parts):
@@ -78,6 +116,45 @@ def build_tree(report: ScanReport) -> TreeNode:
     _aggregate_status(root)
     _sort_children(root)
     return root
+
+
+def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:
+    """Build a flat file list, ignoring folder structure."""
+    root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+    seen_paths: set[str] = set()
+
+    for entry in sorted(entries, key=lambda e: e.path.lower()):
+        if _entry_is_dir(entry):
+            continue
+        if entry.path in seen_paths:
+            continue
+        seen_paths.add(entry.path)
+        node = TreeNode(
+            name=entry.path,
+            path=entry.path,
+            status=entry.status,
+            is_dir=False,
+            parent=root,
+        )
+        if entry.left:
+            node.left_size = entry.left.size
+            node.left_modified = entry.left.modified_unix
+        if entry.right:
+            node.right_size = entry.right.size
+            node.right_modified = entry.right.modified_unix
+        root.children.append(node)
+
+    _aggregate_status(root)
+    _sort_children(root)
+    return root
+
+
+def _entry_is_dir(entry: DiffEntry) -> bool:
+    if entry.left and entry.left.is_dir:
+        return True
+    if entry.right and entry.right.is_dir:
+        return True
+    return False
 
 
 def _aggregate_status(node: TreeNode) -> None:

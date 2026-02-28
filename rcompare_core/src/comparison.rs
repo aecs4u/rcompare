@@ -701,7 +701,11 @@ impl ComparisonEngine {
     /// This avoids loading the entire files into memory, making it suitable for very large files (>100MB).
     /// Returns true if files are identical, false if different.
     /// Exits early on first chunk mismatch for better performance.
-    fn compare_files_streaming(&self, left_path: &Path, right_path: &Path) -> Result<bool, RCompareError> {
+    fn compare_files_streaming(
+        &self,
+        left_path: &Path,
+        right_path: &Path,
+    ) -> Result<bool, RCompareError> {
         use std::fs::File;
         use std::io::Read;
 
@@ -1028,7 +1032,7 @@ mod tests {
             .write_all(b"content1")
             .unwrap(); // Same as file1
 
-        let paths = vec![file1.as_path(), file2.as_path(), file3.as_path()];
+        let paths = [file1.as_path(), file2.as_path(), file3.as_path()];
 
         // Hash in parallel
         let results = engine.hash_files_parallel(paths.iter().copied());
@@ -1043,8 +1047,14 @@ mod tests {
         let hash2 = results[1].1.as_ref().unwrap();
         let hash3 = results[2].1.as_ref().unwrap();
 
-        assert_eq!(hash1, hash3, "Files with same content should have same hash");
-        assert_ne!(hash1, hash2, "Files with different content should have different hash");
+        assert_eq!(
+            hash1, hash3,
+            "Files with same content should have same hash"
+        );
+        assert_ne!(
+            hash1, hash2,
+            "Files with different content should have different hash"
+        );
     }
 
     #[test]
@@ -1062,14 +1072,17 @@ mod tests {
             .write_all(b"content")
             .unwrap();
 
-        let paths = vec![file1.as_path(), file2.as_path()];
+        let paths = [file1.as_path(), file2.as_path()];
 
         // Hash in parallel
         let results = engine.hash_files_parallel(paths.iter().copied());
 
         assert_eq!(results.len(), 2);
         assert!(results[0].1.is_ok(), "First file should hash successfully");
-        assert!(results[1].1.is_err(), "Second file should error (not found)");
+        assert!(
+            results[1].1.is_err(),
+            "Second file should error (not found)"
+        );
     }
 
     #[test]
@@ -1134,8 +1147,7 @@ mod tests {
         let cache = HashCache::new(temp.path().join("cache")).unwrap();
 
         // Create engine with 1MB threshold
-        let engine = ComparisonEngine::new(cache)
-            .with_streaming_threshold(1024 * 1024);
+        let engine = ComparisonEngine::new(cache).with_streaming_threshold(1024 * 1024);
 
         assert_eq!(engine.streaming_threshold, 1024 * 1024);
     }
@@ -1182,6 +1194,10 @@ mod tests {
             .compare_files(temp.path(), temp.path(), None, None, &entry1, &entry2)
             .unwrap();
 
-        assert_eq!(status, DiffStatus::Same, "Large identical files should be detected as same using streaming");
+        assert_eq!(
+            status,
+            DiffStatus::Same,
+            "Large identical files should be detected as same using streaming"
+        );
     }
 }

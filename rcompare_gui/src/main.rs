@@ -102,6 +102,7 @@ struct FilterFlags {
     show_different: bool,
     show_left_only: bool,
     show_right_only: bool,
+    show_files_only: bool,
     search_text: String,
 }
 
@@ -112,6 +113,7 @@ impl FilterFlags {
             show_different: ui.get_show_different(),
             show_left_only: ui.get_show_left_only(),
             show_right_only: ui.get_show_right_only(),
+            show_files_only: ui.get_show_files_only(),
             search_text: ui.get_search_text().to_string().to_lowercase(),
         }
     }
@@ -162,6 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_weak = ui.as_weak();
     let compare_roots: Arc<Mutex<Option<CompareRoots>>> = Arc::new(Mutex::new(None));
     let tree_state: Arc<Mutex<Option<TreeState>>> = Arc::new(Mutex::new(None));
+    let selected_paths: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let last_browse_dir: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let compare_state = Arc::new(CompareState {
         generation: AtomicU64::new(0),
@@ -174,6 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let compare_state = compare_state.clone();
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
@@ -197,6 +201,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             compare_state.clone(),
                             compare_roots.clone(),
                             tree_state.clone(),
+                            selected_paths.clone(),
                             left_path,
                             right_path,
                             None,
@@ -214,6 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let compare_state = compare_state.clone();
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         let last_browse_dir = last_browse_dir.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
@@ -237,6 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             compare_state.clone(),
                             compare_roots.clone(),
                             tree_state.clone(),
+                            selected_paths.clone(),
                             left_path,
                             right_path,
                             None,
@@ -321,10 +328,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_open_base_item({
         let ui_weak = ui_weak.clone();
-        move |_path, _is_dir| {
+        let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
+        move |path, _is_dir| {
             if let Some(ui) = ui_weak.upgrade() {
-                // For now, just update status - can be expanded later
-                ui.set_status_text("Base item selected".into());
+                let selected_count = toggle_path_selection(&selected_paths, &path);
+                update_primary_selected_path(&ui, &selected_paths);
+                refresh_tree_items_with_selection(&ui, &tree_state, &selected_paths);
+                ui.set_status_text(format!("Selected {} item(s)", selected_count).into());
             }
         }
     });
@@ -334,6 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
         let compare_state = compare_state.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let left_path = ui.get_left_path().to_string();
@@ -369,6 +381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     compare_state.clone(),
                     compare_roots.clone(),
                     tree_state.clone(),
+                    selected_paths.clone(),
                     left_path,
                     right_path,
                     base_path,
@@ -384,6 +397,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
         let compare_state = compare_state.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let left_path = ui.get_left_path().to_string();
@@ -408,6 +422,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         compare_state.clone(),
                         compare_roots.clone(),
                         tree_state.clone(),
+                        selected_paths.clone(),
                         left_path,
                         right_path,
                         base_path,
@@ -439,9 +454,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         move |path, is_dir| {
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_selected_path(path.clone());
+                toggle_path_selection(&selected_paths, &path);
+                update_primary_selected_path(&ui, &selected_paths);
+                if !is_dir {
+                    refresh_tree_items_with_selection(&ui, &tree_state, &selected_paths);
+                }
                 handle_item_click(
                     TextSide::Left,
                     path.to_string(),
@@ -449,6 +469,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui_weak.clone(),
                     &compare_roots,
                     &tree_state,
+                    &selected_paths,
                     is_dir,
                 );
             }
@@ -459,9 +480,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_weak = ui_weak.clone();
         let compare_roots = compare_roots.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         move |path, is_dir| {
             if let Some(ui) = ui_weak.upgrade() {
-                ui.set_selected_path(path.clone());
+                toggle_path_selection(&selected_paths, &path);
+                update_primary_selected_path(&ui, &selected_paths);
+                if !is_dir {
+                    refresh_tree_items_with_selection(&ui, &tree_state, &selected_paths);
+                }
                 handle_item_click(
                     TextSide::Right,
                     path.to_string(),
@@ -469,6 +495,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui_weak.clone(),
                     &compare_roots,
                     &tree_state,
+                    &selected_paths,
                     is_dir,
                 );
             }
@@ -610,10 +637,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_new_session({
         let ui_weak = ui_weak.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
+                clear_selected_paths(&selected_paths);
                 ui.set_left_path("".into());
                 ui.set_right_path("".into());
+                ui.set_selected_path("".into());
                 ui.set_left_items(Rc::new(slint::VecModel::from(Vec::<FileItem>::new())).into());
                 ui.set_right_items(Rc::new(slint::VecModel::from(Vec::<FileItem>::new())).into());
                 ui.set_status_text("Ready".into());
@@ -1022,14 +1052,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_expand_all({
         let ui_weak = ui_weak.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
                 if let Ok(mut guard) = tree_state.lock() {
                     if let Some(state) = guard.as_mut() {
                         expand_all_dirs(&state.root, &mut state.expanded);
                         let filters = FilterFlags::from_ui(&ui);
+                        let selected_snapshot = selected_paths_snapshot(&selected_paths);
                         let (left_items, right_items) =
-                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                            flatten_tree_filtered_with_selection(
+                                &state.root,
+                                &state.expanded,
+                                &filters,
+                                &selected_snapshot,
+                            );
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
                         ui.set_status_text("All folders expanded".into());
@@ -1042,14 +1079,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_collapse_all({
         let ui_weak = ui_weak.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
                 if let Ok(mut guard) = tree_state.lock() {
                     if let Some(state) = guard.as_mut() {
                         state.expanded.clear();
                         let filters = FilterFlags::from_ui(&ui);
+                        let selected_snapshot = selected_paths_snapshot(&selected_paths);
                         let (left_items, right_items) =
-                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                            flatten_tree_filtered_with_selection(
+                                &state.root,
+                                &state.expanded,
+                                &filters,
+                                &selected_snapshot,
+                            );
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
                         ui.set_status_text("All folders collapsed".into());
@@ -1062,11 +1106,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_copy_left_to_right({
         let ui_weak = ui_weak.clone();
         let compare_roots = compare_roots.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                let selected = ui.get_selected_path().to_string();
+                let selected = selected_paths_sorted(&selected_paths);
                 if selected.is_empty() {
-                    ui.set_status_text("No file selected".into());
+                    ui.set_status_text("No items selected".into());
                     return;
                 }
 
@@ -1085,35 +1130,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
 
-                let source = roots.left_root.join(&selected);
-                let dest = roots.right_root.join(&selected);
-
-                if !source.exists() {
-                    ui.set_status_text("Source file does not exist on left side".into());
-                    return;
-                }
-
-                ui.set_status_text(format!("Copying {}...", selected).into());
+                ui.set_status_text(format!("Copying {} item(s)...", selected.len()).into());
                 let ui_weak_clone = ui_weak.clone();
 
                 std::thread::spawn(move || {
                     let ops = FileOperations::new(false, false);
-                    let result = if source.is_dir() {
-                        copy_directory_recursive(&ops, &source, &dest)
-                    } else {
-                        ops.copy_file(&source, &dest).map(|r| r.bytes_processed)
-                    };
+                    let mut copied_items = 0usize;
+                    let mut missing_items = 0usize;
+                    let mut failed_items = 0usize;
+                    let mut total_bytes = 0u64;
+
+                    for rel_path in &selected {
+                        let source = roots.left_root.join(rel_path);
+                        let dest = roots.right_root.join(rel_path);
+
+                        if !source.exists() {
+                            missing_items += 1;
+                            continue;
+                        }
+
+                        let result = if source.is_dir() {
+                            copy_directory_recursive(&ops, &source, &dest)
+                        } else {
+                            ops.copy_file(&source, &dest).map(|r| r.bytes_processed)
+                        };
+
+                        match result {
+                            Ok(bytes) => {
+                                copied_items += 1;
+                                total_bytes += bytes;
+                            }
+                            Err(_) => {
+                                failed_items += 1;
+                            }
+                        }
+                    }
 
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak_clone.upgrade() {
-                            match result {
-                                Ok(bytes) => {
-                                    ui.set_status_text(format!("Copied {} bytes", bytes).into());
-                                }
-                                Err(e) => {
-                                    ui.set_status_text(format!("Copy failed: {}", e).into());
-                                }
-                            }
+                            if failed_items > 0 {
+                                ui.set_status_text(
+                                    format!(
+                                        "Copied {} item(s), {} failed, {} missing",
+                                        copied_items, failed_items, missing_items
+                                    )
+                                    .into(),
+                                );
+                            } else {
+                                ui.set_status_text(
+                                    format!(
+                                        "Copied {} item(s), {} missing ({} bytes)",
+                                        copied_items, missing_items, total_bytes
+                                    )
+                                    .into(),
+                                );
+                            };
                         }
                     });
                 });
@@ -1124,11 +1195,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_copy_right_to_left({
         let ui_weak = ui_weak.clone();
         let compare_roots = compare_roots.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
-                let selected = ui.get_selected_path().to_string();
+                let selected = selected_paths_sorted(&selected_paths);
                 if selected.is_empty() {
-                    ui.set_status_text("No file selected".into());
+                    ui.set_status_text("No items selected".into());
                     return;
                 }
 
@@ -1147,35 +1219,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
 
-                let source = roots.right_root.join(&selected);
-                let dest = roots.left_root.join(&selected);
-
-                if !source.exists() {
-                    ui.set_status_text("Source file does not exist on right side".into());
-                    return;
-                }
-
-                ui.set_status_text(format!("Copying {}...", selected).into());
+                ui.set_status_text(format!("Copying {} item(s)...", selected.len()).into());
                 let ui_weak_clone = ui_weak.clone();
 
                 std::thread::spawn(move || {
                     let ops = FileOperations::new(false, false);
-                    let result = if source.is_dir() {
-                        copy_directory_recursive(&ops, &source, &dest)
-                    } else {
-                        ops.copy_file(&source, &dest).map(|r| r.bytes_processed)
-                    };
+                    let mut copied_items = 0usize;
+                    let mut missing_items = 0usize;
+                    let mut failed_items = 0usize;
+                    let mut total_bytes = 0u64;
+
+                    for rel_path in &selected {
+                        let source = roots.right_root.join(rel_path);
+                        let dest = roots.left_root.join(rel_path);
+
+                        if !source.exists() {
+                            missing_items += 1;
+                            continue;
+                        }
+
+                        let result = if source.is_dir() {
+                            copy_directory_recursive(&ops, &source, &dest)
+                        } else {
+                            ops.copy_file(&source, &dest).map(|r| r.bytes_processed)
+                        };
+
+                        match result {
+                            Ok(bytes) => {
+                                copied_items += 1;
+                                total_bytes += bytes;
+                            }
+                            Err(_) => {
+                                failed_items += 1;
+                            }
+                        }
+                    }
 
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_weak_clone.upgrade() {
-                            match result {
-                                Ok(bytes) => {
-                                    ui.set_status_text(format!("Copied {} bytes", bytes).into());
-                                }
-                                Err(e) => {
-                                    ui.set_status_text(format!("Copy failed: {}", e).into());
-                                }
-                            }
+                            if failed_items > 0 {
+                                ui.set_status_text(
+                                    format!(
+                                        "Copied {} item(s), {} failed, {} missing",
+                                        copied_items, failed_items, missing_items
+                                    )
+                                    .into(),
+                                );
+                            } else {
+                                ui.set_status_text(
+                                    format!(
+                                        "Copied {} item(s), {} missing ({} bytes)",
+                                        copied_items, missing_items, total_bytes
+                                    )
+                                    .into(),
+                                );
+                            };
                         }
                     });
                 });
@@ -1197,13 +1295,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_filter_changed({
         let ui_weak = ui_weak.clone();
         let tree_state = tree_state.clone();
+        let selected_paths = selected_paths.clone();
         move || {
             if let Some(ui) = ui_weak.upgrade() {
                 if let Ok(guard) = tree_state.lock() {
                     if let Some(state) = guard.as_ref() {
                         let filters = FilterFlags::from_ui(&ui);
+                        let selected_snapshot = selected_paths_snapshot(&selected_paths);
                         let (left_items, right_items) =
-                            flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                            flatten_tree_filtered_with_selection(
+                                &state.root,
+                                &state.expanded,
+                                &filters,
+                                &selected_snapshot,
+                            );
                         let visible_count = left_items.len();
                         ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                         ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
@@ -1223,6 +1328,7 @@ fn spawn_comparison(
     compare_state: Arc<CompareState>,
     compare_roots: Arc<Mutex<Option<CompareRoots>>>,
     tree_state: Arc<Mutex<Option<TreeState>>>,
+    selected_paths: Arc<Mutex<HashSet<String>>>,
     left_path: String,
     right_path: String,
     base_path: Option<String>,
@@ -1248,6 +1354,8 @@ fn spawn_comparison(
             if let Some(ui) = ui_weak.upgrade() {
                 match result {
                     Ok(result) => {
+                        clear_selected_paths(&selected_paths);
+                        ui.set_selected_path("".into());
                         ui.set_left_items(Rc::new(slint::VecModel::from(result.left_items)).into());
                         ui.set_right_items(
                             Rc::new(slint::VecModel::from(result.right_items)).into(),
@@ -1661,6 +1769,7 @@ fn handle_item_click(
     ui_weak: slint::Weak<MainWindow>,
     compare_roots: &Arc<Mutex<Option<CompareRoots>>>,
     tree_state: &Arc<Mutex<Option<TreeState>>>,
+    selected_paths: &Arc<Mutex<HashSet<String>>>,
     is_dir: bool,
 ) {
     if is_dir {
@@ -1674,8 +1783,14 @@ fn handle_item_click(
                 }
 
                 let filters = FilterFlags::from_ui(ui);
+                let selected_snapshot = selected_paths_snapshot(selected_paths);
                 let (left_items, right_items) =
-                    flatten_tree_filtered(&state.root, &state.expanded, &filters);
+                    flatten_tree_filtered_with_selection(
+                        &state.root,
+                        &state.expanded,
+                        &filters,
+                        &selected_snapshot,
+                    );
                 ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
                 ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
             }
@@ -1989,15 +2104,18 @@ fn flatten_tree(root: &TreeNode, expanded: &HashSet<PathBuf>) -> (Vec<FileItem>,
         show_different: true,
         show_left_only: true,
         show_right_only: true,
+        show_files_only: false,
         search_text: String::new(),
     };
-    flatten_tree_filtered(root, expanded, &default_filter)
+    let selected_paths = HashSet::new();
+    flatten_tree_filtered_with_selection(root, expanded, &default_filter, &selected_paths)
 }
 
-fn flatten_tree_filtered(
+fn flatten_tree_filtered_with_selection(
     root: &TreeNode,
     expanded: &HashSet<PathBuf>,
     filters: &FilterFlags,
+    selected_paths: &HashSet<String>,
 ) -> (Vec<FileItem>, Vec<FileItem>) {
     let mut left_items = Vec::new();
     let mut right_items = Vec::new();
@@ -2008,6 +2126,7 @@ fn flatten_tree_filtered(
             0,
             expanded,
             filters,
+            selected_paths,
             &mut left_items,
             &mut right_items,
         );
@@ -2021,31 +2140,66 @@ fn flatten_node_filtered(
     depth: i32,
     expanded: &HashSet<PathBuf>,
     filters: &FilterFlags,
+    selected_paths: &HashSet<String>,
     left_items: &mut Vec<FileItem>,
     right_items: &mut Vec<FileItem>,
 ) {
-    // For directories, check if any visible children exist
-    let should_show = if node.is_dir {
-        // Always show directories if they have visible children or match search
-        has_visible_children(node, filters)
-            || filters.search_text.is_empty()
-            || node.name.to_lowercase().contains(&filters.search_text)
-    } else {
-        filters.should_show(node.status, &node.name)
-    };
+    let path = node.path.to_string_lossy().to_string();
+    let is_expanded = node.is_dir && expanded.contains(&node.path);
+    let selected = selected_paths.contains(&path);
 
-    if !should_show {
+    if node.is_dir {
+        let should_show_dir = !filters.show_files_only
+            && (has_visible_children(node, filters)
+                || filters.search_text.is_empty()
+                || node.name.to_lowercase().contains(&filters.search_text));
+
+        if should_show_dir {
+            left_items.push(build_file_item(
+                node,
+                node.left.as_ref(),
+                depth,
+                &path,
+                is_expanded,
+                selected,
+            ));
+            right_items.push(build_file_item(
+                node,
+                node.right.as_ref(),
+                depth,
+                &path,
+                is_expanded,
+                selected,
+            ));
+        }
+
+        if filters.show_files_only || expanded.contains(&node.path) {
+            for child in &node.children {
+                flatten_node_filtered(
+                    child,
+                    depth + 1,
+                    expanded,
+                    filters,
+                    selected_paths,
+                    left_items,
+                    right_items,
+                );
+            }
+        }
         return;
     }
 
-    let path = node.path.to_string_lossy().to_string();
-    let is_expanded = node.is_dir && expanded.contains(&node.path);
+    if !filters.should_show(node.status, &node.name) {
+        return;
+    }
+
     left_items.push(build_file_item(
         node,
         node.left.as_ref(),
         depth,
         &path,
         is_expanded,
+        selected,
     ));
     right_items.push(build_file_item(
         node,
@@ -2053,13 +2207,8 @@ fn flatten_node_filtered(
         depth,
         &path,
         is_expanded,
+        selected,
     ));
-
-    if node.is_dir && expanded.contains(&node.path) {
-        for child in &node.children {
-            flatten_node_filtered(child, depth + 1, expanded, filters, left_items, right_items);
-        }
-    }
 }
 
 fn has_visible_children(node: &TreeNode, filters: &FilterFlags) -> bool {
@@ -2073,6 +2222,66 @@ fn has_visible_children(node: &TreeNode, filters: &FilterFlags) -> bool {
         }
     }
     false
+}
+
+fn selected_paths_snapshot(selected_paths: &Arc<Mutex<HashSet<String>>>) -> HashSet<String> {
+    selected_paths
+        .lock()
+        .map(|paths| paths.clone())
+        .unwrap_or_default()
+}
+
+fn selected_paths_sorted(selected_paths: &Arc<Mutex<HashSet<String>>>) -> Vec<String> {
+    let mut selected: Vec<String> = selected_paths_snapshot(selected_paths).into_iter().collect();
+    selected.sort();
+    selected
+}
+
+fn clear_selected_paths(selected_paths: &Arc<Mutex<HashSet<String>>>) {
+    if let Ok(mut paths) = selected_paths.lock() {
+        paths.clear();
+    }
+}
+
+fn toggle_path_selection(selected_paths: &Arc<Mutex<HashSet<String>>>, path: &str) -> usize {
+    if let Ok(mut paths) = selected_paths.lock() {
+        let key = path.to_string();
+        if !paths.insert(key.clone()) {
+            paths.remove(&key);
+        }
+        paths.len()
+    } else {
+        0
+    }
+}
+
+fn update_primary_selected_path(ui: &MainWindow, selected_paths: &Arc<Mutex<HashSet<String>>>) {
+    let primary = selected_paths_sorted(selected_paths)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    ui.set_selected_path(primary.into());
+}
+
+fn refresh_tree_items_with_selection(
+    ui: &MainWindow,
+    tree_state: &Arc<Mutex<Option<TreeState>>>,
+    selected_paths: &Arc<Mutex<HashSet<String>>>,
+) {
+    if let Ok(guard) = tree_state.lock() {
+        if let Some(state) = guard.as_ref() {
+            let filters = FilterFlags::from_ui(ui);
+            let selected_snapshot = selected_paths_snapshot(selected_paths);
+            let (left_items, right_items) = flatten_tree_filtered_with_selection(
+                &state.root,
+                &state.expanded,
+                &filters,
+                &selected_snapshot,
+            );
+            ui.set_left_items(Rc::new(slint::VecModel::from(left_items)).into());
+            ui.set_right_items(Rc::new(slint::VecModel::from(right_items)).into());
+        }
+    }
 }
 
 fn copy_directory_recursive(
@@ -2110,6 +2319,7 @@ fn build_file_item(
     depth: i32,
     path: &str,
     expanded: bool,
+    selected: bool,
 ) -> FileItem {
     let (name, size, date) = if let Some(entry) = entry {
         let size = if entry.is_dir {
@@ -2134,6 +2344,7 @@ fn build_file_item(
         depth,
         is_dir: node.is_dir,
         expanded,
+        selected,
     }
 }
 

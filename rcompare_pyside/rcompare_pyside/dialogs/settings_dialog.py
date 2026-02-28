@@ -2,100 +2,242 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+import os
+from pathlib import Path
+
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
-    QLabel, QLineEdit, QTextEdit, QCheckBox, QPushButton,
-    QFileDialog, QDialogButtonBox, QComboBox, QGroupBox,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
+from PySide6.QtGui import QFontDatabase, QIcon
 
 from ..models.settings import ComparisonSettings
 from ..utils.config import AppConfig
 
 
 class SettingsDialog(QDialog):
-    """Settings dialog with tabs for General, Appearance, and CLI configuration."""
+    """KDE-style settings dialog with category tabs and grouped sections."""
 
     def __init__(self, config: AppConfig, settings: ComparisonSettings, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("RCompare Settings")
-        self.setMinimumSize(500, 400)
+        self.setWindowTitle("Configure RCompare")
+        self.setMinimumSize(760, 520)
         self._config = config
         self._settings = settings
 
         layout = QVBoxLayout(self)
 
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
+        title = QLabel("System Settings")
+        title.setObjectName("settingsTitle")
+        subtitle = QLabel("Configure comparison behavior, UI appearance, and CLI integration.")
+        subtitle.setWordWrap(True)
+        subtitle.setObjectName("settingsSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
 
-        # General tab
-        general = QWidget()
-        general_layout = QVBoxLayout(general)
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tabs.setTabPosition(QTabWidget.TabPosition.West)
+        self._tabs.setUsesScrollButtons(False)
+        layout.addWidget(self._tabs, 1)
 
-        # Ignore patterns
-        patterns_group = QGroupBox("Ignore Patterns")
-        patterns_layout = QVBoxLayout(patterns_group)
-        patterns_layout.addWidget(QLabel("One pattern per line (glob syntax):"))
-        self._patterns_edit = QTextEdit()
-        self._patterns_edit.setPlainText("\n".join(settings.ignore_patterns))
-        self._patterns_edit.setMaximumHeight(120)
-        patterns_layout.addWidget(self._patterns_edit)
-        general_layout.addWidget(patterns_group)
+        self._build_general_tab()
+        self._build_appearance_tab()
+        self._build_cli_tab()
 
-        # Options
-        options_group = QGroupBox("Comparison Options")
-        options_layout = QFormLayout(options_group)
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.RestoreDefaults
+        )
+        defaults_btn = buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)
+        if defaults_btn is not None:
+            defaults_btn.setText("Defaults")
+            defaults_btn.clicked.connect(self._restore_defaults)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        # Local dialog polish (matches KDE-like structured settings windows).
+        self.setStyleSheet(
+            """
+            QLabel#settingsTitle {
+                font-size: 16px;
+                font-weight: 600;
+                margin: 2px 0px 0px 0px;
+            }
+            QLabel#settingsSubtitle {
+                color: palette(mid);
+                margin: 0px 0px 6px 0px;
+            }
+            QGroupBox {
+                margin-top: 8px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 4px;
+                font-weight: 600;
+            }
+            """
+        )
+
+    def _build_general_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        behavior_group = QGroupBox("Comparison Behavior")
+        behavior_layout = QVBoxLayout(behavior_group)
         self._symlinks_check = QCheckBox("Follow symbolic links")
-        self._symlinks_check.setChecked(settings.follow_symlinks)
-        options_layout.addRow(self._symlinks_check)
+        self._symlinks_check.setChecked(self._settings.follow_symlinks)
         self._hash_check = QCheckBox("Use hash verification for same-sized files")
-        self._hash_check.setChecked(settings.use_hash_verification)
-        options_layout.addRow(self._hash_check)
+        self._hash_check.setChecked(self._settings.use_hash_verification)
+        behavior_hint = QLabel(
+            "Hash verification improves accuracy but can increase scan time."
+        )
+        behavior_hint.setWordWrap(True)
+        behavior_layout.addWidget(self._symlinks_check)
+        behavior_layout.addWidget(self._hash_check)
+        behavior_layout.addWidget(behavior_hint)
+        layout.addWidget(behavior_group)
 
-        cache_row = QHBoxLayout()
-        self._cache_edit = QLineEdit(settings.cache_dir or "")
+        cache_group = QGroupBox("Cache")
+        cache_layout = QFormLayout(cache_group)
+        cache_row_widget = QWidget()
+        cache_row = QHBoxLayout(cache_row_widget)
+        cache_row.setContentsMargins(0, 0, 0, 0)
+        self._cache_edit = QLineEdit(self._settings.cache_dir or "")
         self._cache_edit.setPlaceholderText("Default cache directory")
         cache_browse = QPushButton("Browse...")
         cache_browse.clicked.connect(self._browse_cache)
+        cache_clear = QPushButton("Clear")
+        cache_clear.clicked.connect(self._cache_edit.clear)
         cache_row.addWidget(self._cache_edit, 1)
         cache_row.addWidget(cache_browse)
-        options_layout.addRow("Cache directory:", cache_row)
-        general_layout.addWidget(options_group)
-        general_layout.addStretch()
-        tabs.addTab(general, "General")
+        cache_row.addWidget(cache_clear)
+        cache_layout.addRow("Cache directory:", cache_row_widget)
+        layout.addWidget(cache_group)
 
-        # Appearance tab
-        appearance = QWidget()
-        appearance_layout = QFormLayout(appearance)
+        patterns_group = QGroupBox("Ignore Patterns")
+        patterns_layout = QVBoxLayout(patterns_group)
+        patterns_hint = QLabel("One glob pattern per line. Example: `*.tmp` or `build/**`")
+        patterns_hint.setWordWrap(True)
+        self._patterns_edit = QTextEdit()
+        self._patterns_edit.setPlainText("\n".join(self._settings.ignore_patterns))
+        self._patterns_edit.setMinimumHeight(160)
+        self._patterns_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        patterns_layout.addWidget(patterns_hint)
+        patterns_layout.addWidget(self._patterns_edit)
+        layout.addWidget(patterns_group, 1)
+
+        self._tabs.addTab(tab, self._icon("configure"), "General")
+
+    def _build_appearance_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        appearance_group = QGroupBox("Theme")
+        appearance_layout = QFormLayout(appearance_group)
         self._theme_combo = QComboBox()
         self._theme_combo.addItems(["Light", "Dark"])
-        self._theme_combo.setCurrentText(config.theme.capitalize())
-        appearance_layout.addRow("Theme:", self._theme_combo)
-        appearance_layout.addRow(QLabel("Theme changes take effect after restart."))
-        tabs.addTab(appearance, "Appearance")
+        current_theme = self._config.theme.strip().capitalize()
+        if current_theme not in {"Light", "Dark"}:
+            current_theme = "Light"
+        self._theme_combo.setCurrentText(current_theme)
+        self._theme_hint = QLabel("")
+        self._theme_hint.setWordWrap(True)
+        self._theme_combo.currentTextChanged.connect(self._update_theme_hint)
+        self._update_theme_hint(self._theme_combo.currentText())
+        appearance_layout.addRow("Color theme:", self._theme_combo)
+        appearance_layout.addRow(self._theme_hint)
+        layout.addWidget(appearance_group)
 
-        # CLI tab
-        cli_tab = QWidget()
-        cli_layout = QFormLayout(cli_tab)
-        cli_row = QHBoxLayout()
-        self._cli_edit = QLineEdit(config.cli_path or "")
+        notes_group = QGroupBox("Notes")
+        notes_layout = QVBoxLayout(notes_group)
+        notes = QLabel(
+            "Theme changes are applied when the application restarts. "
+            "All theme choices are stored per user."
+        )
+        notes.setWordWrap(True)
+        notes_layout.addWidget(notes)
+        layout.addWidget(notes_group)
+        layout.addStretch()
+
+        self._tabs.addTab(tab, self._icon("preferences-desktop-theme"), "Appearance")
+
+    def _build_cli_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        cli_group = QGroupBox("rcompare_cli Binary")
+        cli_layout = QFormLayout(cli_group)
+
+        cli_row_widget = QWidget()
+        cli_row = QHBoxLayout(cli_row_widget)
+        cli_row.setContentsMargins(0, 0, 0, 0)
+        self._cli_edit = QLineEdit(self._config.cli_path or "")
         self._cli_edit.setPlaceholderText("Auto-detect")
+        self._cli_edit.textChanged.connect(self._update_cli_status)
         cli_browse = QPushButton("Browse...")
         cli_browse.clicked.connect(self._browse_cli)
         cli_row.addWidget(self._cli_edit, 1)
         cli_row.addWidget(cli_browse)
-        cli_layout.addRow("rcompare_cli path:", cli_row)
+        cli_layout.addRow("Path:", cli_row_widget)
+
+        actions_row = QWidget()
+        actions_layout = QHBoxLayout(actions_row)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
         detect_btn = QPushButton("Auto-detect")
         detect_btn.clicked.connect(self._auto_detect_cli)
-        cli_layout.addRow(detect_btn)
-        tabs.addTab(cli_tab, "CLI")
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._cli_edit.clear)
+        actions_layout.addWidget(detect_btn)
+        actions_layout.addWidget(clear_btn)
+        actions_layout.addStretch()
+        cli_layout.addRow(actions_row)
 
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self._cli_status_label = QLabel("")
+        self._cli_status_label.setWordWrap(True)
+        cli_layout.addRow("Status:", self._cli_status_label)
+        layout.addWidget(cli_group)
+
+        help_group = QGroupBox("Detection")
+        help_layout = QVBoxLayout(help_group)
+        help_text = QLabel(
+            "Auto-detect checks PATH and common Cargo target directories "
+            "(including `target/release` and `target/debug`)."
+        )
+        help_text.setWordWrap(True)
+        help_layout.addWidget(help_text)
+        layout.addWidget(help_group)
+        layout.addStretch()
+
+        self._tabs.addTab(tab, self._icon("applications-development"), "CLI")
+        self._update_cli_status()
+
+    def _icon(self, name: str) -> QIcon:
+        return QIcon.fromTheme(name)
+
+    def _update_theme_hint(self, theme_name: str) -> None:
+        if theme_name.lower() == "dark":
+            self._theme_hint.setText("Dark theme selected. Change takes effect after restart.")
+        else:
+            self._theme_hint.setText("Light theme selected. Change takes effect after restart.")
 
     def get_settings(self) -> ComparisonSettings:
         patterns = [p.strip() for p in self._patterns_edit.toPlainText().splitlines() if p.strip()]
@@ -112,17 +254,34 @@ class SettingsDialog(QDialog):
             "cli_path": self._cli_edit.text() or None,
         }
 
-    def _browse_cache(self):
+    def _restore_defaults(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Restore Defaults",
+            "Reset all options in this window to default values?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._patterns_edit.clear()
+        self._symlinks_check.setChecked(False)
+        self._hash_check.setChecked(True)
+        self._cache_edit.clear()
+        self._theme_combo.setCurrentText("Light")
+        self._auto_detect_cli()
+
+    def _browse_cache(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Cache Directory")
         if path:
             self._cache_edit.setText(path)
 
-    def _browse_cli(self):
+    def _browse_cli(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select rcompare_cli Binary")
         if path:
             self._cli_edit.setText(path)
 
-    def _auto_detect_cli(self):
+    def _auto_detect_cli(self) -> None:
         from ..utils.config import _find_cli
         found = _find_cli()
         if found:
@@ -130,3 +289,22 @@ class SettingsDialog(QDialog):
         else:
             self._cli_edit.setText("")
             self._cli_edit.setPlaceholderText("Not found - please set manually")
+
+    def _update_cli_status(self) -> None:
+        raw = self._cli_edit.text().strip()
+        if not raw:
+            self._cli_status_label.setText(
+                "Path empty. The app will auto-detect on next validation."
+            )
+            return
+        candidate = Path(raw)
+        if not candidate.exists():
+            self._cli_status_label.setText("Selected path does not exist.")
+            return
+        if not candidate.is_file():
+            self._cli_status_label.setText("Selected path is not a file.")
+            return
+        if os.name != "nt" and not os.access(candidate, os.X_OK):
+            self._cli_status_label.setText("File exists but is not executable.")
+            return
+        self._cli_status_label.setText("Path looks valid.")

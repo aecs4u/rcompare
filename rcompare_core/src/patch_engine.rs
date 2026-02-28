@@ -1,6 +1,4 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, HunkType, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, HunkType, PatchDifference, RCompareError};
 
 /// Engine for applying/unapplying individual differences and blending
 /// original file content into a parsed patch model.
@@ -28,8 +26,7 @@ impl PatchEngine {
 
         // Apply
         patch.hunks[hi].differences[di].applied = true;
-        patch.hunks[hi].differences[di].unsaved =
-            !patch.hunks[hi].differences[di].unsaved;
+        patch.hunks[hi].differences[di].unsaved = !patch.hunks[hi].differences[di].unsaved;
         patch.applied_count += 1;
 
         // Adjust tracking line numbers for all subsequent diffs
@@ -39,10 +36,7 @@ impl PatchEngine {
     }
 
     /// Unapply a single difference (by flat index among non-Unchanged diffs).
-    pub fn unapply_difference(
-        patch: &mut FilePatch,
-        flat_idx: usize,
-    ) -> Result<(), RCompareError> {
+    pub fn unapply_difference(patch: &mut FilePatch, flat_idx: usize) -> Result<(), RCompareError> {
         let indices = patch.difference_indices();
         if flat_idx >= indices.len() {
             return Err(RCompareError::PatchParse(format!(
@@ -61,8 +55,7 @@ impl PatchEngine {
 
         // Unapply
         patch.hunks[hi].differences[di].applied = false;
-        patch.hunks[hi].differences[di].unsaved =
-            !patch.hunks[hi].differences[di].unsaved;
+        patch.hunks[hi].differences[di].unsaved = !patch.hunks[hi].differences[di].unsaved;
         if patch.applied_count > 0 {
             patch.applied_count -= 1;
         }
@@ -108,10 +101,7 @@ impl PatchEngine {
     /// This inserts `AddedByBlend` hunks containing `Unchanged` context between
     /// and around the existing hunks, so the model represents the full file.
     /// Also detects conflicts where expected source lines don't match the actual file.
-    pub fn blend_file(
-        patch: &mut FilePatch,
-        original_content: &str,
-    ) -> Result<(), RCompareError> {
+    pub fn blend_file(patch: &mut FilePatch, original_content: &str) -> Result<(), RCompareError> {
         let file_lines: Vec<&str> = split_lines(original_content);
         let mut src_line_no: usize = 1;
         let mut dst_line_no: usize = 1;
@@ -124,11 +114,8 @@ impl PatchEngine {
                 let mut blend_hunk = Hunk::new(src_line_no, dst_line_no);
                 blend_hunk.hunk_type = HunkType::AddedByBlend;
 
-                let mut diff = PatchDifference::new(
-                    DifferenceType::Unchanged,
-                    src_line_no,
-                    dst_line_no,
-                );
+                let mut diff =
+                    PatchDifference::new(DifferenceType::Unchanged, src_line_no, dst_line_no);
 
                 while src_line_no < hunk.source_start && line_idx < file_lines.len() {
                     let line_content = file_lines[line_idx].to_string();
@@ -159,11 +146,8 @@ impl PatchEngine {
             let mut blend_hunk = Hunk::new(src_line_no, dst_line_no);
             blend_hunk.hunk_type = HunkType::AddedByBlend;
 
-            let mut diff = PatchDifference::new(
-                DifferenceType::Unchanged,
-                src_line_no,
-                dst_line_no,
-            );
+            let mut diff =
+                PatchDifference::new(DifferenceType::Unchanged, src_line_no, dst_line_no);
 
             while line_idx < file_lines.len() {
                 let line_content = file_lines[line_idx].to_string();

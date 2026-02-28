@@ -1,0 +1,6 @@
+[build]
+target-dir = "target"
+
+[env]
+TMPDIR = { value = "/tmp", force = true }
+CARGO_TARGET_DIR = { value = "target", force = true }

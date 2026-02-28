@@ -1,32 +1,24 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError};
 use regex::Regex;
 use std::sync::LazyLock;
 
 // Context diff file headers: *** source_file\ttimestamp and --- dest_file\ttimestamp
-static FILE_HEADER_SRC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\*\*\* ([^\t]+)(?:\t(.*))?$").unwrap()
-});
+static FILE_HEADER_SRC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\*\*\* ([^\t]+)(?:\t(.*))?$").unwrap());
 
-static FILE_HEADER_DST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^--- ([^\t]+)(?:\t(.*))?$").unwrap()
-});
+static FILE_HEADER_DST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^--- ([^\t]+)(?:\t(.*))?$").unwrap());
 
 // Hunk separator: 15 asterisks, optionally followed by function name
-static HUNK_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\*{15}\s?(.*)$").unwrap()
-});
+static HUNK_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\*{15}\s?(.*)$").unwrap());
 
 // Source range: *** start,end ***
-static SRC_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\*\*\* (\d+)(?:,(\d+))? \*\*\*\*?$").unwrap()
-});
+static SRC_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\*\*\* (\d+)(?:,(\d+))? \*\*\*\*?$").unwrap());
 
 // Dest range: --- start,end ----
-static DST_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^--- (\d+)(?:,(\d+))? ----?$").unwrap()
-});
+static DST_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^--- (\d+)(?:,(\d+))? ----?$").unwrap());
 
 /// Parse context diff format into a list of FilePatches.
 pub fn parse_context(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
@@ -112,11 +104,7 @@ pub fn parse_context(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
                         // Merge source and destination lines into differences
                         merge_context_diffs(
-                            &mut hunk,
-                            &src_lines,
-                            &dst_lines,
-                            src_start,
-                            dst_start,
+                            &mut hunk, &src_lines, &dst_lines, src_start, dst_start,
                         );
 
                         fp.hunks.push(hunk);

@@ -1,20 +1,15 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError};
 use regex::Regex;
 use std::sync::LazyLock;
 
-static HEADER1: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^--- ([^\t]+)(?:\t([^\t]+)(?:\t(.*))?)?$").unwrap()
-});
+static HEADER1: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^--- ([^\t]+)(?:\t([^\t]+)(?:\t(.*))?)?$").unwrap());
 
-static HEADER2: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\+\+\+ ([^\t]+)(?:\t([^\t]+)(?:\t(.*))?)?$").unwrap()
-});
+static HEADER2: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\+\+\+ ([^\t]+)(?:\t([^\t]+)(?:\t(.*))?)?$").unwrap());
 
-static HUNK_HEADER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$").unwrap()
-});
+static HUNK_HEADER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$").unwrap());
 
 /// Parse unified diff format into a list of FilePatches.
 /// Returns one FilePatch per file pair found in the input.

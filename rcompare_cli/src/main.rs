@@ -10,9 +10,12 @@ use rcompare_core::{
     ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
     JsonDiffEngine, ParquetDiffEngine, TextDiffEngine,
 };
-use serde::Serialize;
-use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::{IsTerminal, Read, Write};
+use std::path::{Component, Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -143,6 +146,153 @@ enum Commands {
         #[arg(long, value_name = "TOLERANCE", default_value = "1")]
         image_tolerance: u8,
     },
+
+    /// Synchronize two directories using comparison results
+    Sync {
+        /// Left directory path
+        left: PathBuf,
+
+        /// Right directory path
+        right: PathBuf,
+
+        /// Direction: left_to_right, right_to_left, bidirectional
+        #[arg(long, default_value = "left_to_right")]
+        direction: String,
+
+        /// Dry-run mode (plan only, no filesystem changes)
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Delete handling mode: trash or permanent
+        #[arg(long, default_value = "trash")]
+        delete_mode: String,
+
+        /// Conflict policy for bidirectional different files: newest, left, right, skip, error
+        #[arg(long, default_value = "newest")]
+        conflict: String,
+
+        /// Ignore patterns (can be specified multiple times)
+        #[arg(short, long)]
+        ignore: Vec<String>,
+
+        /// Follow symbolic links
+        #[arg(short = 'L', long)]
+        follow_symlinks: bool,
+
+        /// Verify file hashes for same-sized files
+        #[arg(short = 'v', long)]
+        verify_hashes: bool,
+
+        /// Disable file hash verification
+        #[arg(long, conflicts_with = "verify_hashes")]
+        no_verify_hashes: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Copy selected relative paths between left and right directories
+    Copy {
+        /// Left directory path
+        left: PathBuf,
+
+        /// Right directory path
+        right: PathBuf,
+
+        /// Direction: left_to_right, right_to_left
+        #[arg(long, default_value = "left_to_right")]
+        direction: String,
+
+        /// Relative path to copy (can be provided multiple times)
+        #[arg(long = "path", value_name = "REL_PATH")]
+        paths: Vec<String>,
+
+        /// File containing relative paths to copy (one per line)
+        #[arg(long)]
+        paths_file: Option<PathBuf>,
+
+        /// Dry-run mode (plan only, no filesystem changes)
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Compute an on-demand diff for one relative file path
+    DiffFile {
+        /// Left source path (directory or supported archive)
+        left: PathBuf,
+
+        /// Right source path (directory or supported archive)
+        right: PathBuf,
+
+        /// Relative path inside left/right source
+        #[arg(long)]
+        path: String,
+
+        /// Diff mode: auto, text, binary, image, csv, excel, json, yaml, parquet
+        #[arg(long, default_value = "auto")]
+        mode: String,
+
+        /// Output JSON report
+        #[arg(long)]
+        json: bool,
+
+        /// Ignore whitespace for text mode: all, leading, trailing, changes
+        #[arg(long, value_name = "MODE")]
+        ignore_whitespace: Option<String>,
+
+        /// Ignore case when comparing text files
+        #[arg(long)]
+        ignore_case: bool,
+
+        /// Regex rewrite rules for text mode (pattern:replacement:description)
+        #[arg(long, value_name = "RULE")]
+        regex_rule: Vec<String>,
+
+        /// Compare EXIF metadata in image mode
+        #[arg(long)]
+        image_exif: bool,
+
+        /// Pixel tolerance for image mode
+        #[arg(long, value_name = "TOLERANCE", default_value = "1")]
+        image_tolerance: u8,
+
+        /// Maximum number of binary mismatch ranges to emit
+        #[arg(long, default_value = "2000")]
+        max_binary_ranges: usize,
+    },
+
+    /// Read one file from a side and write to stdout or --out path
+    Read {
+        /// Left source path (directory or supported archive)
+        left: PathBuf,
+
+        /// Right source path (directory or supported archive)
+        right: PathBuf,
+
+        /// Which source side to read from: left or right
+        #[arg(long)]
+        side: String,
+
+        /// Relative path inside selected source
+        #[arg(long)]
+        path: String,
+
+        /// Output file path (defaults to stdout when omitted)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Show supported commands, flags, and schema versions
+    Capabilities {
+        /// Output capabilities as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 enum ArchiveKind {
@@ -256,7 +406,1353 @@ fn main() {
                 }
             }
         }
+        Commands::Capabilities { json } => {
+            if let Err(e) = run_capabilities(json) {
+                error!("Capabilities failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Sync {
+            left,
+            right,
+            direction,
+            dry_run,
+            delete_mode,
+            conflict,
+            ignore,
+            follow_symlinks,
+            verify_hashes,
+            no_verify_hashes,
+            json,
+        } => {
+            if let Err(e) = run_sync(
+                left,
+                right,
+                direction,
+                dry_run,
+                delete_mode,
+                conflict,
+                ignore,
+                follow_symlinks,
+                verify_hashes,
+                no_verify_hashes,
+                json,
+            ) {
+                error!("Sync failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Copy {
+            left,
+            right,
+            direction,
+            paths,
+            paths_file,
+            dry_run,
+            json,
+        } => {
+            if let Err(e) = run_copy(left, right, direction, paths, paths_file, dry_run, json) {
+                error!("Copy failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::DiffFile {
+            left,
+            right,
+            path,
+            mode,
+            json,
+            ignore_whitespace,
+            ignore_case,
+            regex_rule,
+            image_exif,
+            image_tolerance,
+            max_binary_ranges,
+        } => {
+            if let Err(e) = run_diff_file(
+                left,
+                right,
+                path,
+                mode,
+                json,
+                ignore_whitespace,
+                ignore_case,
+                regex_rule,
+                image_exif,
+                image_tolerance,
+                max_binary_ranges,
+            ) {
+                error!("diff-file failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Read {
+            left,
+            right,
+            side,
+            path,
+            out,
+        } => {
+            if let Err(e) = run_read(left, right, side, path, out) {
+                error!("read failed: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
+}
+
+#[derive(Serialize)]
+struct CommandCapability {
+    name: String,
+    description: String,
+    supports_json: bool,
+    supports_progress: bool,
+    flags: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ExitCodeCapability {
+    code: i32,
+    meaning: String,
+}
+
+#[derive(Serialize)]
+struct CapabilitiesReport {
+    schema_version: String,
+    cli_version: String,
+    scan_json_schema_versions: Vec<String>,
+    commands: Vec<CommandCapability>,
+    exit_codes: Vec<ExitCodeCapability>,
+    notes: Vec<String>,
+}
+
+fn build_capabilities_report() -> CapabilitiesReport {
+    CapabilitiesReport {
+        schema_version: "1.0.0".to_string(),
+        cli_version: env!("CARGO_PKG_VERSION").to_string(),
+        scan_json_schema_versions: vec!["1.1.0".to_string()],
+        commands: vec![
+            CommandCapability {
+                name: "scan".to_string(),
+                description: "Scan and compare two directories or supported archives".to_string(),
+                supports_json: true,
+                supports_progress: true,
+                flags: vec![
+                    "--json".to_string(),
+                    "--diff-only".to_string(),
+                    "--ignore".to_string(),
+                    "--follow-symlinks".to_string(),
+                    "--verify-hashes/--no-verify-hashes".to_string(),
+                    "--columns".to_string(),
+                    "--text-diff".to_string(),
+                    "--image-diff".to_string(),
+                    "--csv-diff".to_string(),
+                    "--excel-diff".to_string(),
+                    "--json-diff".to_string(),
+                    "--yaml-diff".to_string(),
+                    "--parquet-diff".to_string(),
+                ],
+            },
+            CommandCapability {
+                name: "sync".to_string(),
+                description: "Synchronize two directories using comparison results".to_string(),
+                supports_json: true,
+                supports_progress: false,
+                flags: vec![
+                    "--direction".to_string(),
+                    "--dry-run".to_string(),
+                    "--delete-mode".to_string(),
+                    "--conflict".to_string(),
+                    "--ignore".to_string(),
+                    "--follow-symlinks".to_string(),
+                    "--verify-hashes/--no-verify-hashes".to_string(),
+                    "--json".to_string(),
+                ],
+            },
+            CommandCapability {
+                name: "copy".to_string(),
+                description: "Copy selected relative paths between left and right directories"
+                    .to_string(),
+                supports_json: true,
+                supports_progress: false,
+                flags: vec![
+                    "--direction".to_string(),
+                    "--path".to_string(),
+                    "--paths-file".to_string(),
+                    "--dry-run".to_string(),
+                    "--json".to_string(),
+                ],
+            },
+            CommandCapability {
+                name: "diff-file".to_string(),
+                description: "Compute one file-level diff by mode (text/binary/image/etc)"
+                    .to_string(),
+                supports_json: true,
+                supports_progress: false,
+                flags: vec![
+                    "--path".to_string(),
+                    "--mode".to_string(),
+                    "--json".to_string(),
+                    "--ignore-whitespace".to_string(),
+                    "--ignore-case".to_string(),
+                    "--regex-rule".to_string(),
+                    "--image-exif".to_string(),
+                    "--image-tolerance".to_string(),
+                    "--max-binary-ranges".to_string(),
+                ],
+            },
+            CommandCapability {
+                name: "read".to_string(),
+                description: "Read one file from a side and export to stdout or --out"
+                    .to_string(),
+                supports_json: false,
+                supports_progress: false,
+                flags: vec![
+                    "--side".to_string(),
+                    "--path".to_string(),
+                    "--out".to_string(),
+                ],
+            },
+            CommandCapability {
+                name: "capabilities".to_string(),
+                description: "Print supported commands, flags, schemas, and exit codes".to_string(),
+                supports_json: true,
+                supports_progress: false,
+                flags: vec!["--json".to_string()],
+            },
+        ],
+        exit_codes: vec![
+            ExitCodeCapability {
+                code: 0,
+                meaning: "Success: no differences found, or non-scan command completed".to_string(),
+            },
+            ExitCodeCapability {
+                code: 1,
+                meaning: "Failure: invalid input, runtime error, or parse error".to_string(),
+            },
+            ExitCodeCapability {
+                code: 2,
+                meaning: "Success with differences found (scan command)".to_string(),
+            },
+        ],
+        notes: vec![
+            "Progress indicators are emitted only when output is not JSON and stderr is a terminal."
+                .to_string(),
+            "Scan JSON schema versions are listed in scan_json_schema_versions.".to_string(),
+        ],
+    }
+}
+
+fn run_capabilities(json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let report = build_capabilities_report();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("rcompare_cli capabilities");
+    println!("  CLI version: {}", report.cli_version);
+    println!("  Capabilities schema: {}", report.schema_version);
+    println!(
+        "  Scan JSON schemas: {}",
+        report.scan_json_schema_versions.join(", ")
+    );
+    println!("\nCommands:");
+    for cmd in &report.commands {
+        println!(
+            "  - {}: {}",
+            cmd.name,
+            cmd.description
+        );
+        println!(
+            "    supports_json={}, supports_progress={}",
+            cmd.supports_json, cmd.supports_progress
+        );
+        println!("    flags: {}", cmd.flags.join(", "));
+    }
+    println!("\nExit codes:");
+    for item in &report.exit_codes {
+        println!("  {} => {}", item.code, item.meaning);
+    }
+
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct SyncScanSide {
+    modified_unix: Option<u64>,
+    #[allow(dead_code)]
+    is_dir: bool,
+}
+
+#[derive(Deserialize)]
+struct SyncScanEntry {
+    path: String,
+    status: String,
+    left: Option<SyncScanSide>,
+    right: Option<SyncScanSide>,
+}
+
+#[derive(Deserialize)]
+struct SyncScanReport {
+    entries: Vec<SyncScanEntry>,
+}
+
+#[derive(Serialize, Clone)]
+struct SyncActionReport {
+    code: String,
+    path: String,
+    detail: String,
+}
+
+#[derive(Default, Serialize)]
+struct SyncSummaryReport {
+    total_actions: usize,
+    copied: usize,
+    updated: usize,
+    deleted: usize,
+    skipped: usize,
+    failed: usize,
+}
+
+#[derive(Serialize)]
+struct SyncReport {
+    schema_version: String,
+    left: String,
+    right: String,
+    direction: String,
+    dry_run: bool,
+    delete_mode: String,
+    conflict_policy: String,
+    summary: SyncSummaryReport,
+    actions: Vec<SyncActionReport>,
+}
+
+fn run_sync(
+    left: PathBuf,
+    right: PathBuf,
+    direction: String,
+    dry_run: bool,
+    delete_mode: String,
+    conflict_policy: String,
+    ignore: Vec<String>,
+    follow_symlinks: bool,
+    verify_hashes: bool,
+    no_verify_hashes: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !left.is_dir() || !right.is_dir() {
+        return Err("sync currently supports local directory paths only".into());
+    }
+
+    let direction = direction.to_lowercase();
+    if !matches!(
+        direction.as_str(),
+        "left_to_right" | "right_to_left" | "bidirectional"
+    ) {
+        return Err("invalid --direction. Use: left_to_right, right_to_left, bidirectional".into());
+    }
+
+    let delete_mode = delete_mode.to_lowercase();
+    if !matches!(delete_mode.as_str(), "trash" | "permanent") {
+        return Err("invalid --delete-mode. Use: trash, permanent".into());
+    }
+
+    let conflict_policy = conflict_policy.to_lowercase();
+    if !matches!(
+        conflict_policy.as_str(),
+        "newest" | "left" | "right" | "skip" | "error"
+    ) {
+        return Err("invalid --conflict. Use: newest, left, right, skip, error".into());
+    }
+
+    let scan_report = run_scan_for_sync(
+        &left,
+        &right,
+        &ignore,
+        follow_symlinks,
+        verify_hashes,
+        no_verify_hashes,
+    )?;
+
+    let actions = plan_sync_actions(&scan_report.entries, &direction, &conflict_policy)?;
+    let mut summary = SyncSummaryReport {
+        total_actions: actions.len(),
+        ..SyncSummaryReport::default()
+    };
+
+    if dry_run {
+        for action in &actions {
+            match action.code.as_str() {
+                "COPY_LR" | "COPY_RL" => summary.copied += 1,
+                "UPDATE_L" | "UPDATE_R" => summary.updated += 1,
+                "DELETE_L" | "DELETE_R" => summary.deleted += 1,
+                _ => summary.skipped += 1,
+            }
+        }
+    } else {
+        execute_sync_actions(&actions, &left, &right, &delete_mode, &mut summary);
+    }
+
+    let report = SyncReport {
+        schema_version: "1.0.0".to_string(),
+        left: left.to_string_lossy().to_string(),
+        right: right.to_string_lossy().to_string(),
+        direction,
+        dry_run,
+        delete_mode,
+        conflict_policy,
+        summary,
+        actions,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Synchronization {}", if dry_run { "(dry-run)" } else { "" });
+        println!("Left : {}", report.left);
+        println!("Right: {}", report.right);
+        println!("Mode : {}", report.direction);
+        println!(
+            "Summary: {} copied, {} updated, {} deleted, {} skipped, {} failed",
+            report.summary.copied,
+            report.summary.updated,
+            report.summary.deleted,
+            report.summary.skipped,
+            report.summary.failed
+        );
+        let show = report.actions.len().min(100);
+        if show > 0 {
+            println!("Planned actions (showing {} of {}):", show, report.actions.len());
+            for action in report.actions.iter().take(show) {
+                println!("  [{}] {} -- {}", action.code, action.path, action.detail);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Serialize, Clone)]
+struct CopyItemReport {
+    path: String,
+    status: String,
+    detail: String,
+}
+
+#[derive(Default, Serialize)]
+struct CopySummaryReport {
+    total_paths: usize,
+    copied: usize,
+    missing: usize,
+    skipped: usize,
+    failed: usize,
+}
+
+#[derive(Serialize)]
+struct CopyReport {
+    schema_version: String,
+    left: String,
+    right: String,
+    direction: String,
+    dry_run: bool,
+    summary: CopySummaryReport,
+    items: Vec<CopyItemReport>,
+}
+
+#[derive(Serialize)]
+struct DiffFileReport {
+    schema_version: String,
+    left: String,
+    right: String,
+    path: String,
+    mode: String,
+    result: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct DiffFileTextResult {
+    total_lines: usize,
+    equal_lines: usize,
+    inserted_lines: usize,
+    deleted_lines: usize,
+    lines: Vec<rcompare_core::text_diff::DiffLine>,
+}
+
+#[derive(Serialize)]
+struct DiffFileBinaryRange {
+    start: u64,
+    end_exclusive: u64,
+}
+
+#[derive(Serialize)]
+struct DiffFileBinaryResult {
+    left_size: u64,
+    right_size: u64,
+    identical: bool,
+    mismatch_bytes: u64,
+    mismatch_ranges: Vec<DiffFileBinaryRange>,
+    truncated_ranges: bool,
+}
+
+struct TempFileGuard {
+    path: PathBuf,
+}
+
+impl TempFileGuard {
+    fn create(
+        prefix: &str,
+        suffix: &str,
+        bytes: &[u8],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let pid = std::process::id();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let suffix = if suffix.is_empty() {
+            "".to_string()
+        } else if suffix.starts_with('.') {
+            suffix.to_string()
+        } else {
+            format!(".{suffix}")
+        };
+
+        for i in 0..32u32 {
+            let path = std::env::temp_dir().join(format!(
+                "rcompare_cli_{}_{}_{}_{}{}",
+                prefix, pid, nanos, i, suffix
+            ));
+            if path.exists() {
+                continue;
+            }
+            fs::write(&path, bytes)?;
+            return Ok(Self { path });
+        }
+
+        Err("failed to allocate temporary file".into())
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn run_diff_file(
+    left: PathBuf,
+    right: PathBuf,
+    rel_path: String,
+    mode: String,
+    json: bool,
+    ignore_whitespace: Option<String>,
+    ignore_case: bool,
+    regex_rules: Vec<String>,
+    image_exif: bool,
+    image_tolerance: u8,
+    max_binary_ranges: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rel = PathBuf::from(rel_path.trim());
+    if rel.as_os_str().is_empty() {
+        return Err("--path cannot be empty".into());
+    }
+    if !is_safe_relative_path(&rel) {
+        return Err("--path must be a safe relative path".into());
+    }
+
+    let mode = resolve_diff_mode(&rel, &mode)?;
+    let left_bytes = read_bytes_from_source_path(&left, &rel)?;
+    let right_bytes = read_bytes_from_source_path(&right, &rel)?;
+
+    let result = match mode.as_str() {
+        "text" => {
+            let config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
+            let engine = TextDiffEngine::with_config(config);
+            let left_text = String::from_utf8(left_bytes)
+                .map_err(|_| "left file is not valid UTF-8; use --mode binary")?;
+            let right_text = String::from_utf8(right_bytes)
+                .map_err(|_| "right file is not valid UTF-8; use --mode binary")?;
+            let lines = engine.compare_text_patience(&left_text, &right_text, &rel)?;
+            let mut equal_lines = 0usize;
+            let mut inserted_lines = 0usize;
+            let mut deleted_lines = 0usize;
+            for line in &lines {
+                match line.change_type {
+                    DiffChangeType::Equal => equal_lines += 1,
+                    DiffChangeType::Insert => inserted_lines += 1,
+                    DiffChangeType::Delete => deleted_lines += 1,
+                }
+            }
+            serde_json::to_value(DiffFileTextResult {
+                total_lines: lines.len(),
+                equal_lines,
+                inserted_lines,
+                deleted_lines,
+                lines,
+            })?
+        }
+        "binary" => serde_json::to_value(build_binary_diff_result(
+            &left_bytes,
+            &right_bytes,
+            max_binary_ranges,
+        ))?,
+        "image" => {
+            let suffix = rel
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("img")
+                .to_string();
+            let left_tmp = TempFileGuard::create("diff_img_left", &suffix, &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_img_right", &suffix, &right_bytes)?;
+            let engine = ImageDiffEngine::new()
+                .with_exif_compare(image_exif)
+                .with_tolerance(image_tolerance);
+            let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        "csv" => {
+            let left_tmp = TempFileGuard::create("diff_csv_left", "csv", &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_csv_right", "csv", &right_bytes)?;
+            let engine = CsvDiffEngine::new();
+            let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        "excel" => {
+            let suffix = rel
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("xlsx")
+                .to_string();
+            let left_tmp = TempFileGuard::create("diff_excel_left", &suffix, &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_excel_right", &suffix, &right_bytes)?;
+            let engine = ExcelDiffEngine::new();
+            let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        "json" => {
+            let left_tmp = TempFileGuard::create("diff_json_left", "json", &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_json_right", "json", &right_bytes)?;
+            let engine = JsonDiffEngine::new();
+            let result = engine.compare_json_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        "yaml" => {
+            let suffix = rel
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("yaml")
+                .to_string();
+            let left_tmp = TempFileGuard::create("diff_yaml_left", &suffix, &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_yaml_right", &suffix, &right_bytes)?;
+            let engine = JsonDiffEngine::new();
+            let result = engine.compare_yaml_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        "parquet" => {
+            let left_tmp = TempFileGuard::create("diff_parquet_left", "parquet", &left_bytes)?;
+            let right_tmp = TempFileGuard::create("diff_parquet_right", "parquet", &right_bytes)?;
+            let engine = ParquetDiffEngine::new();
+            let result = engine.compare_parquet_files(left_tmp.path(), right_tmp.path())?;
+            serde_json::to_value(result)?
+        }
+        _ => return Err(format!("unsupported mode: {mode}").into()),
+    };
+
+    let report = DiffFileReport {
+        schema_version: "1.0.0".to_string(),
+        left: left.to_string_lossy().to_string(),
+        right: right.to_string_lossy().to_string(),
+        path: rel.to_string_lossy().to_string(),
+        mode: mode.clone(),
+        result,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Diff file");
+        println!("Left : {}", report.left);
+        println!("Right: {}", report.right);
+        println!("Path : {}", report.path);
+        println!("Mode : {}", report.mode);
+        println!("{}", serde_json::to_string_pretty(&report.result)?);
+    }
+
+    Ok(())
+}
+
+fn run_read(
+    left: PathBuf,
+    right: PathBuf,
+    side: String,
+    rel_path: String,
+    out: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rel = PathBuf::from(rel_path.trim());
+    if rel.as_os_str().is_empty() {
+        return Err("--path cannot be empty".into());
+    }
+    if !is_safe_relative_path(&rel) {
+        return Err("--path must be a safe relative path".into());
+    }
+
+    let side = side.to_lowercase();
+    if !matches!(side.as_str(), "left" | "right") {
+        return Err("invalid --side. Use: left, right".into());
+    }
+
+    let bytes = if side == "left" {
+        read_bytes_from_source_path(&left, &rel)?
+    } else {
+        read_bytes_from_source_path(&right, &rel)?
+    };
+
+    if let Some(out_path) = out {
+        if let Some(parent) = out_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&out_path, &bytes)?;
+        println!("Wrote {} bytes to {}", bytes.len(), out_path.display());
+    } else {
+        let mut stdout = std::io::stdout();
+        stdout.write_all(&bytes)?;
+        stdout.flush()?;
+    }
+
+    Ok(())
+}
+
+fn resolve_diff_mode(path: &Path, requested_mode: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let mode = requested_mode.trim().to_lowercase();
+    if mode.is_empty() || mode == "auto" {
+        if is_image_file(path) {
+            return Ok("image".to_string());
+        }
+        if is_csv_file(path) {
+            return Ok("csv".to_string());
+        }
+        if is_excel_file(path) {
+            return Ok("excel".to_string());
+        }
+        if is_json_file(path) {
+            return Ok("json".to_string());
+        }
+        if is_yaml_file(path) {
+            return Ok("yaml".to_string());
+        }
+        if is_parquet_file(path) {
+            return Ok("parquet".to_string());
+        }
+        if is_text_file(path) {
+            return Ok("text".to_string());
+        }
+        return Ok("binary".to_string());
+    }
+
+    if matches!(
+        mode.as_str(),
+        "text" | "binary" | "image" | "csv" | "excel" | "json" | "yaml" | "parquet"
+    ) {
+        Ok(mode)
+    } else {
+        Err(
+            "invalid --mode. Use: auto, text, binary, image, csv, excel, json, yaml, parquet"
+                .into(),
+        )
+    }
+}
+
+fn build_binary_diff_result(
+    left: &[u8],
+    right: &[u8],
+    max_ranges: usize,
+) -> DiffFileBinaryResult {
+    let left_size = left.len() as u64;
+    let right_size = right.len() as u64;
+    let max_len = left.len().max(right.len());
+
+    let mut mismatch_bytes = 0u64;
+    let mut ranges = Vec::new();
+    let mut range_start: Option<usize> = None;
+
+    for i in 0..max_len {
+        let l = left.get(i).copied();
+        let r = right.get(i).copied();
+        let is_diff = match (l, r) {
+            (Some(a), Some(b)) => a != b,
+            _ => true,
+        };
+
+        if is_diff {
+            mismatch_bytes += 1;
+            if range_start.is_none() {
+                range_start = Some(i);
+            }
+        } else if let Some(start) = range_start.take() {
+            ranges.push(DiffFileBinaryRange {
+                start: start as u64,
+                end_exclusive: i as u64,
+            });
+        }
+    }
+
+    if let Some(start) = range_start.take() {
+        ranges.push(DiffFileBinaryRange {
+            start: start as u64,
+            end_exclusive: max_len as u64,
+        });
+    }
+
+    let truncated_ranges = if max_ranges == 0 {
+        !ranges.is_empty()
+    } else {
+        ranges.len() > max_ranges
+    };
+    if max_ranges == 0 {
+        ranges.clear();
+    } else if ranges.len() > max_ranges {
+        ranges.truncate(max_ranges);
+    }
+
+    DiffFileBinaryResult {
+        left_size,
+        right_size,
+        identical: mismatch_bytes == 0,
+        mismatch_bytes,
+        mismatch_ranges: ranges,
+        truncated_ranges,
+    }
+}
+
+fn read_bytes_from_source_path(
+    source_path: &Path,
+    rel: &Path,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let source = build_scan_source(source_path)?;
+    read_bytes_from_source(&source, rel)
+}
+
+fn read_bytes_from_source(
+    source: &ScanSource,
+    rel: &Path,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    match source {
+        ScanSource::Local { root } => {
+            let full = root.join(rel);
+            if !full.exists() {
+                return Err(format!("path not found: {}", full.display()).into());
+            }
+            if full.is_dir() {
+                return Err(format!("path is a directory: {}", full.display()).into());
+            }
+            Ok(fs::read(&full)?)
+        }
+        ScanSource::Vfs { vfs, root } => {
+            let full = if root.as_os_str().is_empty() {
+                rel.to_path_buf()
+            } else {
+                root.join(rel)
+            };
+            let metadata = vfs
+                .metadata(&full)
+                .map_err(|e| format!("failed to stat {}: {}", full.display(), e))?;
+            if metadata.is_dir {
+                return Err(format!("path is a directory: {}", rel.display()).into());
+            }
+            let mut reader = vfs
+                .open_file(&full)
+                .map_err(|e| format!("failed to open {}: {}", full.display(), e))?;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        }
+    }
+}
+
+fn run_copy(
+    left: PathBuf,
+    right: PathBuf,
+    direction: String,
+    paths: Vec<String>,
+    paths_file: Option<PathBuf>,
+    dry_run: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !left.is_dir() || !right.is_dir() {
+        return Err("copy currently supports local directory paths only".into());
+    }
+
+    let direction = direction.to_lowercase();
+    if !matches!(direction.as_str(), "left_to_right" | "right_to_left") {
+        return Err("invalid --direction. Use: left_to_right, right_to_left".into());
+    }
+
+    let selected_paths = collect_copy_paths(&paths, paths_file.as_deref())?;
+    if selected_paths.is_empty() {
+        return Err("no paths selected. Use --path or --paths-file".into());
+    }
+
+    let mut summary = CopySummaryReport {
+        total_paths: selected_paths.len(),
+        ..CopySummaryReport::default()
+    };
+    let mut items = Vec::with_capacity(selected_paths.len());
+
+    for rel_path in selected_paths {
+        let rel = Path::new(&rel_path);
+        if !is_safe_relative_path(rel) {
+            summary.skipped += 1;
+            items.push(CopyItemReport {
+                path: rel_path,
+                status: "skipped".to_string(),
+                detail: "Invalid relative path (must not be absolute or contain '..')".to_string(),
+            });
+            continue;
+        }
+
+        let source = if direction == "left_to_right" {
+            left.join(rel)
+        } else {
+            right.join(rel)
+        };
+        let target = if direction == "left_to_right" {
+            right.join(rel)
+        } else {
+            left.join(rel)
+        };
+
+        if !source.exists() {
+            summary.missing += 1;
+            items.push(CopyItemReport {
+                path: rel_path,
+                status: "missing".to_string(),
+                detail: "Source path does not exist".to_string(),
+            });
+            continue;
+        }
+
+        if dry_run {
+            summary.copied += 1;
+            items.push(CopyItemReport {
+                path: rel_path,
+                status: "planned".to_string(),
+                detail: format!(
+                    "Would copy {} -> {}",
+                    source.display(),
+                    target.display()
+                ),
+            });
+            continue;
+        }
+
+        match apply_copy(&source, &target) {
+            Ok(()) => {
+                summary.copied += 1;
+                items.push(CopyItemReport {
+                    path: rel_path,
+                    status: "copied".to_string(),
+                    detail: "Copied successfully".to_string(),
+                });
+            }
+            Err(e) => {
+                summary.failed += 1;
+                items.push(CopyItemReport {
+                    path: rel_path,
+                    status: "failed".to_string(),
+                    detail: e.to_string(),
+                });
+            }
+        }
+    }
+
+    let report = CopyReport {
+        schema_version: "1.0.0".to_string(),
+        left: left.to_string_lossy().to_string(),
+        right: right.to_string_lossy().to_string(),
+        direction,
+        dry_run,
+        summary,
+        items,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("Copy {}", if dry_run { "(dry-run)" } else { "" });
+        println!("Left : {}", report.left);
+        println!("Right: {}", report.right);
+        println!("Mode : {}", report.direction);
+        println!(
+            "Summary: {} copied/planned, {} missing, {} skipped, {} failed",
+            report.summary.copied,
+            report.summary.missing,
+            report.summary.skipped,
+            report.summary.failed
+        );
+    }
+
+    Ok(())
+}
+
+fn collect_copy_paths(
+    cli_paths: &[String],
+    paths_file: Option<&Path>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut set = BTreeSet::new();
+
+    for p in cli_paths {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            set.insert(trimmed.to_string());
+        }
+    }
+
+    if let Some(file_path) = paths_file {
+        let data = fs::read_to_string(file_path)?;
+        for line in data.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            set.insert(trimmed.to_string());
+        }
+    }
+
+    Ok(set.into_iter().collect())
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    if path.is_absolute() {
+        return false;
+    }
+    for component in path.components() {
+        match component {
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+fn run_scan_for_sync(
+    left: &Path,
+    right: &Path,
+    ignore: &[String],
+    follow_symlinks: bool,
+    verify_hashes: bool,
+    no_verify_hashes: bool,
+) -> Result<SyncScanReport, Box<dyn std::error::Error>> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = ProcessCommand::new(exe);
+    cmd.arg("scan")
+        .arg(left)
+        .arg(right)
+        .arg("--json");
+
+    if follow_symlinks {
+        cmd.arg("--follow-symlinks");
+    }
+    if verify_hashes {
+        cmd.arg("--verify-hashes");
+    }
+    if no_verify_hashes {
+        cmd.arg("--no-verify-hashes");
+    }
+    for pat in ignore {
+        cmd.arg("--ignore").arg(pat);
+    }
+
+    let output = cmd.output()?;
+    let exit = output.status.code().unwrap_or(1);
+    if !matches!(exit, 0 | 2) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("scan failed (exit {}): {}", exit, stderr.trim()).into());
+    }
+
+    let report: SyncScanReport = serde_json::from_slice(&output.stdout)?;
+    Ok(report)
+}
+
+fn plan_sync_actions(
+    entries: &[SyncScanEntry],
+    direction: &str,
+    conflict_policy: &str,
+) -> Result<Vec<SyncActionReport>, Box<dyn std::error::Error>> {
+    let mut refs: Vec<&SyncScanEntry> = entries.iter().collect();
+    refs.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut actions = Vec::new();
+    for entry in refs {
+        let status = entry.status.as_str();
+        if status == "Same" {
+            continue;
+        }
+        if status == "Unchecked" {
+            actions.push(SyncActionReport {
+                code: "SKIP".to_string(),
+                path: entry.path.clone(),
+                detail: "Unchecked item; manual review required".to_string(),
+            });
+            continue;
+        }
+
+        if direction == "left_to_right" {
+            match status {
+                "OrphanLeft" => actions.push(SyncActionReport {
+                    code: "COPY_LR".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Create on right".to_string(),
+                }),
+                "OrphanRight" => actions.push(SyncActionReport {
+                    code: "DELETE_R".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Delete from right".to_string(),
+                }),
+                "Different" => actions.push(SyncActionReport {
+                    code: "UPDATE_R".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Overwrite right from left".to_string(),
+                }),
+                _ => {}
+            }
+            continue;
+        }
+
+        if direction == "right_to_left" {
+            match status {
+                "OrphanRight" => actions.push(SyncActionReport {
+                    code: "COPY_RL".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Create on left".to_string(),
+                }),
+                "OrphanLeft" => actions.push(SyncActionReport {
+                    code: "DELETE_L".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Delete from left".to_string(),
+                }),
+                "Different" => actions.push(SyncActionReport {
+                    code: "UPDATE_L".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Overwrite left from right".to_string(),
+                }),
+                _ => {}
+            }
+            continue;
+        }
+
+        // bidirectional
+        match status {
+            "OrphanLeft" => actions.push(SyncActionReport {
+                code: "COPY_LR".to_string(),
+                path: entry.path.clone(),
+                detail: "Missing on right".to_string(),
+            }),
+            "OrphanRight" => actions.push(SyncActionReport {
+                code: "COPY_RL".to_string(),
+                path: entry.path.clone(),
+                detail: "Missing on left".to_string(),
+            }),
+            "Different" => match conflict_policy {
+                "left" => actions.push(SyncActionReport {
+                    code: "COPY_LR".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Conflict policy=left".to_string(),
+                }),
+                "right" => actions.push(SyncActionReport {
+                    code: "COPY_RL".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Conflict policy=right".to_string(),
+                }),
+                "skip" => actions.push(SyncActionReport {
+                    code: "SKIP".to_string(),
+                    path: entry.path.clone(),
+                    detail: "Conflict policy=skip".to_string(),
+                }),
+                "error" => {
+                    return Err(
+                        format!("conflict encountered for {} and policy=error", entry.path).into(),
+                    );
+                }
+                "newest" => {
+                    let left_m = entry.left.as_ref().and_then(|s| s.modified_unix);
+                    let right_m = entry.right.as_ref().and_then(|s| s.modified_unix);
+                    match (left_m, right_m) {
+                        (Some(l), Some(r)) if l > r => actions.push(SyncActionReport {
+                            code: "COPY_LR".to_string(),
+                            path: entry.path.clone(),
+                            detail: "Left newer".to_string(),
+                        }),
+                        (Some(l), Some(r)) if r > l => actions.push(SyncActionReport {
+                            code: "COPY_RL".to_string(),
+                            path: entry.path.clone(),
+                            detail: "Right newer".to_string(),
+                        }),
+                        _ => actions.push(SyncActionReport {
+                            code: "SKIP".to_string(),
+                            path: entry.path.clone(),
+                            detail: "Cannot determine newer side".to_string(),
+                        }),
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    Ok(actions)
+}
+
+fn execute_sync_actions(
+    actions: &[SyncActionReport],
+    left_root: &Path,
+    right_root: &Path,
+    delete_mode: &str,
+    summary: &mut SyncSummaryReport,
+) {
+    for action in actions {
+        let rel = Path::new(&action.path);
+        let left_path = left_root.join(rel);
+        let right_path = right_root.join(rel);
+
+        match action.code.as_str() {
+            "COPY_LR" => {
+                if apply_copy(&left_path, &right_path).is_ok() {
+                    summary.copied += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            "COPY_RL" => {
+                if apply_copy(&right_path, &left_path).is_ok() {
+                    summary.copied += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            "UPDATE_R" => {
+                if apply_copy(&left_path, &right_path).is_ok() {
+                    summary.updated += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            "UPDATE_L" => {
+                if apply_copy(&right_path, &left_path).is_ok() {
+                    summary.updated += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            "DELETE_R" => {
+                if apply_delete(&right_path, delete_mode).is_ok() {
+                    summary.deleted += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            "DELETE_L" => {
+                if apply_delete(&left_path, delete_mode).is_ok() {
+                    summary.deleted += 1;
+                } else {
+                    summary.failed += 1;
+                }
+            }
+            _ => {
+                summary.skipped += 1;
+            }
+        }
+    }
+}
+
+fn apply_copy(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !source.exists() {
+        return Err(format!("source does not exist: {}", source.display()).into());
+    }
+    if source.is_dir() {
+        copy_dir_recursive(source, target)?;
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, target)?;
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else {
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn apply_delete(target: &Path, delete_mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !target.exists() {
+        return Ok(());
+    }
+    if delete_mode == "trash" {
+        move_to_local_trash(target)?;
+        return Ok(());
+    }
+    if target.is_dir() {
+        fs::remove_dir_all(target)?;
+    } else {
+        fs::remove_file(target)?;
+    }
+    Ok(())
+}
+
+fn move_to_local_trash(target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("cannot determine parent for {}", target.display()))?;
+    let trash_dir = parent.join(".rcompare_trash");
+    fs::create_dir_all(&trash_dir)?;
+
+    let original_name = target
+        .file_name()
+        .ok_or_else(|| format!("invalid target name: {}", target.display()))?;
+    let mut destination = trash_dir.join(original_name);
+    if destination.exists() {
+        let stem = target
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item");
+        let suffix = target
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{e}"))
+            .unwrap_or_default();
+        let mut i = 1usize;
+        loop {
+            let candidate = trash_dir.join(format!("{stem}_{i}{suffix}"));
+            if !candidate.exists() {
+                destination = candidate;
+                break;
+            }
+            i += 1;
+        }
+    }
+
+    fs::rename(target, destination)?;
+    Ok(())
 }
 
 /// Build TextDiffConfig from CLI flags
@@ -2475,6 +3971,7 @@ fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -2715,5 +4212,158 @@ mod tests {
             root: PathBuf::from("/test/path"),
         };
         assert!(source.vfs().is_none());
+    }
+
+    #[test]
+    fn test_build_capabilities_report_has_core_commands() {
+        let report = build_capabilities_report();
+
+        assert_eq!(report.schema_version, "1.0.0");
+        assert_eq!(report.scan_json_schema_versions, vec!["1.1.0".to_string()]);
+        assert!(report.commands.iter().any(|c| c.name == "scan"));
+        assert!(report.commands.iter().any(|c| c.name == "sync"));
+        assert!(report.commands.iter().any(|c| c.name == "copy"));
+        assert!(report.commands.iter().any(|c| c.name == "diff-file"));
+        assert!(report.commands.iter().any(|c| c.name == "read"));
+        assert!(report.commands.iter().any(|c| c.name == "capabilities"));
+        assert!(report.exit_codes.iter().any(|e| e.code == 2));
+    }
+
+    #[test]
+    fn test_build_capabilities_report_scan_flags_include_json() {
+        let report = build_capabilities_report();
+        let scan = report
+            .commands
+            .iter()
+            .find(|c| c.name == "scan")
+            .expect("scan command must exist");
+        assert!(scan.flags.iter().any(|f| f == "--json"));
+        assert!(scan.supports_json);
+    }
+
+    #[test]
+    fn test_plan_sync_actions_left_to_right() {
+        let entries = vec![
+            SyncScanEntry {
+                path: "a.txt".to_string(),
+                status: "OrphanLeft".to_string(),
+                left: Some(SyncScanSide {
+                    modified_unix: Some(10),
+                    is_dir: false,
+                }),
+                right: None,
+            },
+            SyncScanEntry {
+                path: "b.txt".to_string(),
+                status: "Different".to_string(),
+                left: Some(SyncScanSide {
+                    modified_unix: Some(20),
+                    is_dir: false,
+                }),
+                right: Some(SyncScanSide {
+                    modified_unix: Some(15),
+                    is_dir: false,
+                }),
+            },
+        ];
+
+        let actions = plan_sync_actions(&entries, "left_to_right", "newest").unwrap();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].code, "COPY_LR");
+        assert_eq!(actions[1].code, "UPDATE_R");
+    }
+
+    #[test]
+    fn test_plan_sync_actions_bidirectional_newest() {
+        let entries = vec![SyncScanEntry {
+            path: "c.txt".to_string(),
+            status: "Different".to_string(),
+            left: Some(SyncScanSide {
+                modified_unix: Some(30),
+                is_dir: false,
+            }),
+            right: Some(SyncScanSide {
+                modified_unix: Some(10),
+                is_dir: false,
+            }),
+        }];
+
+        let actions = plan_sync_actions(&entries, "bidirectional", "newest").unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].code, "COPY_LR");
+    }
+
+    #[test]
+    fn test_is_safe_relative_path() {
+        assert!(is_safe_relative_path(Path::new("src/main.rs")));
+        assert!(is_safe_relative_path(Path::new("./a/b.txt")));
+        assert!(!is_safe_relative_path(Path::new("../secret")));
+        assert!(!is_safe_relative_path(Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn test_collect_copy_paths_merges_and_deduplicates() {
+        let tmp_name = format!(
+            "rcompare_copy_paths_{}_{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let tmp_file = std::env::temp_dir().join(tmp_name);
+        fs::write(&tmp_file, "# comment\nfoo.txt\nbar/baz.txt\nfoo.txt\n\n")
+            .expect("write temp file");
+
+        let cli_paths = vec!["foo.txt".to_string(), "abc.txt".to_string()];
+        let paths = collect_copy_paths(&cli_paths, Some(&tmp_file)).expect("collect paths");
+
+        assert_eq!(paths, vec!["abc.txt", "bar/baz.txt", "foo.txt"]);
+
+        let _ = fs::remove_file(tmp_file);
+    }
+
+    #[test]
+    fn test_resolve_diff_mode_auto_binary_fallback() {
+        assert_eq!(
+            resolve_diff_mode(Path::new("blob.bin"), "auto").unwrap(),
+            "binary"
+        );
+    }
+
+    #[test]
+    fn test_resolve_diff_mode_auto_text_and_image() {
+        assert_eq!(
+            resolve_diff_mode(Path::new("src/main.rs"), "auto").unwrap(),
+            "text"
+        );
+        assert_eq!(
+            resolve_diff_mode(Path::new("assets/logo.png"), "auto").unwrap(),
+            "image"
+        );
+    }
+
+    #[test]
+    fn test_build_binary_diff_result_ranges() {
+        let left = b"abcXXXdefYYY";
+        let right = b"abc123def000";
+        let result = build_binary_diff_result(left, right, 10);
+        assert!(!result.identical);
+        assert_eq!(result.mismatch_bytes, 6);
+        assert_eq!(result.mismatch_ranges.len(), 2);
+        assert_eq!(result.mismatch_ranges[0].start, 3);
+        assert_eq!(result.mismatch_ranges[0].end_exclusive, 6);
+        assert_eq!(result.mismatch_ranges[1].start, 9);
+        assert_eq!(result.mismatch_ranges[1].end_exclusive, 12);
+    }
+
+    #[test]
+    fn test_build_binary_diff_result_truncation() {
+        let left = b"abcdef";
+        let right = b"aXcYef";
+        let result = build_binary_diff_result(left, right, 1);
+        assert!(!result.identical);
+        assert!(result.truncated_ranges);
+        assert_eq!(result.mismatch_ranges.len(), 1);
     }
 }

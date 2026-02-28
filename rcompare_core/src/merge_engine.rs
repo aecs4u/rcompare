@@ -14,9 +14,7 @@ pub struct MergeEngine {
 impl MergeEngine {
     /// Create a new merge engine with default settings
     pub fn new() -> Self {
-        Self {
-            auto_resolve: true,
-        }
+        Self { auto_resolve: true }
     }
 
     /// Create a merge engine with auto-resolution disabled

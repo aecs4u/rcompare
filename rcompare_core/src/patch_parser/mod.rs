@@ -4,24 +4,18 @@ pub mod normal;
 pub mod rcs;
 pub mod unified;
 
-use rcompare_common::{
-    DiffFormat, DiffGenerator, PatchSet, RCompareError,
-};
+use rcompare_common::{DiffFormat, DiffGenerator, PatchSet, RCompareError};
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
 
 // Patterns for format detection
-static PAT_UNIFIED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^@@\s").unwrap());
-static PAT_CONTEXT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\*{15}").unwrap());
+static PAT_UNIFIED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^@@\s").unwrap());
+static PAT_CONTEXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\*{15}").unwrap());
 static PAT_NORMAL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\d+(?:,\d+)?[acd]\d+(?:,\d+)?$").unwrap());
-static PAT_RCS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[ad]\d+\s+\d+$").unwrap());
-static PAT_ED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d+(?:,\d+)?[acd]$").unwrap());
+static PAT_RCS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[ad]\d+\s+\d+$").unwrap());
+static PAT_ED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d+(?:,\d+)?[acd]$").unwrap());
 
 /// Parser for diff/patch output in multiple formats.
 ///
@@ -170,13 +164,19 @@ mod tests {
     #[test]
     fn test_detect_generator_cvs() {
         let lines = vec!["Index: file.txt", "===", "--- file.txt"];
-        assert_eq!(PatchParser::detect_generator(&lines), DiffGenerator::CvsDiff);
+        assert_eq!(
+            PatchParser::detect_generator(&lines),
+            DiffGenerator::CvsDiff
+        );
     }
 
     #[test]
     fn test_detect_generator_perforce() {
         let lines = vec!["==== //depot/file.txt#1 - file.txt ===="];
-        assert_eq!(PatchParser::detect_generator(&lines), DiffGenerator::Perforce);
+        assert_eq!(
+            PatchParser::detect_generator(&lines),
+            DiffGenerator::Perforce
+        );
     }
 
     #[test]

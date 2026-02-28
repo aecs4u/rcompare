@@ -35,19 +35,27 @@ impl CopyCheckpoint {
         let dest_str = dest.to_string_lossy();
         let combined = format!("{}->{}", source_str, dest_str);
         let hash = blake3::hash(combined.as_bytes());
-        checkpoint_dir.join(format!("checkpoint_{}.json", hex::encode(&hash.as_bytes()[..16])))
+        checkpoint_dir.join(format!(
+            "checkpoint_{}.json",
+            hex::encode(&hash.as_bytes()[..16])
+        ))
     }
 
     /// Load a checkpoint from disk
-    pub fn load(checkpoint_dir: &Path, source: &Path, dest: &Path) -> Result<Option<Self>, RCompareError> {
+    pub fn load(
+        checkpoint_dir: &Path,
+        source: &Path,
+        dest: &Path,
+    ) -> Result<Option<Self>, RCompareError> {
         let path = Self::checkpoint_path(checkpoint_dir, source, dest);
         if !path.exists() {
             return Ok(None);
         }
 
         let data = fs::read_to_string(&path)?;
-        let checkpoint: CopyCheckpoint = serde_json::from_str(&data)
-            .map_err(|e| RCompareError::Serialization(format!("Failed to parse checkpoint: {}", e)))?;
+        let checkpoint: CopyCheckpoint = serde_json::from_str(&data).map_err(|e| {
+            RCompareError::Serialization(format!("Failed to parse checkpoint: {}", e))
+        })?;
 
         Ok(Some(checkpoint))
     }
@@ -56,8 +64,9 @@ impl CopyCheckpoint {
     pub fn save(&self, checkpoint_dir: &Path) -> Result<(), RCompareError> {
         fs::create_dir_all(checkpoint_dir)?;
         let path = Self::checkpoint_path(checkpoint_dir, &self.source, &self.destination);
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| RCompareError::Serialization(format!("Failed to serialize checkpoint: {}", e)))?;
+        let data = serde_json::to_string_pretty(self).map_err(|e| {
+            RCompareError::Serialization(format!("Failed to serialize checkpoint: {}", e))
+        })?;
         fs::write(&path, data)?;
         Ok(())
     }
@@ -152,9 +161,7 @@ impl ResumableCopy {
                 );
                 (0, false)
             } else if !dest.exists() {
-                warn!(
-                    "Checkpoint exists but destination file missing, starting fresh"
-                );
+                warn!("Checkpoint exists but destination file missing, starting fresh");
                 (0, false)
             } else {
                 let dest_size = fs::metadata(dest)?.len();
@@ -173,7 +180,10 @@ impl ResumableCopy {
                     );
                     let dest_partial_hash = self.partial_hash(dest, cp.bytes_copied)?;
                     if dest_partial_hash == cp.partial_hash {
-                        info!("Checkpoint verified, resuming from {} bytes", cp.bytes_copied);
+                        info!(
+                            "Checkpoint verified, resuming from {} bytes",
+                            cp.bytes_copied
+                        );
                         (cp.bytes_copied, true)
                     } else {
                         warn!("Checkpoint hash mismatch, starting fresh");
@@ -306,7 +316,8 @@ impl ResumableCopy {
 
             // Preserve timestamps
             if let Ok(modified) = source_metadata.modified() {
-                let _ = filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
+                let _ =
+                    filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
             }
 
             // Delete checkpoint
@@ -352,7 +363,8 @@ impl ResumableCopy {
         // Preserve timestamps
         if let Ok(metadata) = fs::metadata(source) {
             if let Ok(modified) = metadata.modified() {
-                let _ = filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
+                let _ =
+                    filetime::set_file_mtime(dest, filetime::FileTime::from_system_time(modified));
             }
         }
 
@@ -495,11 +507,7 @@ mod tests {
 
         // Create some fake checkpoints
         for i in 0..5 {
-            fs::write(
-                checkpoint_dir.join(format!("checkpoint_{}.json", i)),
-                "{}",
-            )
-            .unwrap();
+            fs::write(checkpoint_dir.join(format!("checkpoint_{}.json", i)), "{}").unwrap();
         }
 
         let engine = ResumableCopy::new(checkpoint_dir.clone());

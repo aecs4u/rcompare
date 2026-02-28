@@ -25,7 +25,7 @@ pub struct JsonDiffResult {
 /// Represents a difference in a specific path
 #[derive(Debug, Clone, Serialize)]
 pub struct PathDiff {
-    /// JSON path (e.g., "root.users[0].name")
+    /// JSON path (e.g., "root.users\[0\].name")
     pub path: String,
     /// Type of difference
     pub diff_type: PathDiffType,

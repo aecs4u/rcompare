@@ -1,13 +1,10 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError};
 use regex::Regex;
 use std::sync::LazyLock;
 
 // Ed command: N[,M]a or N[,M]c or N[,M]d
-static ED_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d+)(?:,(\d+))?([acd])$").unwrap()
-});
+static ED_COMMAND: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)(?:,(\d+))?([acd])$").unwrap());
 
 /// Parse ed diff format into a list of FilePatches.
 ///
@@ -47,8 +44,7 @@ pub fn parse_ed(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
             match cmd {
                 "a" => {
                     // Append after line `start`
-                    let mut diff =
-                        PatchDifference::new(DifferenceType::Insert, start, start + 1);
+                    let mut diff = PatchDifference::new(DifferenceType::Insert, start, start + 1);
                     diff.dest_lines = content_lines;
                     let mut hunk = Hunk::new(start, start + 1);
                     hunk.source_count = 0;
@@ -58,8 +54,7 @@ pub fn parse_ed(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
                 }
                 "d" => {
                     // Delete lines start through end
-                    let mut diff =
-                        PatchDifference::new(DifferenceType::Delete, start, start);
+                    let mut diff = PatchDifference::new(DifferenceType::Delete, start, start);
                     // Ed delete doesn't include content; we create empty source placeholders
                     for _ in 0..line_count {
                         diff.source_lines.push(String::new());
@@ -72,8 +67,7 @@ pub fn parse_ed(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
                 }
                 "c" => {
                     // Change lines start through end
-                    let mut diff =
-                        PatchDifference::new(DifferenceType::Change, start, start);
+                    let mut diff = PatchDifference::new(DifferenceType::Change, start, start);
                     for _ in 0..line_count {
                         diff.source_lines.push(String::new());
                     }

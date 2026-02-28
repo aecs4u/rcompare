@@ -1,6 +1,4 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, HunkType, PatchDifference, PatchSet,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, HunkType, PatchDifference, PatchSet};
 
 /// Serializer that recreates unified diff text from a PatchSet model.
 ///

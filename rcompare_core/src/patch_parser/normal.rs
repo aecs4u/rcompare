@@ -1,6 +1,4 @@
-use rcompare_common::{
-    DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError,
-};
+use rcompare_common::{DifferenceType, FilePatch, Hunk, PatchDifference, RCompareError};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -10,19 +8,16 @@ static DIFF_HEADER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // Added: NaM or NaM,O
-static HUNK_ADDED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d+)a(\d+)(?:,(\d+))?$").unwrap()
-});
+static HUNK_ADDED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)a(\d+)(?:,(\d+))?$").unwrap());
 
 // Removed: N,MdO or NdO
-static HUNK_REMOVED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d+)(?:,(\d+))?d(\d+)$").unwrap()
-});
+static HUNK_REMOVED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)(?:,(\d+))?d(\d+)$").unwrap());
 
 // Changed: N,McO,P or NcO or NcO,P or N,McO
-static HUNK_CHANGED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d+)(?:,(\d+))?c(\d+)(?:,(\d+))?$").unwrap()
-});
+static HUNK_CHANGED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\d+)(?:,(\d+))?c(\d+)(?:,(\d+))?$").unwrap());
 
 /// Parse normal diff format into a list of FilePatches.
 pub fn parse_normal(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
@@ -54,8 +49,7 @@ pub fn parse_normal(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
             i += 1;
 
-            let mut diff =
-                PatchDifference::new(DifferenceType::Insert, src_line, dst_start);
+            let mut diff = PatchDifference::new(DifferenceType::Insert, src_line, dst_start);
             while i < lines.len() && lines[i].starts_with("> ") {
                 diff.dest_lines.push(format!("{}\n", &lines[i][2..]));
                 i += 1;
@@ -85,8 +79,7 @@ pub fn parse_normal(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
             i += 1;
 
-            let mut diff =
-                PatchDifference::new(DifferenceType::Delete, src_start, dst_line);
+            let mut diff = PatchDifference::new(DifferenceType::Delete, src_start, dst_line);
             while i < lines.len() && lines[i].starts_with("< ") {
                 diff.source_lines.push(format!("{}\n", &lines[i][2..]));
                 i += 1;
@@ -119,8 +112,7 @@ pub fn parse_normal(lines: &[&str]) -> Result<Vec<FilePatch>, RCompareError> {
 
             i += 1;
 
-            let mut diff =
-                PatchDifference::new(DifferenceType::Change, src_start, dst_start);
+            let mut diff = PatchDifference::new(DifferenceType::Change, src_start, dst_start);
 
             // Collect source lines (< ...)
             while i < lines.len() && lines[i].starts_with("< ") {
