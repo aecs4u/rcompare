@@ -10,8 +10,9 @@ from PySide6.QtCore import (
     QModelIndex,
     Qt,
 )
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -38,8 +39,15 @@ _COL_ASCII = 17
 _TOTAL_COLUMNS = 18
 
 _DIFF_BG = QColor("#ffe1e1")
-_NORMAL_BG = QColor("#ffffff")
 _NON_PRINTABLE_FG = QColor("#999999")
+
+
+def _normal_bg() -> QColor:
+    """Return palette base color for theme-aware normal background."""
+    app = QApplication.instance()
+    if app:
+        return app.palette().color(QPalette.ColorRole.Base)
+    return QColor("#ffffff")
 
 
 def _is_printable(byte: int) -> bool:
@@ -201,14 +209,14 @@ class HexTableModel(QAbstractTableModel):
             byte_index = offset + (col - _COL_HEX_START)
             if byte_index in self._diff_indices:
                 return _DIFF_BG
-            return _NORMAL_BG
+            return _normal_bg()
 
         if col == _COL_ASCII:
             # Highlight the ASCII cell if any byte in the row differs.
             for i in range(offset, min(offset + _CHUNK_SIZE, len(self._data))):
                 if i in self._diff_indices:
                     return _DIFF_BG
-            return _NORMAL_BG
+            return _normal_bg()
 
         return None
 

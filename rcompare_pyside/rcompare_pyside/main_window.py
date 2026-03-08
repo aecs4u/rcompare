@@ -692,6 +692,8 @@ class MainWindow(QMainWindow):
 
         self._text_view = TextView(self._view_stack)
         self._view_stack.addWidget(self._text_view)    # index 1
+        if config.appearance:
+            self._text_view.apply_appearance(config.appearance)
 
         self._hex_view = HexView(self._view_stack)
         self._view_stack.addWidget(self._hex_view)      # index 2
@@ -2209,6 +2211,10 @@ class MainWindow(QMainWindow):
             updates = dialog.get_config_updates()
             self._config.theme = str(updates.get("theme", self._config.theme))
             self._config.cli_path = updates.get("cli_path")
+            # Apply appearance settings
+            appearance = dialog.get_appearance_settings()
+            self._config.appearance = appearance
+            self._apply_appearance(appearance)
             # Update CLI bridge if path changed
             try:
                 cli_path = self._config.get_cli_path()
@@ -2722,6 +2728,10 @@ class MainWindow(QMainWindow):
                 use_hash_verification=self._settings.use_hash_verification,
                 cache_dir=self._settings.cache_dir,
             )
+            appearance = dialog.get_appearance_settings()
+            self._config.appearance = appearance
+            self._apply_appearance(appearance)
+            self._config.save()
 
     @Slot()
     def _on_configure_shortcuts(self) -> None:
@@ -2853,6 +2863,10 @@ class MainWindow(QMainWindow):
         self._session_tabs.setCurrentIndex(0)
         self._apply_session_state(0)
         self._folder_view.set_column_widths(self._config.folder_columns or {})
+
+    def _apply_appearance(self, appearance: dict) -> None:
+        """Apply appearance settings to all text views."""
+        self._text_view.apply_appearance(appearance)
 
     def _sync_config_from_runtime(self) -> None:
         """Write current runtime state into AppConfig before save."""

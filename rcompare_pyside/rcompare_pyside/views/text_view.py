@@ -5,21 +5,35 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton,
-    QFileDialog,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
+    QPushButton, QFileDialog,
 )
 
 from ..widgets.diff_text_edit import DiffTextEdit
 from ..utils.cli_bridge import CliBridge, TextDiffReport, TextDiffLine
 
 
-# Colors for diff lines
-COLOR_EQUAL = QColor("#ffffff")
-COLOR_INSERT = QColor("#e8f4ea")  # Light green - added on right
-COLOR_DELETE = QColor("#ffe1e1")  # Light red - deleted from left
-COLOR_GAP = QColor("#f5f5f5")    # Gray for gap lines
+# Default colors for diff lines
+_DEFAULT_COLORS = {
+    "color_added": "#c8e6c9",
+    "color_removed": "#ffcdd2",
+    "color_changed": "#fff9c4",
+    "color_applied": "#e0e0e0",
+}
+
+COLOR_INSERT = QColor(_DEFAULT_COLORS["color_added"])
+COLOR_DELETE = QColor(_DEFAULT_COLORS["color_removed"])
+COLOR_GAP = QColor("#f5f5f5")
+
+
+def _color_equal() -> QColor:
+    """Return the 'equal' background — uses palette base for theme awareness."""
+    app = QApplication.instance()
+    if app:
+        return app.palette().color(QPalette.ColorRole.Base)
+    return QColor("#ffffff")
 
 
 class TextView(QWidget):
@@ -40,13 +54,19 @@ class TextView(QWidget):
         header.setSpacing(4)
 
         self._left_path_label = QLabel("Left file")
-        self._left_path_label.setStyleSheet("font-weight: bold; color: #3875c4; padding: 2px 6px;")
+        self._left_path_label.setObjectName("leftPathLabel")
+        self._left_path_label.setStyleSheet(
+            "QLabel#leftPathLabel { font-weight: bold; color: palette(link); padding: 2px 6px; }"
+        )
         self._left_browse = QPushButton("Browse")
         self._left_browse.setFixedWidth(60)
         self._left_browse.clicked.connect(self._browse_left)
 
         self._right_path_label = QLabel("Right file")
-        self._right_path_label.setStyleSheet("font-weight: bold; color: #b04552; padding: 2px 6px;")
+        self._right_path_label.setObjectName("rightPathLabel")
+        self._right_path_label.setStyleSheet(
+            "QLabel#rightPathLabel { font-weight: bold; color: palette(highlight); padding: 2px 6px; }"
+        )
         self._right_browse = QPushButton("Browse")
         self._right_browse.setFixedWidth(60)
         self._right_browse.clicked.connect(self._browse_right)
@@ -76,6 +96,30 @@ class TextView(QWidget):
         # Synchronized scrolling
         self._left_editor.scroll_value_changed.connect(self._on_left_scroll)
         self._right_editor.scroll_value_changed.connect(self._on_right_scroll)
+
+    def apply_appearance(self, appearance: dict) -> None:
+        """Apply appearance settings (colors, font, tab width) from config."""
+        global COLOR_INSERT, COLOR_DELETE
+        if "color_added" in appearance:
+            COLOR_INSERT = QColor(appearance["color_added"])
+        if "color_removed" in appearance:
+            COLOR_DELETE = QColor(appearance["color_removed"])
+
+        from PySide6.QtGui import QFont, QFontMetricsF
+        font_family = appearance.get("font_family")
+        font_size = appearance.get("font_size", 10)
+        tab_width = appearance.get("tab_width", 4)
+
+        for editor in (self._left_editor, self._right_editor):
+            if font_family:
+                font = QFont(font_family, int(font_size))
+            else:
+                font = editor.font()
+                font.setPointSize(int(font_size))
+            editor.setFont(font)
+            editor.setTabStopDistance(
+                QFontMetricsF(font).horizontalAdvance(" ") * int(tab_width)
+            )
 
     def _on_left_scroll(self, value: int) -> None:
         if self._syncing:
@@ -137,8 +181,8 @@ class TextView(QWidget):
                 for i, j in zip(range(i1, i2), range(j1, j2)):
                     display_left.append(left_lines[i])
                     display_right.append(right_lines[j])
-                    colors_left.append(COLOR_EQUAL)
-                    colors_right.append(COLOR_EQUAL)
+                    colors_left.append(_color_equal())
+                    colors_right.append(_color_equal())
                     nums_left.append(str(i + 1))
                     nums_right.append(str(j + 1))
             elif tag == "replace":
@@ -198,8 +242,8 @@ class TextView(QWidget):
             if line.change_type == "Equal":
                 display_left.append(line.content)
                 display_right.append(line.content)
-                colors_left.append(COLOR_EQUAL)
-                colors_right.append(COLOR_EQUAL)
+                colors_left.append(_color_equal())
+                colors_right.append(_color_equal())
                 nums_left.append(str(line.line_number_left) if line.line_number_left else "")
                 nums_right.append(str(line.line_number_right) if line.line_number_right else "")
             elif line.change_type == "Delete":
@@ -240,7 +284,7 @@ class TextView(QWidget):
             elif line.startswith("@@"):
                 colors.append(QColor("#e0e0ff"))
             else:
-                colors.append(COLOR_EQUAL)
+                colors.append(_color_equal())
 
         self._left_editor.set_content(display, colors, nums)
         self._right_editor.clear_content()

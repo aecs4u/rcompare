@@ -69,6 +69,7 @@ class AppConfig:
     folder_columns: dict = field(default_factory=dict)
     active_view: int = 0
     three_way_mode: bool = False
+    appearance: dict = field(default_factory=dict)
     _config_file: Optional[str] = field(default=None, repr=False)
 
     @classmethod
@@ -89,6 +90,7 @@ class AppConfig:
                     folder_columns=data.get("folder_columns", {}),
                     active_view=int(data.get("active_view", 0)),
                     three_way_mode=bool(data.get("three_way_mode", False)),
+                    appearance=data.get("appearance", {}),
                 )
                 config._config_file = str(path)
                 return config
@@ -116,6 +118,7 @@ class AppConfig:
             "folder_columns": self.folder_columns,
             "active_view": self.active_view,
             "three_way_mode": self.three_way_mode,
+            "appearance": self.appearance,
         }
         path.write_text(json.dumps(data, indent=2))
 

@@ -282,6 +282,7 @@ class SettingsDialog(QDialog):
         colors_group = QGroupBox("Diff Colors")
         colors_layout = QFormLayout(colors_group)
 
+        saved = self._config.appearance
         self._color_buttons: dict[str, QPushButton] = {}
         color_defs = [
             ("color_added", "Added lines:", "#c8e6c9"),
@@ -292,7 +293,7 @@ class SettingsDialog(QDialog):
         for key, label, default in color_defs:
             btn = QPushButton()
             btn.setFixedSize(60, 24)
-            color = QColor(default)
+            color = QColor(saved.get(key, default))
             btn.setStyleSheet(f"background-color: {color.name()};")
             btn.setProperty("color", color.name())
             btn.clicked.connect(lambda checked=False, b=btn, k=key: self._pick_color(b))
@@ -305,17 +306,22 @@ class SettingsDialog(QDialog):
         font_group = QGroupBox("Diff Font")
         font_layout = QFormLayout(font_group)
         self._font_combo = QFontComboBox()
-        self._font_combo.setCurrentFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
+        saved_font = saved.get("font_family")
+        if saved_font:
+            from PySide6.QtGui import QFont
+            self._font_combo.setCurrentFont(QFont(saved_font))
+        else:
+            self._font_combo.setCurrentFont(
+                QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+            )
         font_layout.addRow("Font:", self._font_combo)
         self._font_size_spin = QSpinBox()
         self._font_size_spin.setRange(6, 72)
-        self._font_size_spin.setValue(10)
+        self._font_size_spin.setValue(int(saved.get("font_size", 10)))
         font_layout.addRow("Size:", self._font_size_spin)
         self._tab_width_spin = QSpinBox()
         self._tab_width_spin.setRange(1, 16)
-        self._tab_width_spin.setValue(4)
+        self._tab_width_spin.setValue(int(saved.get("tab_width", 4)))
         font_layout.addRow("Tab width:", self._tab_width_spin)
         layout.addWidget(font_group)
 
@@ -391,6 +397,16 @@ class SettingsDialog(QDialog):
             cache_dir=self._cache_edit.text() or None,
         )
 
+    def get_appearance_settings(self) -> dict:
+        """Return appearance settings (colors, font, tab width)."""
+        result: dict = {}
+        for key, btn in self._color_buttons.items():
+            result[key] = btn.property("color")
+        result["font_family"] = self._font_combo.currentFont().family()
+        result["font_size"] = self._font_size_spin.value()
+        result["tab_width"] = self._tab_width_spin.value()
+        return result
+
     def get_config_updates(self) -> dict:
         return {
             "theme": self._theme_combo.currentText().lower(),
@@ -412,6 +428,23 @@ class SettingsDialog(QDialog):
         self._hash_check.setChecked(True)
         self._cache_edit.clear()
         self._theme_combo.setCurrentText("Light")
+        # Reset diff colors
+        defaults = {
+            "color_added": "#c8e6c9",
+            "color_removed": "#ffcdd2",
+            "color_changed": "#fff9c4",
+            "color_applied": "#e0e0e0",
+        }
+        for key, btn in self._color_buttons.items():
+            color = defaults.get(key, "#ffffff")
+            btn.setStyleSheet(f"background-color: {color};")
+            btn.setProperty("color", color)
+        # Reset font settings
+        self._font_combo.setCurrentFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self._font_size_spin.setValue(10)
+        self._tab_width_spin.setValue(4)
         self._auto_detect_cli()
 
     def _browse_cache(self) -> None:
