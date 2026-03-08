@@ -22,7 +22,7 @@ This file is the consolidated entrypoint for all Markdown documentation in this 
 - [VFS & Archive Roadmap](../ROADMAP_VFS.md): Storage/archive-focused roadmap.
 - [CLI Feature Roadmap](RCOMPARE_CLI_FEATURE_ROADMAP.md): Planned CLI milestones.
 - [PySide GitHub Plan](RCOMPARE_PYSIDE_GITHUB_PLAN.md): PySide release/milestone planning.
-- [PySide KDE Compliance Plan](RCOMPARE_PYSIDE_KDE_COMPLIANCE_PLAN.md): KDE-focused UX, integration, and QA plan.
+- [KDE Compliance](KDE_COMPLIANCE.md): KDE/Plasma compliance documentation (audits, checklist, shortcuts, implementation plan).
 - [WinMerge Parity Plan](WINMERGE_PARITY.md): Detailed parity plan.
 - [WinMerge Parity Phase 1](WINMERGE_PARITY_PHASE1.md): Phase completion report.
 

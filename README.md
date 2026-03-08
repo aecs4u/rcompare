@@ -1,6 +1,6 @@
 # RCompare
 
-A high-performance file and directory comparison toolkit with a Rust core, CLI, and two desktop frontends (Slint and PySide6), inspired by Beyond Compare and following architectural patterns similar to Czkawka.
+A high-performance file and directory comparison toolkit with a Rust core, CLI, and PySide6 desktop GUI, inspired by Beyond Compare and following architectural patterns similar to Czkawka.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
@@ -13,7 +13,7 @@ A high-performance file and directory comparison toolkit with a Rust core, CLI, 
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
-- **CLI + GUI frontends**: Console output, JSON output, Slint GUI (`rcompare_gui`), and PySide6 GUI (`rcompare_pyside`)
+- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`)
 - **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
 - **Copy operations**: GUI copy left/right operations for sync workflows
@@ -55,13 +55,10 @@ cargo build --release --no-default-features --features "archives,csv-diff"
 # Run CLI
 ./target/release/rcompare_cli scan /path/to/left /path/to/right
 
-# Run Slint GUI
-./target/release/rcompare_gui
-
-# Run PySide GUI (Python >= 3.10)
+# Run GUI (PySide6, Python >= 3.10)
 cd rcompare_pyside
 uv sync
-uv run python -m rcompare_pyside
+uv run rcompare-gui
 ```
 
 ### Feature Flags
@@ -235,14 +232,7 @@ Pixel-level comparison of image files:
 
 ## GUI Features
 
-RCompare currently ships two GUI frontends:
-
-### Slint GUI (`rcompare_gui`)
-- Fast native Rust desktop UI with folder scan/compare workflows
-- Folder/text/hex/image views
-- Copy actions and filtering support
-
-### PySide6 GUI (`rcompare_pyside`)
+The PySide6 desktop GUI is the primary graphical frontend for RCompare, offering a full-featured KDE-compliant comparison interface.
 - **Multi-session tabs** and persistent per-user state
 - **Folder view options**: compare structure, files-only, ignore structure, always-show-folders
 - **Diff option presets**: differences/orphans/newer-side focused views
@@ -289,8 +279,8 @@ rcompare/
 ├── rcompare_common/      # Shared types, traits, and errors
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
-├── rcompare_gui/         # Graphical interface (Slint)
-├── rcompare_pyside/      # Graphical interface (PySide6)
+├── rcompare_pyside/      # Desktop GUI (PySide6) — default
+├── rcompare_gui/         # Experimental GUI (Slint, legacy)
 └── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 
@@ -450,8 +440,7 @@ Documentation is consolidated in:
 - Directory scanning and comparison
 - Hash caching with BLAKE3
 - CLI with colored output and progress bars with ETA
-- Slint GUI with folder/text/hex/image views
-- PySide GUI with multi-tab sessions, profile persistence, sync preview, rich context commands
+- PySide6 GUI with multi-tab sessions, profile persistence, sync preview, rich context commands, KDE compliance
 - Archive comparison (zip, tar, tar.gz, tgz, 7z)
 - Copy left/right operations
 - VFS abstraction layer
@@ -504,9 +493,8 @@ Documentation is consolidated in:
 - **tracing** - Structured logging
 
 ### GUI
-- **Slint 1.9** - Declarative UI framework
-- **native-dialog** - Native file dialogs
-- **PySide6** - Python desktop frontend
+- **PySide6** - Desktop GUI frontend (default)
+- **Slint 1.9** - Experimental native Rust UI (legacy)
 - **logfire** - Structured application logging/telemetry backend
 
 ## Use Cases
@@ -668,7 +656,7 @@ The Cargo workspace metadata is `MIT OR Apache-2.0`.
 - Inspired by [Beyond Compare](https://www.scootersoftware.com/)
 - Architecture based on [Czkawka](https://github.com/qarmin/czkawka)
 - Uses [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) for fast hashing
-- UI built with [Slint](https://slint.rs/)
+- GUI built with [PySide6](https://doc.qt.io/qtforpython-6/) and [Slint](https://slint.rs/)
 
 ## Contact
 

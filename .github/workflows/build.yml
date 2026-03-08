@@ -1,0 +1,135 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux
+            arch: arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            arch: x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            platform: macos
+            arch: x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: macos
+            arch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.arch }}-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-target-release-
+
+      - name: Build CLI (release)
+        run: cargo build --package rcompare_cli --release --target ${{ matrix.target }}
+
+      - name: Build GUI (release)
+        run: cargo build --package rcompare_gui --release --target ${{ matrix.target }}
+
+      - name: Build FFI (release)
+        run: cargo build --package rcompare_ffi --release --target ${{ matrix.target }}
+
+      - name: Strip binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          strip target/${{ matrix.target }}/release/rcompare_cli || true
+          strip target/${{ matrix.target }}/release/rcompare_gui || true
+
+      - name: Package binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/rcompare_cli dist/rcompare_cli
+          cp target/${{ matrix.target }}/release/rcompare_gui dist/rcompare_gui
+          cp target/${{ matrix.target }}/release/librcompare_ffi.a dist/ || true
+          cp rcompare_ffi/include/rcompare.h dist/ || true
+          cd dist && tar czf ../rcompare-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz *
+
+      - name: Package binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force
+          Copy-Item target/${{ matrix.target }}/release/rcompare_cli.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/rcompare_gui.exe dist/
+          Copy-Item target/${{ matrix.target }}/release/rcompare_ffi.lib dist/ -ErrorAction SilentlyContinue
+          Copy-Item rcompare_ffi/include/rcompare.h dist/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/* -DestinationPath rcompare-${{ matrix.platform }}-${{ matrix.arch }}.zip
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcompare-${{ matrix.platform }}-${{ matrix.arch }}
+          path: rcompare-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+          retention-days: 30
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcompare-${{ matrix.platform }}-${{ matrix.arch }}
+          path: rcompare-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          retention-days: 30

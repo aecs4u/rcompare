@@ -195,9 +195,16 @@ jobs:
           - **Specialized Comparisons**: Text, CSV, JSON, Excel, Images, Parquet
           - **Archive Support**: ZIP, TAR, 7Z, RAR (read-only)
           - **Cloud Storage**: S3, SFTP, WebDAV support
-          - **Modern GUI**: Slint-based with tree view and auto-comparison
+          - **PySide6 GUI**: KDE-compliant desktop app with multi-tab sessions, sync preview, profiles
           - **Powerful CLI**: Colored output, JSON export, pattern filtering
           - **WinMerge Parity**: Whitespace handling, case-insensitive, regex rules, EXIF metadata
+
+          ### PySide6 GUI (Python)
+
+          The primary GUI is a PySide6 desktop application. Install separately:
+          ```bash
+          cd rcompare_pyside && uv sync && uv run rcompare-gui
+          ```
 
           ### Documentation
 
