@@ -9,7 +9,8 @@ import shutil
 from typing import Optional
 
 from PySide6.QtCore import Qt, QUrl, Slot
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QTextDocument
+from PySide6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -165,11 +166,43 @@ class MainWindow(QMainWindow):
         self._act_new_tab.setShortcut(QKeySequence.StandardKey.AddTab)  # Ctrl+T
         file_menu.addAction(self._act_new_tab)
 
+        self._act_open_diff = QAction(self._themed_icon("document-open"), "&Open Diff...", self)
+        self._act_open_diff.setShortcut(QKeySequence.StandardKey.Open)  # Ctrl+O
+        file_menu.addAction(self._act_open_diff)
+
+        self._act_compare_files = QAction(
+            self._themed_icon("system-search"), "Compare &Files/Folders...", self
+        )
+        file_menu.addAction(self._act_compare_files)
+
+        file_menu.addSeparator()
+
+        self._act_save_diff = QAction(self._themed_icon("document-save"), "&Save Diff...", self)
+        self._act_save_diff.setShortcut(QKeySequence.StandardKey.Save)  # Ctrl+S
+        file_menu.addAction(self._act_save_diff)
+
+        self._act_save_all = QAction(
+            self._themed_icon("document-save-all"), "Save &All...", self
+        )
+        self._act_save_all.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        file_menu.addAction(self._act_save_all)
+
+        file_menu.addSeparator()
+
+        self._act_print = QAction(self._themed_icon("document-print"), "&Print...", self)
+        self._act_print.setShortcut(QKeySequence.StandardKey.Print)  # Ctrl+P
+        file_menu.addAction(self._act_print)
+
+        self._act_print_preview = QAction(
+            self._themed_icon("document-print-preview"), "Print Pre&view...", self
+        )
+        file_menu.addAction(self._act_print_preview)
+
+        file_menu.addSeparator()
+
         self._act_close_tab = QAction(self._themed_icon("tab-close"), "&Close Tab", self)
         self._act_close_tab.setShortcut(QKeySequence.StandardKey.Close)  # Ctrl+W
         file_menu.addAction(self._act_close_tab)
-
-        file_menu.addSeparator()
 
         self._act_quit = QAction(self._themed_icon("application-exit"), "&Quit", self)
         self._act_quit.setShortcut(QKeySequence.StandardKey.Quit)  # Ctrl+Q
@@ -258,6 +291,40 @@ class MainWindow(QMainWindow):
         )
         self._act_next_diff.setShortcut(QKeySequence("Alt+Down"))
         diff_menu.addAction(self._act_next_diff)
+
+        diff_menu.addSeparator()
+
+        self._act_apply_diff = QAction(
+            self._themed_icon("dialog-ok-apply", "dialog-ok"),
+            "&Apply Difference (L->R)",
+            self,
+        )
+        self._act_apply_diff.setShortcut(QKeySequence("Ctrl+Return"))
+        diff_menu.addAction(self._act_apply_diff)
+
+        self._act_unapply_diff = QAction(
+            self._themed_icon("edit-undo"),
+            "&Unapply Difference (R->L)",
+            self,
+        )
+        self._act_unapply_diff.setShortcut(QKeySequence("Ctrl+Backspace"))
+        diff_menu.addAction(self._act_unapply_diff)
+
+        diff_menu.addSeparator()
+
+        self._act_apply_all = QAction(
+            self._themed_icon("dialog-ok"),
+            "Apply A&ll (L->R)",
+            self,
+        )
+        diff_menu.addAction(self._act_apply_all)
+
+        self._act_unapply_all = QAction(
+            self._themed_icon("edit-undo"),
+            "Unapply Al&l (R->L)",
+            self,
+        )
+        diff_menu.addAction(self._act_unapply_all)
 
         diff_menu.addSeparator()
 
@@ -564,6 +631,18 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        self._tb_apply = QAction(
+            self._themed_icon("dialog-ok-apply", "dialog-ok"), "Apply", self
+        )
+        self._tb_apply.setToolTip("Apply selected difference (Ctrl+Return)")
+        toolbar.addAction(self._tb_apply)
+
+        toolbar.addSeparator()
+
+        self._tb_save_diff = QAction(self._themed_icon("document-save"), "Save Diff", self)
+        self._tb_save_diff.setToolTip("Save comparison as diff file")
+        toolbar.addAction(self._tb_save_diff)
+
         self._tb_options = QAction(self._themed_icon("configure"), "Options", self)
         toolbar.addAction(self._tb_options)
 
@@ -666,6 +745,12 @@ class MainWindow(QMainWindow):
 
         # File menu
         self._act_new_tab.triggered.connect(self._on_new_session)
+        self._act_open_diff.triggered.connect(self._on_open_diff)
+        self._act_compare_files.triggered.connect(self._on_compare_files_dialog)
+        self._act_save_diff.triggered.connect(self._on_save_diff)
+        self._act_save_all.triggered.connect(self._on_save_all)
+        self._act_print.triggered.connect(self._on_print)
+        self._act_print_preview.triggered.connect(self._on_print_preview)
         self._act_close_tab.triggered.connect(self._on_close_tab)
         self._act_quit.triggered.connect(self.close)
 
@@ -682,6 +767,10 @@ class MainWindow(QMainWindow):
         self._act_next_file.triggered.connect(self._on_next_file)
         self._act_prev_diff.triggered.connect(self._on_prev_diff)
         self._act_next_diff.triggered.connect(self._on_next_diff)
+        self._act_apply_diff.triggered.connect(self._on_apply_diff)
+        self._act_unapply_diff.triggered.connect(self._on_unapply_diff)
+        self._act_apply_all.triggered.connect(self._on_apply_all)
+        self._act_unapply_all.triggered.connect(self._on_unapply_all)
         self._act_diff_stats.triggered.connect(self._on_diff_stats)
 
         # View menu
@@ -719,6 +808,8 @@ class MainWindow(QMainWindow):
         self._tb_copy_lr.triggered.connect(self._on_copy_lr)
         self._tb_copy_rl.triggered.connect(self._on_copy_rl)
         self._tb_sync.triggered.connect(self._on_sync)
+        self._tb_apply.triggered.connect(self._on_apply_diff)
+        self._tb_save_diff.triggered.connect(self._on_save_diff)
         self._tb_options.triggered.connect(self._on_preferences)
         self._tb_profiles.triggered.connect(self._on_profiles)
 
@@ -2355,6 +2446,60 @@ class MainWindow(QMainWindow):
         self._navigate_entry(entries, 1)
 
     @Slot()
+    def _on_apply_diff(self) -> None:
+        """Apply selected difference: copy left -> right."""
+        selected = self._folder_view.selected_paths()
+        if not selected:
+            self.statusBar().showMessage("No item selected to apply.", 3000)
+            return
+        self._copy_paths(selected, left_to_right=True)
+
+    @Slot()
+    def _on_unapply_diff(self) -> None:
+        """Unapply selected difference: copy right -> left."""
+        selected = self._folder_view.selected_paths()
+        if not selected:
+            self.statusBar().showMessage("No item selected to unapply.", 3000)
+            return
+        self._copy_paths(selected, left_to_right=False)
+
+    @Slot()
+    def _on_apply_all(self) -> None:
+        """Apply all differences: copy all different/orphan items left -> right."""
+        entries = self._get_diff_entries()
+        if not entries:
+            self.statusBar().showMessage("No differences to apply.", 3000)
+            return
+        answer = QMessageBox.question(
+            self,
+            "Apply All",
+            f"Apply all {len(entries)} difference(s) from left to right?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        paths = [e.path for e in entries]
+        self._copy_paths(paths, left_to_right=True)
+
+    @Slot()
+    def _on_unapply_all(self) -> None:
+        """Unapply all differences: copy all different/orphan items right -> left."""
+        entries = self._get_diff_entries()
+        if not entries:
+            self.statusBar().showMessage("No differences to unapply.", 3000)
+            return
+        answer = QMessageBox.question(
+            self,
+            "Unapply All",
+            f"Unapply all {len(entries)} difference(s) from right to left?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        paths = [e.path for e in entries]
+        self._copy_paths(paths, left_to_right=False)
+
+    @Slot()
     def _on_diff_stats(self) -> None:
         """Show the Diff Statistics dialog."""
         if self._current_report is None:
@@ -2366,6 +2511,195 @@ class MainWindow(QMainWindow):
             return
         dialog = StatsDialog(self._current_report, self)
         dialog.exec()
+
+    # ------------------------------------------------------------------
+    # File I/O: Open/Save diff, Print
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def _on_open_diff(self) -> None:
+        """Open a diff/patch file and display it in the text view."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Diff File",
+            "",
+            "Diff files (*.diff *.patch);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            content = Path(path).read_text(errors="replace")
+        except OSError as exc:
+            QMessageBox.critical(self, "Open Failed", str(exc))
+            return
+
+        # Display in text view
+        self._switch_view(1)  # Text Compare tab
+        self._text_view.show_diff_text(content, Path(path).name)
+        self.statusBar().showMessage(f"Opened diff: {path}", 5000)
+        log_info("opened diff file", path=path)
+
+    @Slot()
+    def _on_compare_files_dialog(self) -> None:
+        """Open a dialog to select two files/folders to compare."""
+        left = QFileDialog.getExistingDirectory(self, "Select Left Folder")
+        if not left:
+            return
+        right = QFileDialog.getExistingDirectory(self, "Select Right Folder")
+        if not right:
+            return
+        self._path_bar.left_path = left
+        self._path_bar.right_path = right
+        self._on_compare()
+
+    @Slot()
+    def _on_save_diff(self) -> None:
+        """Save the current comparison as a unified diff file."""
+        if self._current_report is None:
+            QMessageBox.information(
+                self, "No Comparison", "Run a comparison first."
+            )
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Diff",
+            "comparison.diff",
+            "Diff files (*.diff);;Patch files (*.patch);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            lines = self._generate_diff_output()
+            Path(path).write_text("\n".join(lines), encoding="utf-8")
+            self.statusBar().showMessage(f"Diff saved: {path}", 5000)
+            log_info("diff saved", path=path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", str(exc))
+
+    def _generate_diff_output(self) -> list[str]:
+        """Generate a unified-diff-style text summary of the current comparison."""
+        report = self._current_report
+        if report is None:
+            return []
+
+        lines: list[str] = []
+        lines.append(f"--- {report.left}")
+        lines.append(f"+++ {report.right}")
+        lines.append(f"# RCompare comparison report")
+        lines.append(f"# Total: {report.summary.total} entries")
+        lines.append(f"# Same: {report.summary.same}")
+        lines.append(f"# Different: {report.summary.different}")
+        lines.append(f"# Left only: {report.summary.orphan_left}")
+        lines.append(f"# Right only: {report.summary.orphan_right}")
+        lines.append("")
+
+        for entry in sorted(report.entries, key=lambda e: e.path):
+            status = entry.status
+            if status == DiffStatus.SAME:
+                lines.append(f"  {entry.path}")
+            elif status == DiffStatus.DIFFERENT:
+                left_size = entry.left.size if entry.left else "?"
+                right_size = entry.right.size if entry.right else "?"
+                lines.append(f"! {entry.path}  (left={left_size}, right={right_size})")
+            elif status == DiffStatus.ORPHAN_LEFT:
+                lines.append(f"- {entry.path}  (left only)")
+            elif status == DiffStatus.ORPHAN_RIGHT:
+                lines.append(f"+ {entry.path}  (right only)")
+            elif status == DiffStatus.UNCHECKED:
+                lines.append(f"? {entry.path}  (unchecked)")
+
+        # Include text diffs if available
+        if report.text_diffs:
+            for td in report.text_diffs:
+                lines.append("")
+                lines.append(f"diff {td.get('path', '?')}")
+                for line in td.get("lines", []):
+                    ct = line.get("change_type", "equal")
+                    content = line.get("content", "")
+                    if ct == "insert":
+                        lines.append(f"+{content}")
+                    elif ct == "delete":
+                        lines.append(f"-{content}")
+                    else:
+                        lines.append(f" {content}")
+
+        return lines
+
+    @Slot()
+    def _on_save_all(self) -> None:
+        """Save all modifications (apply all differences left -> right)."""
+        self._on_apply_all()
+
+    @Slot()
+    def _on_print(self) -> None:
+        """Print the current comparison view."""
+        doc = self._build_print_document()
+        if doc is None:
+            return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            doc.print_(printer)
+
+    @Slot()
+    def _on_print_preview(self) -> None:
+        """Show print preview of the current comparison."""
+        doc = self._build_print_document()
+        if doc is None:
+            return
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        preview = QPrintPreviewDialog(printer, self)
+        preview.paintRequested.connect(lambda p: doc.print_(p))
+        preview.exec()
+
+    def _build_print_document(self) -> Optional[QTextDocument]:
+        """Build a QTextDocument from the current comparison for printing."""
+        report = self._current_report
+        if report is None:
+            QMessageBox.information(
+                self, "No Comparison", "Run a comparison first."
+            )
+            return None
+
+        doc = QTextDocument()
+        html_parts = [
+            "<h2>RCompare Comparison Report</h2>",
+            f"<p><b>Left:</b> {report.left}</p>",
+            f"<p><b>Right:</b> {report.right}</p>",
+            "<table border='1' cellpadding='4' cellspacing='0' width='100%'>",
+            "<tr><th>Status</th><th>Path</th><th>Left Size</th><th>Right Size</th></tr>",
+        ]
+
+        status_labels = {
+            DiffStatus.SAME: ("Identical", "#e8f5e9"),
+            DiffStatus.DIFFERENT: ("Different", "#ffebee"),
+            DiffStatus.ORPHAN_LEFT: ("Left Only", "#fff3e0"),
+            DiffStatus.ORPHAN_RIGHT: ("Right Only", "#e3f2fd"),
+            DiffStatus.UNCHECKED: ("Unchecked", "#f5f5f5"),
+        }
+
+        for entry in sorted(report.entries, key=lambda e: e.path):
+            label, bg = status_labels.get(entry.status, ("?", "#ffffff"))
+            left_size = str(entry.left.size) if entry.left else "-"
+            right_size = str(entry.right.size) if entry.right else "-"
+            html_parts.append(
+                f"<tr style='background-color:{bg}'>"
+                f"<td>{label}</td><td>{entry.path}</td>"
+                f"<td align='right'>{left_size}</td><td align='right'>{right_size}</td></tr>"
+            )
+
+        html_parts.append("</table>")
+        html_parts.append(
+            f"<p><b>Summary:</b> {report.summary.same} identical, "
+            f"{report.summary.different} different, "
+            f"{report.summary.orphan_left} left only, "
+            f"{report.summary.orphan_right} right only</p>"
+        )
+        doc.setHtml("\n".join(html_parts))
+        return doc
 
     @Slot()
     def _on_profiles(self) -> None:

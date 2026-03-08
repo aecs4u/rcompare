@@ -7,10 +7,12 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFontComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -18,12 +20,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtGui import QFontDatabase, QIcon
+from PySide6.QtGui import QColor, QFontDatabase, QIcon
 
 from ..models.settings import ComparisonSettings
 from ..utils.config import AppConfig
@@ -57,6 +60,7 @@ class SettingsDialog(QDialog):
 
         self._build_general_tab()
         self._build_diff_options_tab()
+        self._build_files_tab()
         self._build_appearance_tab()
         self._build_cli_tab()
 
@@ -200,6 +204,60 @@ class SettingsDialog(QDialog):
 
         self._tabs.addTab(tab, self._icon("text-x-generic"), "Diff Options")
 
+    def _build_files_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # File encoding
+        encoding_group = QGroupBox("File Encoding")
+        encoding_layout = QFormLayout(encoding_group)
+        self._encoding_combo = QComboBox()
+        self._encoding_combo.setEditable(True)
+        self._encoding_combo.addItems([
+            "utf-8", "utf-16", "ascii", "latin-1", "iso-8859-1",
+            "iso-8859-15", "cp1252", "shift_jis", "euc-jp", "gb2312",
+            "big5", "koi8-r",
+        ])
+        self._encoding_combo.setCurrentText("utf-8")
+        encoding_layout.addRow("Default encoding:", self._encoding_combo)
+        encoding_hint = QLabel(
+            "Encoding used when reading text files for comparison. "
+            "Files with BOM markers are auto-detected."
+        )
+        encoding_hint.setWordWrap(True)
+        encoding_layout.addRow(encoding_hint)
+        layout.addWidget(encoding_group)
+
+        # Line endings
+        eol_group = QGroupBox("Line Endings")
+        eol_layout = QVBoxLayout(eol_group)
+        self._eol_ignore_check = QCheckBox("Ignore line ending differences (LF vs CRLF)")
+        self._eol_ignore_check.setChecked(True)
+        eol_layout.addWidget(self._eol_ignore_check)
+        layout.addWidget(eol_group)
+
+        # File type filters
+        filter_group = QGroupBox("Binary File Detection")
+        filter_layout = QVBoxLayout(filter_group)
+        filter_hint = QLabel(
+            "Files matching these patterns are always opened in hex view. "
+            "One glob pattern per line."
+        )
+        filter_hint.setWordWrap(True)
+        self._binary_patterns_edit = QTextEdit()
+        self._binary_patterns_edit.setMinimumHeight(80)
+        self._binary_patterns_edit.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self._binary_patterns_edit.setPlainText(
+            "*.exe\n*.dll\n*.so\n*.dylib\n*.bin\n*.dat\n*.o\n*.a\n*.lib"
+        )
+        filter_layout.addWidget(filter_hint)
+        filter_layout.addWidget(self._binary_patterns_edit)
+        layout.addWidget(filter_group, 1)
+
+        self._tabs.addTab(tab, self._icon("folder-open"), "Files")
+
     def _build_appearance_tab(self) -> None:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -220,15 +278,47 @@ class SettingsDialog(QDialog):
         appearance_layout.addRow(self._theme_hint)
         layout.addWidget(appearance_group)
 
-        notes_group = QGroupBox("Notes")
-        notes_layout = QVBoxLayout(notes_group)
-        notes = QLabel(
-            "Theme changes are applied when the application restarts. "
-            "All theme choices are stored per user."
+        # Diff colors (Kompare ViewPage style)
+        colors_group = QGroupBox("Diff Colors")
+        colors_layout = QFormLayout(colors_group)
+
+        self._color_buttons: dict[str, QPushButton] = {}
+        color_defs = [
+            ("color_added", "Added lines:", "#c8e6c9"),
+            ("color_removed", "Removed lines:", "#ffcdd2"),
+            ("color_changed", "Changed lines:", "#fff9c4"),
+            ("color_applied", "Applied changes:", "#e0e0e0"),
+        ]
+        for key, label, default in color_defs:
+            btn = QPushButton()
+            btn.setFixedSize(60, 24)
+            color = QColor(default)
+            btn.setStyleSheet(f"background-color: {color.name()};")
+            btn.setProperty("color", color.name())
+            btn.clicked.connect(lambda checked=False, b=btn, k=key: self._pick_color(b))
+            self._color_buttons[key] = btn
+            colors_layout.addRow(label, btn)
+
+        layout.addWidget(colors_group)
+
+        # Font settings
+        font_group = QGroupBox("Diff Font")
+        font_layout = QFormLayout(font_group)
+        self._font_combo = QFontComboBox()
+        self._font_combo.setCurrentFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
-        notes.setWordWrap(True)
-        notes_layout.addWidget(notes)
-        layout.addWidget(notes_group)
+        font_layout.addRow("Font:", self._font_combo)
+        self._font_size_spin = QSpinBox()
+        self._font_size_spin.setRange(6, 72)
+        self._font_size_spin.setValue(10)
+        font_layout.addRow("Size:", self._font_size_spin)
+        self._tab_width_spin = QSpinBox()
+        self._tab_width_spin.setRange(1, 16)
+        self._tab_width_spin.setValue(4)
+        font_layout.addRow("Tab width:", self._tab_width_spin)
+        layout.addWidget(font_group)
+
         layout.addStretch()
 
         self._tabs.addTab(tab, self._icon("preferences-desktop-theme"), "Appearance")
@@ -342,6 +432,13 @@ class SettingsDialog(QDialog):
         else:
             self._cli_edit.setText("")
             self._cli_edit.setPlaceholderText("Not found - please set manually")
+
+    def _pick_color(self, button: QPushButton) -> None:
+        current = QColor(button.property("color"))
+        color = QColorDialog.getColor(current, self, "Select Color")
+        if color.isValid():
+            button.setStyleSheet(f"background-color: {color.name()};")
+            button.setProperty("color", color.name())
 
     def _update_cli_status(self) -> None:
         raw = self._cli_edit.text().strip()

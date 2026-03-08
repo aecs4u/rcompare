@@ -220,6 +220,31 @@ class TextView(QWidget):
         self._left_editor.set_content(display_left, colors_left, nums_left)
         self._right_editor.set_content(display_right, colors_right, nums_right)
 
+    def show_diff_text(self, content: str, title: str = "Diff") -> None:
+        """Display raw diff/patch text content in the left editor."""
+        self._left_path_label.setText(title)
+        self._right_path_label.setText("")
+
+        lines = content.splitlines()
+        display: list[str] = []
+        colors: list[QColor] = []
+        nums: list[str] = []
+
+        for i, line in enumerate(lines, 1):
+            display.append(line)
+            nums.append(str(i))
+            if line.startswith("+") and not line.startswith("+++"):
+                colors.append(COLOR_INSERT)
+            elif line.startswith("-") and not line.startswith("---"):
+                colors.append(COLOR_DELETE)
+            elif line.startswith("@@"):
+                colors.append(QColor("#e0e0ff"))
+            else:
+                colors.append(COLOR_EQUAL)
+
+        self._left_editor.set_content(display, colors, nums)
+        self._right_editor.clear_content()
+
     def clear_content(self) -> None:
         self._left_editor.clear_content()
         self._right_editor.clear_content()
