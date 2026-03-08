@@ -165,6 +165,43 @@ class FolderView(QWidget):
                     paths.add(node.path)
         return sorted(paths)
 
+    def select_path(self, rel_path: str) -> None:
+        """Select and scroll to a row by its relative path."""
+        proxy = self._proxy_model
+        source = self._source_model
+
+        def _find_in_model(parent: QModelIndex, target: str) -> Optional[QModelIndex]:
+            for row in range(source.rowCount(parent)):
+                idx = source.index(row, COL_NAME, parent)
+                node: Optional[TreeNode] = idx.data(Qt.UserRole + 1)
+                if node is not None and node.path == target:
+                    return idx
+                # Recurse into children
+                child = _find_in_model(idx, target)
+                if child is not None:
+                    return child
+            return None
+
+        source_idx = _find_in_model(QModelIndex(), rel_path)
+        if source_idx is None:
+            return
+
+        proxy_idx = proxy.mapFromSource(source_idx)
+        if not proxy_idx.isValid():
+            return
+
+        for tree in (self._left_tree, self._right_tree):
+            sel = tree.selectionModel()
+            if sel is not None:
+                sel.clearSelection()
+                sel.select(proxy_idx, sel.SelectionFlag.Select | sel.SelectionFlag.Rows)
+                tree.scrollTo(proxy_idx, QAbstractItemView.ScrollHint.PositionAtCenter)
+                # Ensure parent is expanded
+                parent = proxy_idx.parent()
+                while parent.isValid():
+                    tree.expand(parent)
+                    parent = parent.parent()
+
     @property
     def left_tree(self) -> QTreeView:
         return self._left_tree

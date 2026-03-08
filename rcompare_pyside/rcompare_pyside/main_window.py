@@ -41,6 +41,7 @@ from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.sync_dialog import SyncDialog
 from .dialogs.profiles_dialog import ProfilesDialog
 from .dialogs.about_dialog import AboutDialog
+from .dialogs.stats_dialog import StatsDialog
 from .utils.telemetry import log_error, log_info, log_warning
 
 # ---------------------------------------------------------------------------
@@ -220,6 +221,52 @@ class MainWindow(QMainWindow):
         self._act_find_prev = QAction("Find &Previous", self)
         self._act_find_prev.setShortcut(QKeySequence.StandardKey.FindPrevious)  # Shift+F3
         edit_menu.addAction(self._act_find_prev)
+
+        # -- Difference -------------------------------------------------
+        diff_menu = menu_bar.addMenu("&Difference")
+
+        self._act_prev_file = QAction(
+            self._themed_icon("go-up"),
+            "&Previous File",
+            self,
+        )
+        self._act_prev_file.setShortcut(QKeySequence("Ctrl+Up"))
+        diff_menu.addAction(self._act_prev_file)
+
+        self._act_next_file = QAction(
+            self._themed_icon("go-down"),
+            "&Next File",
+            self,
+        )
+        self._act_next_file.setShortcut(QKeySequence("Ctrl+Down"))
+        diff_menu.addAction(self._act_next_file)
+
+        diff_menu.addSeparator()
+
+        self._act_prev_diff = QAction(
+            self._themed_icon("go-up-skip", "go-up"),
+            "Previous &Difference",
+            self,
+        )
+        self._act_prev_diff.setShortcut(QKeySequence("Alt+Up"))
+        diff_menu.addAction(self._act_prev_diff)
+
+        self._act_next_diff = QAction(
+            self._themed_icon("go-down-skip", "go-down"),
+            "Next D&ifference",
+            self,
+        )
+        self._act_next_diff.setShortcut(QKeySequence("Alt+Down"))
+        diff_menu.addAction(self._act_next_diff)
+
+        diff_menu.addSeparator()
+
+        self._act_diff_stats = QAction(
+            self._themed_icon("view-statistics"),
+            "&Statistics...",
+            self,
+        )
+        diff_menu.addAction(self._act_diff_stats)
 
         # -- View -------------------------------------------------------
         view_menu = menu_bar.addMenu("&View")
@@ -484,6 +531,17 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # Difference navigation
+        self._tb_prev_diff = QAction(self._themed_icon("go-up-skip", "go-up"), "Prev Diff", self)
+        self._tb_prev_diff.setToolTip("Previous Difference (Alt+Up)")
+        toolbar.addAction(self._tb_prev_diff)
+
+        self._tb_next_diff = QAction(self._themed_icon("go-down-skip", "go-down"), "Next Diff", self)
+        self._tb_next_diff.setToolTip("Next Difference (Alt+Down)")
+        toolbar.addAction(self._tb_next_diff)
+
+        toolbar.addSeparator()
+
         # Expand All / Collapse All
         self._tb_expand_all = QAction(self._themed_icon("zoom-in"), "Expand", self)
         toolbar.addAction(self._tb_expand_all)
@@ -578,8 +636,18 @@ class MainWindow(QMainWindow):
 
     def _build_status_bar(self) -> None:
         status_bar: QStatusBar = self.statusBar()
+
+        # Left: general message
         self._status_summary = QLabel("Ready")
-        status_bar.addPermanentWidget(self._status_summary)
+        status_bar.addWidget(self._status_summary, 1)
+
+        # Center: file navigation indicator
+        self._status_files = QLabel("")
+        status_bar.addPermanentWidget(self._status_files)
+
+        # Right: difference navigation indicator
+        self._status_diffs = QLabel("")
+        status_bar.addPermanentWidget(self._status_diffs)
 
     # ------------------------------------------------------------------
     # Signal connections
@@ -609,6 +677,13 @@ class MainWindow(QMainWindow):
         self._act_find_next.triggered.connect(self._on_find_next)
         self._act_find_prev.triggered.connect(self._on_find_prev)
 
+        # Difference menu
+        self._act_prev_file.triggered.connect(self._on_prev_file)
+        self._act_next_file.triggered.connect(self._on_next_file)
+        self._act_prev_diff.triggered.connect(self._on_prev_diff)
+        self._act_next_diff.triggered.connect(self._on_next_diff)
+        self._act_diff_stats.triggered.connect(self._on_diff_stats)
+
         # View menu
         self._act_refresh.triggered.connect(self._on_refresh)
         self._act_expand_all.triggered.connect(self._folder_view.expand_all)
@@ -637,6 +712,8 @@ class MainWindow(QMainWindow):
         self._tb_new.triggered.connect(self._on_new_session)
         self._tb_home.triggered.connect(self._on_home)
         self._tb_swap.triggered.connect(self._on_swap_sides)
+        self._tb_prev_diff.triggered.connect(self._on_prev_diff)
+        self._tb_next_diff.triggered.connect(self._on_next_diff)
         self._tb_expand_all.triggered.connect(self._folder_view.expand_all)
         self._tb_collapse_all.triggered.connect(self._folder_view.collapse_all)
         self._tb_copy_lr.triggered.connect(self._on_copy_lr)
@@ -1105,6 +1182,12 @@ class MainWindow(QMainWindow):
         session.status_summary = status_text
         self._status_summary.setText(status_text)
         self.statusBar().showMessage("Comparison complete.", 5000)
+
+        # Update navigation counters
+        diff_entries = self._get_diff_entries()
+        all_entries = self._get_all_file_entries()
+        self._status_files.setText(f"{len(all_entries)} files")
+        self._status_diffs.setText(f"{len(diff_entries)} differences")
         log_info(
             "compare completed",
             total=report.summary.total,
@@ -2185,6 +2268,104 @@ class MainWindow(QMainWindow):
         """Find previous occurrence (placeholder)."""
         # TODO: Implement find previous when search supports it
         pass
+
+    # ------------------------------------------------------------------
+    # Difference navigation
+    # ------------------------------------------------------------------
+
+    def _get_diff_entries(self) -> list:
+        """Return entries from current report that are not identical."""
+        report = self._current_report
+        if report is None:
+            return []
+        return [e for e in report.entries if e.status != DiffStatus.SAME and not (e.left and e.left.is_dir)]
+
+    def _get_all_file_entries(self) -> list:
+        """Return all file entries from current report."""
+        report = self._current_report
+        if report is None:
+            return []
+        return [e for e in report.entries if not (e.left and e.left.is_dir) or not (e.right and e.right.is_dir)]
+
+    def _navigate_entry(self, entries: list, direction: int) -> None:
+        """Navigate to next/prev entry in the given list."""
+        if not entries:
+            self.statusBar().showMessage("No entries to navigate.", 3000)
+            return
+
+        # Get current selection
+        selected = self._folder_view.selected_paths()
+        current_path = selected[0] if selected else ""
+
+        # Find current index
+        paths = [e.path for e in entries]
+        try:
+            current_idx = paths.index(current_path)
+            new_idx = current_idx + direction
+        except ValueError:
+            new_idx = 0 if direction > 0 else len(entries) - 1
+
+        # Wrap around
+        if new_idx >= len(entries):
+            new_idx = 0
+        elif new_idx < 0:
+            new_idx = len(entries) - 1
+
+        target_path = entries[new_idx].path
+        self._folder_view.select_path(target_path)
+        self._update_nav_status(new_idx, len(entries), entries[new_idx])
+
+    def _update_nav_status(self, index: int, total: int, entry=None) -> None:
+        """Update the status bar navigation indicators."""
+        self._status_diffs.setText(f"Diff {index + 1} of {total}")
+
+        # Also update file counter
+        report = self._current_report
+        if report:
+            all_files = self._get_all_file_entries()
+            if entry and entry.path:
+                try:
+                    file_idx = [e.path for e in all_files].index(entry.path)
+                    self._status_files.setText(f"File {file_idx + 1} of {len(all_files)}")
+                except ValueError:
+                    pass
+
+    @Slot()
+    def _on_prev_diff(self) -> None:
+        """Navigate to the previous difference."""
+        entries = self._get_diff_entries()
+        self._navigate_entry(entries, -1)
+
+    @Slot()
+    def _on_next_diff(self) -> None:
+        """Navigate to the next difference."""
+        entries = self._get_diff_entries()
+        self._navigate_entry(entries, 1)
+
+    @Slot()
+    def _on_prev_file(self) -> None:
+        """Navigate to the previous file."""
+        entries = self._get_all_file_entries()
+        self._navigate_entry(entries, -1)
+
+    @Slot()
+    def _on_next_file(self) -> None:
+        """Navigate to the next file."""
+        entries = self._get_all_file_entries()
+        self._navigate_entry(entries, 1)
+
+    @Slot()
+    def _on_diff_stats(self) -> None:
+        """Show the Diff Statistics dialog."""
+        if self._current_report is None:
+            QMessageBox.information(
+                self,
+                "No Comparison Available",
+                "Run a comparison first to see statistics.",
+            )
+            return
+        dialog = StatsDialog(self._current_report, self)
+        dialog.exec()
 
     @Slot()
     def _on_profiles(self) -> None:

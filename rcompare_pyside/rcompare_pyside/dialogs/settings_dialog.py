@@ -56,6 +56,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._tabs, 1)
 
         self._build_general_tab()
+        self._build_diff_options_tab()
         self._build_appearance_tab()
         self._build_cli_tab()
 
@@ -146,6 +147,58 @@ class SettingsDialog(QDialog):
         layout.addWidget(patterns_group, 1)
 
         self._tabs.addTab(tab, self._icon("configure"), "General")
+
+    def _build_diff_options_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Whitespace handling
+        ws_group = QGroupBox("Whitespace Handling")
+        ws_layout = QFormLayout(ws_group)
+        self._ws_combo = QComboBox()
+        self._ws_combo.addItems(["None", "All", "Leading", "Trailing", "Changes"])
+        ws_layout.addRow("Ignore whitespace:", self._ws_combo)
+        layout.addWidget(ws_group)
+
+        # Text comparison options
+        text_group = QGroupBox("Text Comparison")
+        text_layout = QVBoxLayout(text_group)
+        self._case_check = QCheckBox("Ignore case differences")
+        text_layout.addWidget(self._case_check)
+        self._text_diff_check = QCheckBox("Enable line-by-line text diff")
+        self._text_diff_check.setChecked(True)
+        text_layout.addWidget(self._text_diff_check)
+        layout.addWidget(text_group)
+
+        # Specialized comparisons
+        spec_group = QGroupBox("Specialized Comparisons")
+        spec_layout = QVBoxLayout(spec_group)
+        self._image_diff_check = QCheckBox("Enable pixel-level image comparison")
+        spec_layout.addWidget(self._image_diff_check)
+        self._csv_diff_check = QCheckBox("Enable CSV row-by-row comparison")
+        spec_layout.addWidget(self._csv_diff_check)
+        self._json_diff_check = QCheckBox("Enable JSON/YAML structural comparison")
+        spec_layout.addWidget(self._json_diff_check)
+        self._excel_diff_check = QCheckBox("Enable Excel sheet/cell comparison")
+        spec_layout.addWidget(self._excel_diff_check)
+        layout.addWidget(spec_group)
+
+        # Regex rules
+        regex_group = QGroupBox("Regex Normalization Rules")
+        regex_layout = QVBoxLayout(regex_group)
+        regex_hint = QLabel("Format: pattern:replacement:description (one per line)")
+        regex_hint.setWordWrap(True)
+        self._regex_edit = QTextEdit()
+        self._regex_edit.setMinimumHeight(80)
+        self._regex_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self._regex_edit.setPlaceholderText(
+            r"\d{4}-\d{2}-\d{2}:[DATE]:Normalize dates"
+        )
+        regex_layout.addWidget(regex_hint)
+        regex_layout.addWidget(self._regex_edit)
+        layout.addWidget(regex_group, 1)
+
+        self._tabs.addTab(tab, self._icon("text-x-generic"), "Diff Options")
 
     def _build_appearance_tab(self) -> None:
         tab = QWidget()
