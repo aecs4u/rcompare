@@ -11,10 +11,12 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QMenu,
+    QPlainTextEdit,
     QSplitter,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTreeView,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -92,19 +94,48 @@ class FolderView(QWidget):
         self._configure_right_tree()
 
         # Layout -------------------------------------------------------
-        splitter = QSplitter(Qt.Horizontal, self)
-        splitter.addWidget(self._left_tree)
-        splitter.addWidget(self._right_tree)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
+        self._tree_splitter = QSplitter(Qt.Horizontal)
+        self._tree_splitter.addWidget(self._left_tree)
+        self._tree_splitter.addWidget(self._right_tree)
+        self._tree_splitter.setStretchFactor(0, 1)
+        self._tree_splitter.setStretchFactor(1, 1)
 
-        layout = QHBoxLayout(self)
+        # Preview panel (collapsible below the trees)
+        self._preview_splitter = QSplitter(Qt.Vertical)
+
+        self._left_preview = QPlainTextEdit()
+        self._left_preview.setReadOnly(True)
+        self._left_preview.setMaximumHeight(200)
+        self._left_preview.setPlaceholderText("Select a file to preview left side")
+
+        self._right_preview = QPlainTextEdit()
+        self._right_preview.setReadOnly(True)
+        self._right_preview.setMaximumHeight(200)
+        self._right_preview.setPlaceholderText("Select a file to preview right side")
+
+        preview_container = QSplitter(Qt.Horizontal)
+        preview_container.addWidget(self._left_preview)
+        preview_container.addWidget(self._right_preview)
+        preview_container.setStretchFactor(0, 1)
+        preview_container.setStretchFactor(1, 1)
+
+        self._preview_splitter.addWidget(self._tree_splitter)
+        self._preview_splitter.addWidget(preview_container)
+        self._preview_splitter.setStretchFactor(0, 3)
+        self._preview_splitter.setStretchFactor(1, 1)
+        self._preview_visible = False
+        preview_container.hide()
+        self._preview_container = preview_container
+
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(splitter)
+        layout.addWidget(self._preview_splitter)
 
         # Synchronisation guards ---------------------------------------
         self._syncing_scroll = False
         self._syncing_expand = False
+        self._preview_left_root = ""
+        self._preview_right_root = ""
 
         # Connect synchronisation signals ------------------------------
         self._connect_sync()
@@ -201,6 +232,61 @@ class FolderView(QWidget):
                 while parent.isValid():
                     tree.expand(parent)
                     parent = parent.parent()
+
+    def select_next_match(self) -> bool:
+        """Move selection to the next visible row. Returns True if wrapped."""
+        return self._navigate_match(forward=True)
+
+    def select_prev_match(self) -> bool:
+        """Move selection to the previous visible row. Returns True if wrapped."""
+        return self._navigate_match(forward=False)
+
+    def _navigate_match(self, forward: bool) -> bool:
+        """Navigate to next/previous visible row in proxy model."""
+        proxy = self._proxy_model
+        total = proxy.rowCount(QModelIndex())
+        if total == 0:
+            return False
+
+        # Get current selection
+        sel = self._left_tree.selectionModel()
+        current = sel.currentIndex() if sel else QModelIndex()
+
+        def _flat_indices(parent: QModelIndex) -> list[QModelIndex]:
+            """Collect all visible proxy indices in depth-first order."""
+            result = []
+            for row in range(proxy.rowCount(parent)):
+                idx = proxy.index(row, COL_NAME, parent)
+                result.append(idx)
+                result.extend(_flat_indices(idx))
+            return result
+
+        flat = _flat_indices(QModelIndex())
+        if not flat:
+            return False
+
+        # Find current position
+        current_pos = -1
+        for i, idx in enumerate(flat):
+            if idx == current:
+                current_pos = i
+                break
+
+        if forward:
+            next_pos = (current_pos + 1) % len(flat)
+        else:
+            next_pos = (current_pos - 1) % len(flat)
+
+        wrapped = (forward and next_pos <= current_pos) or (not forward and next_pos >= current_pos)
+        target = flat[next_pos]
+
+        for tree in (self._left_tree, self._right_tree):
+            s = tree.selectionModel()
+            if s is not None:
+                s.setCurrentIndex(target, s.SelectionFlag.ClearAndSelect | s.SelectionFlag.Rows)
+                tree.scrollTo(target, QAbstractItemView.ScrollHint.PositionAtCenter)
+
+        return wrapped and current_pos >= 0
 
     @property
     def left_tree(self) -> QTreeView:
@@ -320,6 +406,14 @@ class FolderView(QWidget):
         if left_vbar is not None and right_vbar is not None:
             left_vbar.valueChanged.connect(self._on_left_scrolled)
             right_vbar.valueChanged.connect(self._on_right_scrolled)
+
+        # Selection change -> preview update
+        left_sel = self._left_tree.selectionModel()
+        if left_sel is not None:
+            left_sel.currentChanged.connect(self._on_selection_changed)
+        right_sel = self._right_tree.selectionModel()
+        if right_sel is not None:
+            right_sel.currentChanged.connect(self._on_selection_changed)
 
     # -- expand / collapse sync ----------------------------------------
 
@@ -492,6 +586,76 @@ class FolderView(QWidget):
                 self._collapse_subfolders(tree, index)
                 return
             self.context_command.emit(payload[0], payload[1], side)
+
+    # ------------------------------------------------------------------
+    # File content preview panel
+    # ------------------------------------------------------------------
+
+    def set_preview_visible(self, visible: bool) -> None:
+        """Show or hide the preview panel below the trees."""
+        self._preview_visible = visible
+        self._preview_container.setVisible(visible)
+
+    def set_preview_roots(self, left_root: str, right_root: str) -> None:
+        """Set the root paths for resolving preview file paths."""
+        self._preview_left_root = left_root
+        self._preview_right_root = right_root
+
+    def _on_selection_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
+        """Update the preview panels when a new row is selected."""
+        if not self._preview_visible:
+            return
+        if not current.isValid():
+            return
+
+        source_index = self._proxy_model.mapToSource(current)
+        node = source_index.internalPointer()
+        if node is None or not hasattr(node, "path") or not hasattr(node, "is_dir"):
+            return
+        if node.is_dir:
+            self._left_preview.setPlainText("")
+            self._right_preview.setPlainText("")
+            return
+
+        self._load_preview(node.path)
+
+    def _load_preview(self, rel_path: str) -> None:
+        """Load file content previews for both sides."""
+        import os
+
+        max_preview_lines = 100
+        max_preview_bytes = 64 * 1024  # 64 KB
+
+        for root, preview_widget in (
+            (self._preview_left_root, self._left_preview),
+            (self._preview_right_root, self._right_preview),
+        ):
+            if not root:
+                preview_widget.setPlainText("")
+                continue
+
+            full_path = os.path.join(root, rel_path)
+            if not os.path.isfile(full_path):
+                preview_widget.setPlainText(f"(not present on this side)")
+                continue
+
+            try:
+                size = os.path.getsize(full_path)
+                if size > max_preview_bytes:
+                    with open(full_path, "r", errors="replace") as f:
+                        lines = []
+                        for i, line in enumerate(f):
+                            if i >= max_preview_lines:
+                                break
+                            lines.append(line.rstrip("\n"))
+                    lines.append(f"\n... (truncated, {size:,} bytes total)")
+                    preview_widget.setPlainText("\n".join(lines))
+                else:
+                    with open(full_path, "r", errors="replace") as f:
+                        content = f.read()
+                    preview_widget.setPlainText(content)
+            except (OSError, UnicodeDecodeError):
+                preview_widget.setPlainText("(binary or unreadable file)")
 
     def _collapse_subfolders(self, tree: QTreeView, root_index: QModelIndex) -> None:
         """Recursively collapse all descendants and then the root index."""

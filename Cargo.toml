@@ -3,7 +3,7 @@ members = [
     "rcompare_common",
     "rcompare_core",
     "rcompare_cli",
-    "rcompare_gui",
+    "rcompare_gui",  # DEPRECATED: Use rcompare_pyside instead
     "rcompare_ffi",
 ]
 resolver = "2"

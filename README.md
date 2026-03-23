@@ -13,7 +13,7 @@ A high-performance file and directory comparison toolkit with a Rust core, CLI, 
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
-- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`)
+- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`; the legacy Slint GUI is deprecated)
 - **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
 - **Copy operations**: GUI copy left/right operations for sync workflows

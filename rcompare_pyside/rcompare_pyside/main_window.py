@@ -8,8 +8,8 @@ from pathlib import Path
 import shutil
 from typing import Optional
 
-from PySide6.QtCore import Qt, QUrl, Slot
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QIcon, QKeySequence, QTextDocument
+from PySide6.QtCore import Qt, QMimeData, QUrl, Slot
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QTextDocument
 from PySide6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QMessageBox,
+    QProgressBar,
     QStackedWidget,
     QStatusBar,
     QTabBar,
@@ -36,13 +37,16 @@ from .views.folder_view import FolderView
 from .views.text_view import TextView
 from .views.hex_view import HexView
 from .views.image_view import ImageView
+from .views.home_view import HomeView
 from .widgets.filter_bar import FilterBar
+from .widgets.color_legend import ColorLegend
 from .workers.comparison_worker import ComparisonWorker
 from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.sync_dialog import SyncDialog
 from .dialogs.profiles_dialog import ProfilesDialog
 from .dialogs.about_dialog import AboutDialog
 from .dialogs.stats_dialog import StatsDialog
+from .models.undo_stack import OperationHistory, Operation, create_backup
 from .utils.telemetry import log_error, log_info, log_warning
 
 # ---------------------------------------------------------------------------
@@ -52,7 +56,7 @@ TEXT_EXTENSIONS = {
     ".txt", ".md", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx",
     ".c", ".cpp", ".h", ".hpp", ".java", ".go", ".rb", ".php",
     ".sh", ".css", ".html", ".xml", ".json", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".sql", ".csv", ".log",
+    ".toml", ".ini", ".cfg", ".sql", ".log",
 }
 
 IMAGE_EXTENSIONS = {
@@ -60,8 +64,12 @@ IMAGE_EXTENSIONS = {
     ".webp", ".ico", ".svg",
 }
 
+TABLE_EXTENSIONS = {
+    ".csv", ".tsv", ".xlsx", ".xls",
+}
+
 _AUTO_CLOSE_PROFILE_NAME = "Last Session (Auto)"
-_BASE_VIEW_TAB_COUNT = 4
+_BASE_VIEW_TAB_COUNT = 6  # Home + Folder + Text + Hex + Image + Table
 
 
 @dataclass
@@ -107,6 +115,7 @@ class MainWindow(QMainWindow):
         self._current_report: Optional[ScanReport] = None
         self._settings: ComparisonSettings = ComparisonSettings()
         self._profile_manager: ProfileManager = ProfileManager()
+        self._undo_history: OperationHistory = OperationHistory()
         self._three_way_mode: bool = False
 
         # Paths cached from the PathBar
@@ -134,6 +143,7 @@ class MainWindow(QMainWindow):
         # --- Window properties -----------------------------------------
         self.setWindowTitle("RCompare - File Comparison Tool")
         self.setMinimumSize(800, 600)
+        self.setAcceptDrops(True)
 
         # --- Build UI --------------------------------------------------
         self._build_menu_bar()
@@ -210,6 +220,18 @@ class MainWindow(QMainWindow):
 
         # -- Edit -------------------------------------------------------
         edit_menu = menu_bar.addMenu("&Edit")
+
+        self._act_undo = QAction(self._themed_icon("edit-undo"), "&Undo", self)
+        self._act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self._act_undo.setEnabled(False)
+        edit_menu.addAction(self._act_undo)
+
+        self._act_redo = QAction(self._themed_icon("edit-redo"), "&Redo", self)
+        self._act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self._act_redo.setEnabled(False)
+        edit_menu.addAction(self._act_redo)
+
+        edit_menu.addSeparator()
 
         self._act_copy_lr = QAction(
             self._themed_icon("go-next"),
@@ -373,6 +395,11 @@ class MainWindow(QMainWindow):
         self._view_action_group.addAction(self._act_view_image)
         compare_submenu.addAction(self._act_view_image)
 
+        self._act_view_table = QAction("&Table Compare", self)
+        self._act_view_table.setCheckable(True)
+        self._view_action_group.addAction(self._act_view_table)
+        compare_submenu.addAction(self._act_view_table)
+
         view_menu.addSeparator()
 
         filter_submenu = view_menu.addMenu("&Filter")
@@ -455,6 +482,13 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
+        self._act_show_preview = QAction("Show &Preview Panel", self)
+        self._act_show_preview.setCheckable(True)
+        self._act_show_preview.setChecked(False)
+        view_menu.addAction(self._act_show_preview)
+
+        view_menu.addSeparator()
+
         self._act_expand_all = QAction("&Expand All", self)
         view_menu.addAction(self._act_expand_all)
 
@@ -489,6 +523,27 @@ class MainWindow(QMainWindow):
         )
         self._act_profiles.setShortcut(QKeySequence("Ctrl+P"))
         tools_menu.addAction(self._act_profiles)
+
+        # -- Bookmarks --------------------------------------------------
+        self._bookmarks_menu = menu_bar.addMenu("&Bookmarks")
+
+        self._act_add_bookmark = QAction(
+            self._themed_icon("bookmark-new"),
+            "&Add Bookmark...",
+            self,
+        )
+        self._act_add_bookmark.setShortcut(QKeySequence("Ctrl+D"))
+        self._bookmarks_menu.addAction(self._act_add_bookmark)
+
+        self._act_manage_bookmarks = QAction(
+            self._themed_icon("bookmarks-organize"),
+            "&Manage Bookmarks...",
+            self,
+        )
+        self._bookmarks_menu.addAction(self._act_manage_bookmarks)
+
+        self._bookmarks_menu.addSeparator()
+        self._bookmarks_separator_index = len(self._bookmarks_menu.actions())
 
         # -- Settings ---------------------------------------------------
         settings_menu = menu_bar.addMenu("&Settings")
@@ -670,10 +725,12 @@ class MainWindow(QMainWindow):
 
         # View-switcher tab bar
         self._view_switcher = QTabBar(central)
+        self._view_switcher.addTab("Home")
         self._view_switcher.addTab("Folder Compare")
         self._view_switcher.addTab("Text Compare")
         self._view_switcher.addTab("Hex Compare")
         self._view_switcher.addTab("Image Compare")
+        self._view_switcher.addTab("Table Compare")
         self._view_switcher.setTabsClosable(True)
         for i in range(_BASE_VIEW_TAB_COUNT):
             self._view_switcher.setTabButton(i, QTabBar.ButtonPosition.RightSide, None)
@@ -684,22 +741,38 @@ class MainWindow(QMainWindow):
         self._filter_bar = FilterBar(central)
         layout.addWidget(self._filter_bar)
 
-        # Stacked widget holding the four comparison views
+        # Color legend
+        self._color_legend = ColorLegend(central)
+        layout.addWidget(self._color_legend)
+
+        # Stacked widget holding the views
         self._view_stack = QStackedWidget(central)
 
+        # Home view (index 0) - shown on startup
+        self._home_view = HomeView(self._config, self._view_stack)
+        self._view_stack.addWidget(self._home_view)    # index 0
+
         self._folder_view = FolderView(self._view_stack)
-        self._view_stack.addWidget(self._folder_view)  # index 0
+        self._view_stack.addWidget(self._folder_view)  # index 1
 
         self._text_view = TextView(self._view_stack)
-        self._view_stack.addWidget(self._text_view)    # index 1
-        if config.appearance:
-            self._text_view.apply_appearance(config.appearance)
+        self._view_stack.addWidget(self._text_view)    # index 2
+        if self._config.appearance:
+            self._text_view.apply_appearance(self._config.appearance)
 
         self._hex_view = HexView(self._view_stack)
-        self._view_stack.addWidget(self._hex_view)      # index 2
+        self._view_stack.addWidget(self._hex_view)      # index 3
 
         self._image_view = ImageView(self._view_stack)
-        self._view_stack.addWidget(self._image_view)    # index 3
+        self._view_stack.addWidget(self._image_view)    # index 4
+
+        # Table view (lazily imported, index 5)
+        try:
+            from .views.table_view import TableView
+            self._table_view = TableView(self._view_stack)
+            self._view_stack.addWidget(self._table_view)  # index 5
+        except ImportError:
+            self._table_view = None
 
         layout.addWidget(self._view_stack, 1)  # stretch factor 1
 
@@ -721,6 +794,20 @@ class MainWindow(QMainWindow):
         # Left: general message
         self._status_summary = QLabel("Ready")
         status_bar.addWidget(self._status_summary, 1)
+
+        # Progress bar (hidden until a comparison starts)
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setFixedWidth(200)
+        self._progress_bar.setMaximumHeight(16)
+        self._progress_bar.setTextVisible(True)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.hide()
+        status_bar.addPermanentWidget(self._progress_bar)
+
+        # Stage label
+        self._status_stage = QLabel("")
+        status_bar.addPermanentWidget(self._status_stage)
 
         # Center: file navigation indicator
         self._status_files = QLabel("")
@@ -757,6 +844,8 @@ class MainWindow(QMainWindow):
         self._act_quit.triggered.connect(self.close)
 
         # Edit menu
+        self._act_undo.triggered.connect(self._on_undo)
+        self._act_redo.triggered.connect(self._on_redo)
         self._act_copy_lr.triggered.connect(self._on_copy_lr)
         self._act_copy_rl.triggered.connect(self._on_copy_rl)
         self._act_swap_sides.triggered.connect(self._on_swap_sides)
@@ -784,6 +873,10 @@ class MainWindow(QMainWindow):
         self._act_compare_now.triggered.connect(self._on_compare)
         self._act_sync.triggered.connect(self._on_sync)
         self._act_profiles.triggered.connect(self._on_profiles)
+
+        # Bookmarks menu
+        self._act_add_bookmark.triggered.connect(self._on_add_bookmark)
+        self._act_manage_bookmarks.triggered.connect(self._on_manage_bookmarks)
 
         # Settings menu
         self._act_configure_shortcuts.triggered.connect(self._on_configure_shortcuts)
@@ -815,6 +908,10 @@ class MainWindow(QMainWindow):
         self._tb_options.triggered.connect(self._on_preferences)
         self._tb_profiles.triggered.connect(self._on_profiles)
 
+        # HomeView signals
+        self._home_view.session_type_selected.connect(self._on_home_session_type)
+        self._home_view.recent_session_selected.connect(self._on_home_recent_session)
+
         # FolderView file activated -> detect type and switch view
         self._folder_view.file_activated.connect(self._on_file_activated)
         self._folder_view.context_command.connect(self._on_folder_context_command)
@@ -823,11 +920,12 @@ class MainWindow(QMainWindow):
         self._view_switcher.currentChanged.connect(self._on_view_tab_changed)
         self._view_switcher.tabCloseRequested.connect(self._on_view_tab_close_requested)
 
-        # View menu radio actions -> switch view
-        self._act_view_folder.triggered.connect(lambda: self._switch_view(0))
-        self._act_view_text.triggered.connect(lambda: self._switch_view(1))
-        self._act_view_hex.triggered.connect(lambda: self._switch_view(2))
-        self._act_view_image.triggered.connect(lambda: self._switch_view(3))
+        # View menu radio actions -> switch view (indices shifted +1 for HomeView at 0)
+        self._act_view_folder.triggered.connect(lambda: self._switch_view(1))
+        self._act_view_text.triggered.connect(lambda: self._switch_view(2))
+        self._act_view_hex.triggered.connect(lambda: self._switch_view(3))
+        self._act_view_image.triggered.connect(lambda: self._switch_view(4))
+        self._act_view_table.triggered.connect(lambda: self._switch_view(5))
 
         # View menu filter checkboxes
         self._act_show_identical.toggled.connect(self._on_view_filter_toggled)
@@ -841,6 +939,7 @@ class MainWindow(QMainWindow):
         self._tb_filter_all.triggered.connect(lambda: self._apply_quick_filter_preset("all"))
         self._tb_filter_diffs.triggered.connect(lambda: self._apply_quick_filter_preset("diffs"))
         self._tb_filter_same.triggered.connect(lambda: self._apply_quick_filter_preset("same"))
+        self._act_show_preview.toggled.connect(self._on_preview_toggled)
         self._act_always_show_folders.toggled.connect(self._on_folder_view_options_changed)
         self._act_mode_compare_structure.triggered.connect(self._on_folder_view_options_changed)
         self._act_mode_files_only.triggered.connect(self._on_folder_view_options_changed)
@@ -973,7 +1072,10 @@ class MainWindow(QMainWindow):
             session.diff_option_mode,
         )
 
-        self._switch_view(session.active_view if 0 <= session.active_view <= 3 else 0)
+        active = session.active_view
+        if active < 0 or active > 5:
+            active = 1  # Default to Folder view
+        self._switch_view(active)
 
         self._current_report = session.report
         self._set_folder_view_options(session.folder_view_mode, session.always_show_folders)
@@ -1222,11 +1324,15 @@ class MainWindow(QMainWindow):
         self._worker.finished.connect(self._on_comparison_finished)
         self._worker.error.connect(self._on_comparison_error)
         self._worker.progress.connect(self._on_comparison_progress)
+        self._worker.progress_update.connect(self._on_progress_update)
 
         self._tb_cancel.setEnabled(True)
         self._tb_compare.setEnabled(False)
         self._status_summary.setText("Comparing...")
         self._current_session().status_summary = "Comparing..."
+        self._progress_bar.setValue(0)
+        self._progress_bar.show()
+        self._status_stage.setText("")
         self.statusBar().showMessage("Starting comparison...")
 
         self._worker.start_scan(
@@ -1262,8 +1368,15 @@ class MainWindow(QMainWindow):
         session.report = report
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
+        self._progress_bar.hide()
+        self._status_stage.setText("")
 
         self._rebuild_folder_tree_from_report()
+        self._folder_view.set_preview_roots(self._left_path, self._right_path)
+
+        # Switch to folder view if we're on the home view
+        if self._view_stack.currentIndex() == 0:
+            self._switch_view(1)
 
         summary = report.summary
         status_text = (
@@ -1296,6 +1409,8 @@ class MainWindow(QMainWindow):
         """Handle a comparison error."""
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
+        self._progress_bar.hide()
+        self._status_stage.setText("")
         self._status_summary.setText("Error")
         self._current_session().status_summary = "Error"
         log_error("compare failed", error_text=message)
@@ -1305,6 +1420,18 @@ class MainWindow(QMainWindow):
     def _on_comparison_progress(self, message: str) -> None:
         """Show progress messages in the status bar."""
         self.statusBar().showMessage(message)
+
+    @Slot(object)
+    def _on_progress_update(self, info) -> None:
+        """Handle structured progress updates from the CLI."""
+        self._progress_bar.setValue(info.percent)
+        self._status_stage.setText(info.stage_label)
+        if info.entries_total > 0:
+            self._status_summary.setText(
+                f"{info.stage_label} ({info.entries_done:,}/{info.entries_total:,})"
+            )
+        else:
+            self._status_summary.setText(info.stage_label)
 
     # ------------------------------------------------------------------
     # Refresh / New Session
@@ -1318,10 +1445,22 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_home(self) -> None:
-        home = str(Path.home())
-        self._path_bar.left_path = home
-        self._path_bar.right_path = home
-        self.statusBar().showMessage(f"Set both sides to home: {home}", 5000)
+        """Show the Home/Welcome view."""
+        self._switch_view(0)
+
+    @Slot(int)
+    def _on_home_session_type(self, view_index: int) -> None:
+        """Handle session type card click from HomeView."""
+        # view_index: 0=Folder, 1=Text, 2=Hex, 3=Image -> map to stack index +1
+        self._switch_view(view_index + 1)
+
+    @Slot(str, str)
+    def _on_home_recent_session(self, left: str, right: str) -> None:
+        """Handle recent session click from HomeView."""
+        self._path_bar.left_path = left
+        self._path_bar.right_path = right
+        self._switch_view(1)  # Folder view
+        self._on_compare()
 
     @Slot()
     def _on_swap_sides(self) -> None:
@@ -1363,13 +1502,15 @@ class MainWindow(QMainWindow):
         if index < 0 or index >= self._view_stack.count():
             return
         self._view_stack.setCurrentIndex(index)
-        actions = [
-            self._act_view_folder,
-            self._act_view_text,
-            self._act_view_hex,
-            self._act_view_image,
-        ]
-        if 0 <= index < len(actions):
+        # Map tab index (0=Home, 1=Folder, 2=Text, 3=Hex, 4=Image, 5=Table)
+        actions = {
+            1: self._act_view_folder,
+            2: self._act_view_text,
+            3: self._act_view_hex,
+            4: self._act_view_image,
+            5: self._act_view_table,
+        }
+        if index in actions:
             actions[index].setChecked(True)
         self._current_session().active_view = index
 
@@ -1430,7 +1571,24 @@ class MainWindow(QMainWindow):
             return
 
         widget: QWidget
-        if mode == "text":
+        if mode == "table":
+            try:
+                from .views.table_view import TableView
+                view = TableView(self._view_stack)
+                suffix = Path(path).suffix.lower()
+                if suffix in (".xlsx", ".xls"):
+                    view.compare_excel(str(left_file), str(right_file))
+                else:
+                    view.compare_csv(str(left_file), str(right_file))
+                widget = view
+                label = f"Table: {Path(path).name}"
+            except ImportError:
+                # Fallback to text view if table_view not available
+                view = TextView(self._view_stack)
+                view.compare_files(str(left_file), str(right_file))
+                widget = view
+                label = f"Text: {Path(path).name}"
+        elif mode == "text":
             view = TextView(self._view_stack)
             view.compare_files(str(left_file), str(right_file))
             widget = view
@@ -1455,6 +1613,8 @@ class MainWindow(QMainWindow):
 
     def _determine_file_compare_mode(self, rel_path: str) -> str:
         suffix = Path(rel_path).suffix.lower()
+        if suffix in TABLE_EXTENSIONS:
+            return "table"
         if suffix in TEXT_EXTENSIONS:
             return "text"
         if suffix in IMAGE_EXTENSIONS:
@@ -1495,6 +1655,30 @@ class MainWindow(QMainWindow):
         self._three_way_mode = checked
         self._path_bar.set_three_way_mode(checked)
         self._current_session().three_way_mode = checked
+        if checked and not hasattr(self, "_merge_view"):
+            self._add_merge_view()
+
+    def _add_merge_view(self) -> None:
+        """Lazily add the 3-way merge view to the view stack."""
+        try:
+            from .views.merge_view import MergeView
+            self._merge_view = MergeView(self._view_stack)
+            idx = self._view_stack.addWidget(self._merge_view)
+            self._view_switcher.addTab("3-Way Merge")
+            # Don't allow closing the merge tab via the close button
+            self._view_switcher.setTabButton(
+                idx, QTabBar.ButtonPosition.RightSide, None,
+            )
+            self._view_switcher.setTabButton(
+                idx, QTabBar.ButtonPosition.LeftSide, None,
+            )
+        except ImportError:
+            log_warning("merge_view module not available")
+
+    @Slot(bool)
+    def _on_preview_toggled(self, checked: bool) -> None:
+        self._folder_view.set_preview_visible(checked)
+        self._folder_view.set_preview_roots(self._left_path, self._right_path)
 
     # ------------------------------------------------------------------
     # Copy actions
@@ -1570,11 +1754,7 @@ class MainWindow(QMainWindow):
             self._on_sync()
             return
         if command == "align_with":
-            QMessageBox.information(
-                self,
-                "Align With",
-                "Alignment helpers are not implemented yet.",
-            )
+            self._open_align_dialog(rel_path, side)
             return
 
     def _copy_selected_paths(self, *, left_to_right: bool) -> None:
@@ -2052,10 +2232,13 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            # Create backup for undo
+            backup = create_backup(target, self._undo_history.backup_dir)
             if target.is_dir():
                 shutil.rmtree(target)
             else:
                 target.unlink()
+            self._record_file_op("delete", str(target), "", str(backup))
             self.statusBar().showMessage(f"Deleted: {target}", 7000)
             self._on_refresh()
         except OSError as exc:
@@ -2109,9 +2292,28 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Touch", "Target path does not exist on this side.")
             return
 
+        other = self._resolve_item_path(rel_path, self._other_side(side), allow_fallback=False)
+
+        choices = ["Set to current time"]
+        if other is not None and other.exists():
+            choices.insert(0, "Copy timestamp from other side")
+
+        choice, ok = QInputDialog.getItem(
+            self, "Touch", f"Set timestamp for:\n{target.name}", choices, 0, False,
+        )
+        if not ok:
+            return
+
         try:
-            os.utime(target, None)
-            self.statusBar().showMessage(f"Touched: {target.name}", 5000)
+            if choice == "Copy timestamp from other side" and other is not None:
+                stat = other.stat()
+                os.utime(target, (stat.st_atime, stat.st_mtime))
+                self.statusBar().showMessage(
+                    f"Timestamp copied from {self._other_side(side)} side: {target.name}", 5000,
+                )
+            else:
+                os.utime(target, None)
+                self.statusBar().showMessage(f"Touched: {target.name}", 5000)
             self._on_refresh()
         except OSError as exc:
             QMessageBox.critical(self, "Touch Failed", str(exc))
@@ -2167,6 +2369,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "New Folder", f"Folder already exists:\n{target}")
         except OSError as exc:
             QMessageBox.critical(self, "New Folder Failed", str(exc))
+
+    def _open_align_dialog(self, rel_path: str, side: str) -> None:
+        """Open the alignment dialog to manually align a file with another."""
+        try:
+            from .dialogs.align_dialog import AlignDialog
+        except ImportError:
+            QMessageBox.information(self, "Align With", "Alignment dialog not available yet.")
+            return
+
+        other_side = self._other_side(side)
+        other_root = self._side_root(other_side)
+        if not other_root.exists():
+            return
+
+        # Gather candidate files from the other side
+        candidates: list[str] = []
+        for item in sorted(other_root.rglob("*")):
+            if item.is_file():
+                candidates.append(str(item.relative_to(other_root)))
+
+        filename = Path(rel_path).name
+        dialog = AlignDialog(filename, candidates, parent=self)
+        if dialog.exec():
+            selected = dialog.selected_path()
+            if selected:
+                self.statusBar().showMessage(
+                    f"Aligned '{filename}' with '{selected}'", 5000,
+                )
+                log_info("alignment override", source=rel_path, target=selected, side=side)
 
     def _copy_filename(self, rel_path: str) -> None:
         app = QApplication.instance()
@@ -2356,15 +2587,17 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_find_next(self) -> None:
-        """Find next occurrence (placeholder)."""
-        # TODO: Implement find next when search supports it
-        pass
+        """Navigate to the next item in the folder view."""
+        wrapped = self._folder_view.select_next_match()
+        if wrapped:
+            self.statusBar().showMessage("Search wrapped to top.", 3000)
 
     @Slot()
     def _on_find_prev(self) -> None:
-        """Find previous occurrence (placeholder)."""
-        # TODO: Implement find previous when search supports it
-        pass
+        """Navigate to the previous item in the folder view."""
+        wrapped = self._folder_view.select_prev_match()
+        if wrapped:
+            self.statusBar().showMessage("Search wrapped to bottom.", 3000)
 
     # ------------------------------------------------------------------
     # Difference navigation
@@ -2541,7 +2774,7 @@ class MainWindow(QMainWindow):
             return
 
         # Display in text view
-        self._switch_view(1)  # Text Compare tab
+        self._switch_view(2)  # Text Compare tab (index 2 with Home at 0)
         self._text_view.show_diff_text(content, Path(path).name)
         self.statusBar().showMessage(f"Opened diff: {path}", 5000)
         log_info("opened diff file", path=path)
@@ -2735,12 +2968,10 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_configure_shortcuts(self) -> None:
-        """Open Configure Shortcuts dialog (placeholder)."""
-        QMessageBox.information(
-            self,
-            "Configure Shortcuts",
-            "Keyboard shortcut configuration will be available in a future release.",
-        )
+        """Open the Configure Keyboard Shortcuts dialog."""
+        from .dialogs.shortcuts_dialog import ShortcutsDialog
+        dialog = ShortcutsDialog(self)
+        dialog.exec()
 
     @Slot()
     def _on_configure_toolbars(self) -> None:
@@ -2857,12 +3088,13 @@ class MainWindow(QMainWindow):
 
         view_index = self._config.active_view
         session.active_view = view_index if isinstance(view_index, int) else 0
-        if session.active_view < 0 or session.active_view > 3:
-            session.active_view = 0
+        if session.active_view < 0 or session.active_view > 5:
+            session.active_view = 0  # Home view
 
         self._session_tabs.setCurrentIndex(0)
         self._apply_session_state(0)
         self._folder_view.set_column_widths(self._config.folder_columns or {})
+        self._rebuild_bookmarks_menu()
 
     def _apply_appearance(self, appearance: dict) -> None:
         """Apply appearance settings to all text views."""
@@ -2895,3 +3127,220 @@ class MainWindow(QMainWindow):
         }
         self._config.active_view = int(self._view_stack.currentIndex())
         self._config.three_way_mode = bool(self._three_way_mode)
+
+    # ------------------------------------------------------------------
+    # Undo / Redo
+    # ------------------------------------------------------------------
+
+    def _update_undo_redo_state(self) -> None:
+        self._act_undo.setEnabled(self._undo_history.can_undo)
+        self._act_redo.setEnabled(self._undo_history.can_redo)
+
+    def _record_file_op(self, op_type: str, source: str, dest: str, backup_path: str | None = None) -> None:
+        """Record a file operation for undo."""
+        from datetime import datetime
+        op = Operation(
+            op_type=op_type,
+            source_path=source,
+            dest_path=dest,
+            backup_path=backup_path,
+            timestamp=datetime.now().isoformat(),
+        )
+        self._undo_history.push(op)
+        self._update_undo_redo_state()
+
+    @Slot()
+    def _on_undo(self) -> None:
+        """Undo the last file operation."""
+        from .models.undo_stack import restore_backup
+        op = self._undo_history.undo()
+        if op is None:
+            return
+
+        try:
+            if op.backup_path and Path(op.backup_path).exists():
+                restore_backup(Path(op.backup_path), Path(op.source_path))
+                self.statusBar().showMessage(f"Undone: {op.op_type} on {Path(op.source_path).name}", 5000)
+            else:
+                self.statusBar().showMessage(f"Cannot undo: no backup available", 5000)
+        except OSError as exc:
+            QMessageBox.critical(self, "Undo Failed", str(exc))
+
+        self._update_undo_redo_state()
+        self._on_refresh()
+
+    @Slot()
+    def _on_redo(self) -> None:
+        """Redo a previously undone operation."""
+        op = self._undo_history.redo()
+        if op is None:
+            return
+        self.statusBar().showMessage(f"Redo: {op.op_type} (re-run the operation manually)", 5000)
+        self._update_undo_redo_state()
+
+    # ------------------------------------------------------------------
+    # Drag-and-drop support
+    # ------------------------------------------------------------------
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
+        """Accept file/folder URL drops onto the main window."""
+        mime: QMimeData = event.mimeData()
+        if mime.hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
+        """Handle dropped files/folders — populate path bar and auto-compare."""
+        mime: QMimeData = event.mimeData()
+        if not mime.hasUrls():
+            super().dropEvent(event)
+            return
+
+        paths: list[str] = []
+        for url in mime.urls():
+            local = url.toLocalFile()
+            if local:
+                paths.append(local)
+
+        if not paths:
+            return
+
+        if len(paths) >= 2:
+            self._path_bar.left_path = paths[0]
+            self._path_bar.right_path = paths[1]
+            self.statusBar().showMessage("Dropped two paths — starting comparison...", 5000)
+            self._on_compare()
+        elif not self._left_path.strip():
+            self._path_bar.left_path = paths[0]
+            self.statusBar().showMessage(
+                f"Left path set to: {paths[0]}  (drop another for right side)", 5000,
+            )
+        elif not self._right_path.strip():
+            self._path_bar.right_path = paths[0]
+            self.statusBar().showMessage("Right path set — starting comparison...", 5000)
+            self._on_compare()
+        else:
+            self._path_bar.left_path = paths[0]
+            self.statusBar().showMessage(
+                f"Left path updated to: {paths[0]}  (drop another for right side)", 5000,
+            )
+
+        event.acceptProposedAction()
+
+    # ------------------------------------------------------------------
+    # Profile helpers
+    # ------------------------------------------------------------------
+
+    def _apply_profile(self, profile) -> None:
+        """Apply a loaded session profile to the current session."""
+        self._path_bar.left_path = profile.left_path
+        self._path_bar.right_path = profile.right_path
+        self._path_bar.base_path = profile.base_path
+        self._left_path = profile.left_path
+        self._right_path = profile.right_path
+        self._base_path = profile.base_path
+        self._settings.ignore_patterns = list(profile.ignore_patterns)
+        self._settings.follow_symlinks = profile.follow_symlinks
+        self._settings.use_hash_verification = profile.hash_verification
+        session = self._current_session()
+        session.left_path = profile.left_path
+        session.right_path = profile.right_path
+        session.base_path = profile.base_path
+        session.settings = ComparisonSettings(
+            ignore_patterns=list(profile.ignore_patterns),
+            follow_symlinks=profile.follow_symlinks,
+            use_hash_verification=profile.hash_verification,
+            cache_dir=self._settings.cache_dir,
+        )
+        session.report = None
+        session.status_summary = "Profile loaded"
+        self._current_report = None
+        self._folder_view.set_tree(
+            TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+        )
+        self._update_active_session_title()
+        self.statusBar().showMessage(f"Profile '{profile.name}' loaded.", 5000)
+        log_info("profile applied", name=profile.name)
+
+    # ------------------------------------------------------------------
+    # Bookmarks
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def _on_add_bookmark(self) -> None:
+        """Add a bookmark for the current left+right path pair."""
+        left = self._left_path.strip()
+        right = self._right_path.strip()
+        if not left and not right:
+            QMessageBox.information(
+                self, "Add Bookmark", "Set paths first before adding a bookmark."
+            )
+            return
+
+        default_name = ""
+        if left and right:
+            default_name = f"{Path(left).name} <> {Path(right).name}"
+        elif left:
+            default_name = Path(left).name
+        elif right:
+            default_name = Path(right).name
+
+        name, ok = QInputDialog.getText(
+            self, "Add Bookmark", "Bookmark name:", text=default_name,
+        )
+        if not ok or not name.strip():
+            return
+
+        bookmark = {"name": name.strip(), "left": left, "right": right}
+        self._config.bookmarks.append(bookmark)
+        self._config.save()
+        self._rebuild_bookmarks_menu()
+        self.statusBar().showMessage(f"Bookmark '{name.strip()}' added.", 5000)
+
+    @Slot()
+    def _on_manage_bookmarks(self) -> None:
+        """Show a simple dialog to manage (delete) bookmarks."""
+        bookmarks = self._config.bookmarks
+        if not bookmarks:
+            QMessageBox.information(self, "Bookmarks", "No bookmarks saved.")
+            return
+
+        names = [b.get("name", "Unnamed") for b in bookmarks]
+        name, ok = QInputDialog.getItem(
+            self, "Manage Bookmarks", "Select bookmark to remove:", names, 0, False,
+        )
+        if not ok:
+            return
+
+        idx = names.index(name)
+        del self._config.bookmarks[idx]
+        self._config.save()
+        self._rebuild_bookmarks_menu()
+        self.statusBar().showMessage(f"Bookmark '{name}' removed.", 5000)
+
+    def _rebuild_bookmarks_menu(self) -> None:
+        """Rebuild the dynamic bookmark entries in the Bookmarks menu."""
+        # Remove old dynamic entries (everything after the separator)
+        actions = self._bookmarks_menu.actions()
+        for action in actions[self._bookmarks_separator_index:]:
+            self._bookmarks_menu.removeAction(action)
+
+        for i, bookmark in enumerate(self._config.bookmarks):
+            name = bookmark.get("name", f"Bookmark {i + 1}")
+            left = bookmark.get("left", "")
+            right = bookmark.get("right", "")
+            action = QAction(name, self)
+            action.setToolTip(f"{left} <> {right}")
+            action.triggered.connect(
+                lambda checked=False, l=left, r=right: self._load_bookmark(l, r)
+            )
+            self._bookmarks_menu.addAction(action)
+
+    def _load_bookmark(self, left: str, right: str) -> None:
+        """Load a bookmarked path pair."""
+        self._path_bar.left_path = left
+        self._path_bar.right_path = right
+        self.statusBar().showMessage("Bookmark loaded.", 5000)
+        if left and right:
+            self._on_compare()

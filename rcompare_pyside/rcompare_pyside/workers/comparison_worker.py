@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import json as _json
+from dataclasses import dataclass
+from typing import Optional
+
 from PySide6.QtCore import QObject, QProcess, Signal
 from ..utils.cli_bridge import CliBridge, ScanReport
 from ..utils.telemetry import log_error, log_exception, log_info
+
+_PROGRESS_PREFIX = "PROGRESS:"
+
+# Stage labels matching rcompare_core::progress::ScanStage
+_STAGE_LABELS = {
+    "scanning_left": "Scanning left source...",
+    "scanning_right": "Scanning right source...",
+    "comparing": "Comparing files...",
+    "hashing": "Hashing files...",
+    "diffing_files": "Running specialized diffs...",
+    "saving_cache": "Saving cache...",
+    "done": "Done",
+}
+
+
+@dataclass
+class ProgressInfo:
+    """Structured progress data parsed from CLI output."""
+
+    stage: str
+    stage_label: str
+    stage_index: int
+    stage_count: int
+    entries_done: int
+    entries_total: int
+    percent: int
 
 
 class ComparisonWorker(QObject):
@@ -12,7 +42,8 @@ class ComparisonWorker(QObject):
 
     finished = Signal(object)  # ScanReport
     error = Signal(str)
-    progress = Signal(str)
+    progress = Signal(str)  # Raw text progress (backward compatible)
+    progress_update = Signal(object)  # ProgressInfo with structured data
 
     def __init__(self, cli_bridge: CliBridge, parent=None):
         super().__init__(parent)
@@ -107,7 +138,12 @@ class ComparisonWorker(QObject):
         #   0 => no differences found
         #   2 => differences found (successful comparison)
         if exit_code not in (0, 2):
-            details = stderr or "no stderr output"
+            # Filter out PROGRESS: lines from error display
+            details_lines = [
+                line for line in (stderr or "no stderr output").splitlines()
+                if not line.startswith(_PROGRESS_PREFIX)
+            ]
+            details = "\n".join(details_lines) or "no stderr output"
             log_error("comparison process failed", exit_code=exit_code, details=details)
             self.error.emit(f"Comparison failed (exit {exit_code}): {details}")
             return
@@ -131,4 +167,42 @@ class ComparisonWorker(QObject):
             return
         self._stderr_buffer += data
         for line in data.strip().splitlines():
-            self.progress.emit(line.strip())
+            stripped = line.strip()
+            if stripped.startswith(_PROGRESS_PREFIX):
+                self._parse_progress_line(stripped)
+            else:
+                self.progress.emit(stripped)
+
+    def _parse_progress_line(self, line: str) -> None:
+        """Parse a structured PROGRESS:{json} line from the CLI."""
+        try:
+            raw = line[len(_PROGRESS_PREFIX):]
+            obj = _json.loads(raw)
+            stage = obj.get("stage", "")
+            entries_done = int(obj.get("entries_done", 0))
+            entries_total = int(obj.get("entries_total", 0))
+            percent = 0
+            if entries_total > 0:
+                percent = min(100, int(entries_done / entries_total * 100))
+
+            info = ProgressInfo(
+                stage=stage,
+                stage_label=_STAGE_LABELS.get(stage, stage),
+                stage_index=int(obj.get("stage_index", 0)),
+                stage_count=int(obj.get("stage_count", 6)),
+                entries_done=entries_done,
+                entries_total=entries_total,
+                percent=percent,
+            )
+            self.progress_update.emit(info)
+
+            # Also emit a human-readable text for backward compatibility
+            if entries_total > 0:
+                self.progress.emit(
+                    f"{info.stage_label} ({entries_done}/{entries_total}, {percent}%)"
+                )
+            else:
+                self.progress.emit(info.stage_label)
+        except (ValueError, KeyError, _json.JSONDecodeError):
+            # Malformed progress line — emit as raw text
+            self.progress.emit(line)

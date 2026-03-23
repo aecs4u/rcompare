@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "DEPRECATED: Slint-based GUI for RCompare. Use rcompare_pyside instead."
 
 [dependencies]
 rcompare_common = { path = "../rcompare_common" }

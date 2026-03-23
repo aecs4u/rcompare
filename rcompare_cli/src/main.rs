@@ -8,7 +8,7 @@ use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
     ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
-    JsonDiffEngine, ParquetDiffEngine, TextDiffEngine,
+    JsonDiffEngine, ParquetDiffEngine, ProgressData, ScanStage, TextDiffEngine,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -1949,6 +1949,36 @@ fn run_scan(
 
     // Create progress spinner for scanning (only if not JSON output and stderr is terminal)
     let show_progress = !json && std::io::stderr().is_terminal();
+    let json_progress = json; // Emit structured JSON progress to stderr in JSON mode
+
+    // Helper: emit structured progress to stderr for GUI consumption
+    let emit_json_progress = |stage: ScanStage, done: usize, total: usize| {
+        if !json_progress {
+            return;
+        }
+        let data = ProgressData {
+            stage,
+            stage_index: match stage {
+                ScanStage::ScanningLeft => 0,
+                ScanStage::ScanningRight => 1,
+                ScanStage::Comparing => 2,
+                ScanStage::Hashing => 3,
+                ScanStage::DiffingFiles => 4,
+                ScanStage::SavingCache => 5,
+                ScanStage::Done => 5,
+            },
+            stage_count: 6,
+            entries_done: done,
+            entries_total: total,
+            bytes_done: 0,
+            bytes_total: 0,
+        };
+        if let Ok(line) = serde_json::to_string(&data) {
+            let _ = writeln!(std::io::stderr(), "PROGRESS:{}", line);
+        }
+    };
+
+    emit_json_progress(ScanStage::ScanningLeft, 0, 0);
 
     let pb_left = if show_progress {
         let pb = ProgressBar::new_spinner();
@@ -1975,6 +2005,8 @@ fn run_scan(
     } else {
         info!("Found {} entries in left source", left_entries.len());
     }
+
+    emit_json_progress(ScanStage::ScanningRight, left_entries.len(), 0);
 
     let pb_right = if show_progress {
         let pb = ProgressBar::new_spinner();
@@ -2036,9 +2068,12 @@ fn run_scan(
 
     let comparison_engine = ComparisonEngine::new(hash_cache).with_hash_verification(verify_hashes);
 
-    // Use progress callback if progress bar is enabled
-    let diff_nodes = if let Some(ref pb) = pb_compare {
-        let pb_clone = pb.clone();
+    emit_json_progress(ScanStage::Comparing, 0, total_items as usize);
+
+    // Use progress callback if progress bar or JSON progress is enabled
+    let diff_nodes = if pb_compare.is_some() || json_progress {
+        let pb_clone = pb_compare.as_ref().cloned();
+        let total_for_closure = total_items as usize;
         comparison_engine.compare_with_vfs_and_progress(
             left_source.root(),
             right_source.root(),
@@ -2048,7 +2083,24 @@ fn run_scan(
             right_source.vfs(),
             None,
             Some(move |current, _total| {
-                pb_clone.set_position(current as u64);
+                if let Some(ref pb) = pb_clone {
+                    pb.set_position(current as u64);
+                }
+                // Emit JSON progress every ~50 items to avoid flooding stderr
+                if json_progress && (current % 50 == 0 || current == total_for_closure) {
+                    let data = ProgressData {
+                        stage: ScanStage::Comparing,
+                        stage_index: 2,
+                        stage_count: 6,
+                        entries_done: current,
+                        entries_total: total_for_closure,
+                        bytes_done: 0,
+                        bytes_total: 0,
+                    };
+                    if let Ok(line) = serde_json::to_string(&data) {
+                        let _ = writeln!(std::io::stderr(), "PROGRESS:{}", line);
+                    }
+                }
             }),
         )?
     } else {
@@ -2069,7 +2121,9 @@ fn run_scan(
         ));
     }
 
+    emit_json_progress(ScanStage::SavingCache, 0, 0);
     comparison_engine.persist_cache()?;
+    emit_json_progress(ScanStage::Done, diff_nodes.len(), diff_nodes.len());
 
     // Initialize optional result collectors for JSON mode
     let mut json_text_diffs = if json && text_diff {

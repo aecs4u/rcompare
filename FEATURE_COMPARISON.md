@@ -114,7 +114,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 | Feature | RCompare | Beyond Compare | Notes |
 |---------|----------|----------------|-------|
-| Desktop GUIs | ✅ Slint + PySide6 | ✅ Yes | Two frontends in RCompare |
+| Desktop GUIs | ✅ PySide6 (Slint deprecated) | ✅ Yes | PySide6 is the active frontend |
 | Multi-tab sessions | ✅ Yes (PySide) | ✅ Yes | |
 | Session profile manager | ✅ Yes | ✅ Yes | Save/load + auto-save on close |
 | Persistent per-user options | ✅ Yes | ✅ Yes | Paths, filters, options, profiles |

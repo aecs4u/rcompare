@@ -5,7 +5,7 @@
 1. [Executive Summary](#1-executive-summary)
 2. [System Architecture and Workspace Design](#2-system-architecture-and-workspace-design)
 3. [Core Library Specification](#3-core-library-specification-rcompare_core)
-4. [User Interface Architecture](#4-user-interface-architecture-rcompare_gui--slint)
+4. [User Interface Architecture](#4-user-interface-architecture-rcompare_gui--slint) *(Slint GUI deprecated; PySide6 is the active frontend)*
 5. [Feature Parity Specifications](#5-feature-parity-specifications)
 6. [Initial Development Plan](#6-initial-development-plan-roadmap)
 7. [Technical Deep Dive](#7-technical-deep-dive-implementation-details)

@@ -88,11 +88,13 @@ class HexTableModel(QAbstractTableModel):
     def load_file(self, path: str) -> None:
         """Read binary data from *path* and reset the model."""
         self.beginResetModel()
+        self._load_error: str | None = None
         try:
             with open(path, "rb") as fh:
                 self._data = fh.read()
-        except OSError:
+        except OSError as e:
             self._data = b""
+            self._load_error = str(e)
         self._file_path = path
         self._total_rows = (len(self._data) + _CHUNK_SIZE - 1) // _CHUNK_SIZE
         self._loaded_rows = min(self._total_rows, _INITIAL_LOAD_ROWS)
@@ -319,6 +321,16 @@ class HexView(QWidget):
         """Load two files, compute differences, and display the hex views."""
         self._left_model.load_file(left_path)
         self._right_model.load_file(right_path)
+
+        # Surface load errors
+        errors = []
+        if self._left_model._load_error:
+            errors.append(f"Left: {self._left_model._load_error}")
+        if self._right_model._load_error:
+            errors.append(f"Right: {self._right_model._load_error}")
+        if errors:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "File Read Error", "\n".join(errors))
 
         self._left_path_label.setText(os.path.basename(left_path))
         self._left_path_label.setToolTip(left_path)

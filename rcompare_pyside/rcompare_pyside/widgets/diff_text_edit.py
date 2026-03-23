@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect, QSize, Signal
-from PySide6.QtGui import QColor, QPainter, QTextFormat, QPaintEvent, QResizeEvent, QTextOption
+from PySide6.QtGui import QColor, QPainter, QTextFormat, QPaintEvent, QResizeEvent, QTextOption, QTextCursor
 from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
+
+# Type alias: list of (start_col, end_col, color) per line
+CharHighlights = list[list[tuple[int, int, QColor]]]
 
 
 class LineNumberArea(QWidget):
@@ -28,6 +31,7 @@ class DiffTextEdit(QPlainTextEdit):
     """
 
     scroll_value_changed = Signal(int)
+    content_changed = Signal()  # Emitted when editable text is modified
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,6 +42,9 @@ class DiffTextEdit(QPlainTextEdit):
         self._line_number_area = LineNumberArea(self)
         self._line_colors: list[QColor] = []
         self._line_numbers: list[str] = []  # Custom line numbers (can be empty for gaps)
+        self._char_highlights: CharHighlights = []  # Per-line character-level highlights
+        self._editable: bool = False
+        self._dirty: bool = False
 
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
@@ -46,10 +53,18 @@ class DiffTextEdit(QPlainTextEdit):
 
         self._update_line_number_area_width(0)
 
-    def set_content(self, lines: list[str], colors: list[QColor], line_numbers: list[str]) -> None:
-        """Set the diff content with per-line colors and custom line numbers."""
+    def set_content(
+        self,
+        lines: list[str],
+        colors: list[QColor],
+        line_numbers: list[str],
+        char_highlights: CharHighlights | None = None,
+    ) -> None:
+        """Set the diff content with per-line colors, custom line numbers,
+        and optional character-level highlight ranges."""
         self._line_colors = colors
         self._line_numbers = line_numbers
+        self._char_highlights = char_highlights or []
         self.setPlainText("\n".join(lines))
         self.viewport().update()
 
@@ -57,6 +72,7 @@ class DiffTextEdit(QPlainTextEdit):
         """Clear all content."""
         self._line_colors = []
         self._line_numbers = []
+        self._char_highlights = []
         self.clear()
 
     def line_number_area_width(self) -> int:
@@ -136,23 +152,39 @@ class DiffTextEdit(QPlainTextEdit):
         painter.end()
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Paint line backgrounds before the text."""
-        # Paint line background colors on the viewport
+        """Paint line backgrounds and character-level highlights before the text."""
         painter = QPainter(self.viewport())
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = round(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        fm = self.fontMetrics()
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible():
                 height = round(self.blockBoundingRect(block).height())
+
+                # 1. Draw full-line background
                 if block_number < len(self._line_colors):
                     bg = self._line_colors[block_number]
-                    # Compare against palette base color instead of hardcoded white
                     if bg.isValid() and bg != self.palette().color(self.palette().ColorRole.Base):
                         painter.fillRect(
                             0, top, self.viewport().width(), height, bg
                         )
+
+                # 2. Draw character-level highlights on top of the line background
+                if block_number < len(self._char_highlights):
+                    for start_col, end_col, color in self._char_highlights[block_number]:
+                        text = block.text()
+                        # Compute pixel offsets for the character range
+                        x_start = fm.horizontalAdvance(text[:start_col]) - self.horizontalScrollBar().value()
+                        x_end = fm.horizontalAdvance(text[:end_col]) - self.horizontalScrollBar().value()
+                        if x_end > x_start:
+                            painter.fillRect(
+                                round(x_start), top,
+                                round(x_end - x_start), height,
+                                color,
+                            )
+
                 block_number += 1
                 top += height
             block = block.next()
@@ -161,3 +193,35 @@ class DiffTextEdit(QPlainTextEdit):
 
         # Now paint the text on top
         super().paintEvent(event)
+
+    # ------------------------------------------------------------------
+    # Editable mode
+    # ------------------------------------------------------------------
+
+    def set_editable(self, enabled: bool) -> None:
+        """Toggle editable mode on/off."""
+        self._editable = enabled
+        self.setReadOnly(not enabled)
+        if enabled:
+            self.textChanged.connect(self._on_text_changed)
+        else:
+            try:
+                self.textChanged.disconnect(self._on_text_changed)
+            except RuntimeError:
+                pass
+
+    @property
+    def editable(self) -> bool:
+        return self._editable
+
+    @property
+    def dirty(self) -> bool:
+        return self._dirty
+
+    def _on_text_changed(self) -> None:
+        self._dirty = True
+        self.content_changed.emit()
+
+    def get_lines(self) -> list[str]:
+        """Return current text content as a list of lines."""
+        return self.toPlainText().splitlines()

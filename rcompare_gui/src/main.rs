@@ -1,4 +1,7 @@
 #![allow(clippy::too_many_arguments)]
+#![deprecated(
+    note = "rcompare_gui (Slint) is deprecated. Use rcompare_pyside (PySide6) instead."
+)]
 
 slint::include_modules!();
 
