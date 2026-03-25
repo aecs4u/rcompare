@@ -1,5 +1,7 @@
 """QApplication setup and entry point."""
 
+from __future__ import annotations
+
 import sys
 
 from PySide6.QtWidgets import QApplication
@@ -7,13 +9,20 @@ from PySide6.QtWidgets import QApplication
 from .dialogs.splash_dialog import SplashDialog
 from .main_window import MainWindow
 from .utils.config import AppConfig
-from .resources.themes import load_light_theme, load_dark_theme
-from .utils.telemetry import configure_telemetry, log_exception, log_info
+from .logger import setup_logging, get_logger
+
+log = get_logger("app")
 
 
-def main():
-    configure_telemetry()
-    log_info("starting teczka app")
+def launch(
+    left: str | None = None,
+    right: str | None = None,
+    log_level: str = "INFO",
+    log_file: str | None = None,
+) -> None:
+    """Launch the teczka GUI application."""
+    setup_logging(log_level=log_level, log_file=log_file)
+    log.info("starting teczka app")
 
     app = QApplication(sys.argv)
     app.setApplicationName("RCompare")
@@ -22,29 +31,25 @@ def main():
     app.setStyle("Fusion")
 
     config = AppConfig.load()
-    log_info("configuration loaded", theme=config.theme)
+    log.info("configuration loaded", theme=config.theme)
 
-    # KDE Compliance: Respect system theme instead of forcing custom stylesheet
-    # Custom themes are available but disabled by default for KDE integration
-    # To enable custom themes, set config.theme to "light" or "dark" explicitly
-    # and uncomment the code below:
-    #
-    # if config.theme == "dark":
-    #     app.setStyleSheet(load_dark_theme())
-    # elif config.theme == "light":
-    #     app.setStyleSheet(load_light_theme())
-    #
-    # By default, use system theme (Breeze Light/Dark on KDE Plasma)
+    # Pre-populate paths from CLI args
+    if left:
+        config.last_paths["left"] = left
+    if right:
+        config.last_paths["right"] = right
+
+    # KDE Compliance: Respect system theme (Breeze Light/Dark on KDE Plasma)
 
     splash = SplashDialog()
     if splash.exec() != SplashDialog.DialogCode.Accepted:
-        log_info("startup cancelled by user from splash")
+        log.info("startup cancelled by user from splash")
         return
 
     try:
         window = MainWindow(config)
     except Exception:
-        log_exception("main window creation failed")
+        log.exception("main window creation failed")
         raise
 
     # Restore window geometry
@@ -57,5 +62,5 @@ def main():
         window.resize(1200, 800)
 
     window.show()
-    log_info("main window shown")
+    log.info("main window shown")
     sys.exit(app.exec())
