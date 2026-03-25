@@ -5,7 +5,7 @@
 1. [Executive Summary](#1-executive-summary)
 2. [System Architecture and Workspace Design](#2-system-architecture-and-workspace-design)
 3. [Core Library Specification](#3-core-library-specification-rcompare_core)
-4. [User Interface Architecture](#4-user-interface-architecture-rcompare_gui--slint) *(Slint GUI deprecated; PySide6 is the active frontend)*
+4. [User Interface Architecture](#4-user-interface-architecture) *(PySide6 desktop GUI; Slint GUI is deprecated)*
 5. [Feature Parity Specifications](#5-feature-parity-specifications)
 6. [Initial Development Plan](#6-initial-development-plan-roadmap)
 7. [Technical Deep Dive](#7-technical-deep-dive-implementation-details)
@@ -29,7 +29,7 @@ This document serves as the authoritative requirements specification and initial
 - Binary data
 - Images
 
-By leveraging the **Rust** programming language, the project targets "zero-cost abstractions," ensuring that high-level architectural modularity does not compromise runtime performance. The graphical user interface (GUI) will be constructed using **Slint**, a declarative UI toolkit that facilitates the creation of lightweight, native-looking interfaces, mirroring the "Krokiet" frontend found in the Czkawka ecosystem.
+By leveraging the **Rust** programming language, the project targets "zero-cost abstractions," ensuring that high-level architectural modularity does not compromise runtime performance. The graphical user interface (GUI) is built with **PySide6** (Qt for Python), following the "czkawka_pyside6" frontend pattern from the Czkawka ecosystem. The legacy Slint-based GUI (`rcompare_gui`) is deprecated.
 
 ### 1.2 Design Philosophy: The Czkawka Model
 

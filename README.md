@@ -13,7 +13,7 @@ A high-performance file and directory comparison toolkit with a Rust core, CLI, 
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
-- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`; the legacy Slint GUI is deprecated)
+- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`)
 - **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
 - **Copy operations**: GUI copy left/right operations for sync workflows
@@ -279,8 +279,8 @@ rcompare/
 ├── rcompare_common/      # Shared types, traits, and errors
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
-├── rcompare_pyside/      # Desktop GUI (PySide6) — default
-├── rcompare_gui/         # Experimental GUI (Slint, legacy)
+├── rcompare_pyside/      # Desktop GUI (PySide6)
+├── rcompare_gui/         # DEPRECATED — Slint GUI (use rcompare_pyside)
 └── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 
@@ -385,14 +385,6 @@ cargo test -p rcompare_core --lib vfs::tests_local   # Local VFS tests
 cargo test -p rcompare_core --lib vfs::tests_archive # Archive VFS tests
 cargo test -p rcompare_cli                           # CLI tests
 
-# GUI tests
-# Build-only UI compile test runs by default
-# Opt-in GUI smoke test (requires a display backend)
-RCOMPARE_GUI_SMOKE_TEST=1 cargo test -p rcompare_gui
-
-# Headless CI (compile-only GUI test)
-cargo test -p rcompare_gui --test ui_compile
-
 # PySide GUI lint/smoke checks
 cd rcompare_pyside
 uv sync
@@ -493,8 +485,7 @@ Documentation is consolidated in:
 - **tracing** - Structured logging
 
 ### GUI
-- **PySide6** - Desktop GUI frontend (default)
-- **Slint 1.9** - Experimental native Rust UI (legacy)
+- **PySide6** - Desktop GUI frontend
 - **logfire** - Structured application logging/telemetry backend
 
 ## Use Cases
@@ -656,7 +647,7 @@ The Cargo workspace metadata is `MIT OR Apache-2.0`.
 - Inspired by [Beyond Compare](https://www.scootersoftware.com/)
 - Architecture based on [Czkawka](https://github.com/qarmin/czkawka)
 - Uses [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) for fast hashing
-- GUI built with [PySide6](https://doc.qt.io/qtforpython-6/) and [Slint](https://slint.rs/)
+- GUI built with [PySide6](https://doc.qt.io/qtforpython-6/)
 
 ## Contact
 
