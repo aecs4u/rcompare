@@ -203,7 +203,7 @@ jobs:
 
           The primary GUI is a PySide6 desktop application. Install separately:
           ```bash
-          cd rcompare_pyside && uv sync && uv run rcompare-gui
+          cd teczka && uv sync && uv run teczka
           ```
 
           ### Documentation

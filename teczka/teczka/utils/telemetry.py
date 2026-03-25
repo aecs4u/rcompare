@@ -12,10 +12,10 @@ except ImportError:  # pragma: no cover - optional dependency at runtime
     logfire = None
 
 _configured = False
-_logger = logging.getLogger("rcompare_pyside")
+_logger = logging.getLogger("teczka")
 
 
-def configure_telemetry(service_name: str = "rcompare-pyside") -> None:
+def configure_telemetry(service_name: str = "teczka") -> None:
     """Configure stdlib logging and logfire (when available)."""
     global _configured
     if _configured:

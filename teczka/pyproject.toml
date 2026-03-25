@@ -1,5 +1,5 @@
 [project]
-name = "rcompare-pyside"
+name = "teczka"
 version = "0.1.0"
 description = "PySide6 GUI frontend for RCompare file comparison tool"
 requires-python = ">=3.10"
@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-rcompare-gui = "rcompare_pyside.__main__:main"
+teczka = "teczka.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -128,7 +128,7 @@ pip install -r frontend/requirements.txt
 python frontend/main.py
 
 # Or if installed as a package
-rcompare-pyside6
+teczka
 ```
 
 #### PySide6 Features

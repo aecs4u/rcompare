@@ -1,8 +1,8 @@
-# rcompare_pyside GitHub Milestone Plan
+# teczka GitHub Milestone Plan
 
 Last updated: 2026-02-13
 
-This document converts the `rcompare_pyside` roadmap into a concrete GitHub execution plan with:
+This document converts the `teczka` roadmap into a concrete GitHub execution plan with:
 - Milestones with target dates
 - Epics and issue-sized tasks
 - Labels, priorities, and dependencies
@@ -203,7 +203,7 @@ Issues:
   - Release checklist completed
 
 Issues:
-1. `RPY-M6-01` Add/expand CI jobs for `rcompare_pyside` test gates
+1. `RPY-M6-01` Add/expand CI jobs for `teczka` test gates
    - Labels: `type:feature`, `area:qa`, `priority:P0`, `size:M`
 2. `RPY-M6-02` Add UI smoke tests for startup/compare/sync/profile/options
    - Labels: `type:test`, `area:qa`, `priority:P0`, `size:M`

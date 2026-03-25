@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture reproducible screenshots for the rcompare_pyside UI."""
+"""Capture reproducible screenshots for the teczka UI."""
 
 from __future__ import annotations
 
@@ -14,20 +14,20 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 ROOT = Path(__file__).resolve().parents[1]
-PYSIDE_ROOT = ROOT / "rcompare_pyside"
+PYSIDE_ROOT = ROOT / "teczka"
 if str(PYSIDE_ROOT) not in sys.path:
     sys.path.insert(0, str(PYSIDE_ROOT))
 
-from rcompare_pyside.main_window import MainWindow
-from rcompare_pyside.dialogs.about_dialog import AboutDialog
-from rcompare_pyside.dialogs.profiles_dialog import ProfilesDialog
-from rcompare_pyside.dialogs.settings_dialog import SettingsDialog
-from rcompare_pyside.dialogs.splash_dialog import SplashDialog
-from rcompare_pyside.dialogs.sync_dialog import SyncDialog
-from rcompare_pyside.models.settings import ProfileManager, SessionProfile
-from rcompare_pyside.utils.cli_bridge import DiffEntry, DiffStatus, FileSide, ScanReport, ScanSummary
-from rcompare_pyside.utils.config import AppConfig
-from rcompare_pyside.resources.themes import load_light_theme
+from teczka.main_window import MainWindow
+from teczka.dialogs.about_dialog import AboutDialog
+from teczka.dialogs.profiles_dialog import ProfilesDialog
+from teczka.dialogs.settings_dialog import SettingsDialog
+from teczka.dialogs.splash_dialog import SplashDialog
+from teczka.dialogs.sync_dialog import SyncDialog
+from teczka.models.settings import ProfileManager, SessionProfile
+from teczka.utils.cli_bridge import DiffEntry, DiffStatus, FileSide, ScanReport, ScanSummary
+from teczka.utils.config import AppConfig
+from teczka.resources.themes import load_light_theme
 
 OUT_DIR = ROOT / "docs" / "screenshots"
 

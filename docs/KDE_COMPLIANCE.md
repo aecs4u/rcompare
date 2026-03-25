@@ -204,7 +204,7 @@ These must be addressed before claiming KDE compliance:
 - `_on_configure_shortcuts()`, `_on_configure_toolbars()`
 - `_on_handbook()`, `_on_report_bug()`, `_on_about_kde()`
 
-**Files changed:** `rcompare_pyside/rcompare_pyside/main_window.py` (menu bar rebuild, signal connections, new slot implementations)
+**Files changed:** `teczka/teczka/main_window.py` (menu bar rebuild, signal connections, new slot implementations)
 
 ### Backward Compatibility
 

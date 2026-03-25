@@ -13,7 +13,7 @@ from .utils.telemetry import configure_telemetry, log_exception, log_info
 
 def main():
     configure_telemetry()
-    log_info("starting rcompare_pyside app")
+    log_info("starting teczka app")
 
     app = QApplication(sys.argv)
     app.setApplicationName("RCompare")

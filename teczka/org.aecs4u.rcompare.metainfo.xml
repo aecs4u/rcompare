@@ -39,7 +39,7 @@
   <url type="vcs-browser">https://github.com/aecs4u/rcompare</url>
   
   <provides>
-    <binary>rcompare-gui</binary>
+    <binary>teczka</binary>
   </provides>
   
   <releases>

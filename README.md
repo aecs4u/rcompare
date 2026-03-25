@@ -13,7 +13,7 @@ A high-performance file and directory comparison toolkit with a Rust core, CLI, 
 - **Fast directory comparison**: Parallel traversal with jwalk
 - **BLAKE3 hashing**: Persistent cache and optional verification
 - **Cross-platform**: Linux, Windows, macOS
-- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`rcompare-gui`)
+- **CLI + GUI**: Console output, JSON output, and PySide6 desktop GUI (`teczka`)
 - **Archive comparison**: ZIP, TAR, TAR.GZ, TGZ, 7Z with VFS abstraction
 - **Gitignore + ignore patterns**: Fully compatible gitignore-style pattern matching
 - **Copy operations**: GUI copy left/right operations for sync workflows
@@ -56,9 +56,9 @@ cargo build --release --no-default-features --features "archives,csv-diff"
 ./target/release/rcompare_cli scan /path/to/left /path/to/right
 
 # Run GUI (PySide6, Python >= 3.10)
-cd rcompare_pyside
+cd teczka
 uv sync
-uv run rcompare-gui
+uv run teczka
 ```
 
 ### Feature Flags
@@ -279,8 +279,8 @@ rcompare/
 ├── rcompare_common/      # Shared types, traits, and errors
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
-├── rcompare_pyside/      # Desktop GUI (PySide6)
-├── rcompare_gui/         # DEPRECATED — Slint GUI (use rcompare_pyside)
+├── teczka/               # Desktop GUI (PySide6)
+├── rcompare_gui/         # DEPRECATED — Slint GUI (use teczka)
 └── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 
@@ -386,10 +386,10 @@ cargo test -p rcompare_core --lib vfs::tests_archive # Archive VFS tests
 cargo test -p rcompare_cli                           # CLI tests
 
 # PySide GUI lint/smoke checks
-cd rcompare_pyside
+cd teczka
 uv sync
-uv run ruff check rcompare_pyside
-QT_QPA_PLATFORM=offscreen uv run python -m rcompare_pyside
+uv run ruff check teczka
+QT_QPA_PLATFORM=offscreen uv run python -m teczka
 ```
 
 ### Continuous Integration

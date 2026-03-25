@@ -3,7 +3,7 @@
 Last updated: 2026-02-13
 
 This roadmap focuses on `rcompare_cli` feature evolution required to:
-1. Fully support `rcompare_pyside` workflows.
+1. Fully support `teczka` workflows.
 2. Improve standalone CLI automation quality.
 3. Keep API and JSON output stable and versioned.
 
@@ -25,7 +25,7 @@ Remaining high-priority roadmap items from this plan include progress streaming 
 ## 1) Current Gap Summary
 
 `rcompare_cli` currently exposes a `scan` command with rich comparison flags, JSON output, and specialized diff reports.  
-To fully back `rcompare_pyside`, CLI still needs command-level support for sync execution, selected-path copy operations, on-demand file-level diffs, and structured progress/events.
+To fully back `teczka`, CLI still needs command-level support for sync execution, selected-path copy operations, on-demand file-level diffs, and structured progress/events.
 
 ## 2) Milestones
 
@@ -128,7 +128,7 @@ Goal: make adoption safe for both pyside and external users.
 Work items:
 1. `RCLI-C6-01` Publish migration guide from scan-only automation to multi-command workflows.
 2. `RCLI-C6-02` Add command cookbook for sync/copy/diff-file/read/capabilities.
-3. `RCLI-C6-03` Add end-to-end integration tests with `rcompare_pyside` bridge expectations.
+3. `RCLI-C6-03` Add end-to-end integration tests with `teczka` bridge expectations.
 4. `RCLI-C6-04` Expand CI matrix for Linux/macOS/Windows command parity.
 5. `RCLI-C6-05` Tag GA release with schema and command compatibility table.
 
@@ -165,7 +165,7 @@ Recommended first 8 tasks:
 7. `RCLI-C2-05` copy executor for selected paths.
 8. `RCLI-C4-02` structured progress stream.
 
-This sequence unlocks the largest `rcompare_pyside` backend parity gains first.
+This sequence unlocks the largest `teczka` backend parity gains first.
 
 ## 6) Definition of Done
 

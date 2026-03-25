@@ -7,7 +7,7 @@ Usage:
   scripts/create_pyside_roadmap_issues.sh [--repo OWNER/REPO]
 
 Description:
-  Creates/updates the GitHub planning structure for rcompare_pyside:
+  Creates/updates the GitHub planning structure for teczka:
   - Labels
   - Milestones
   - Epic issues
@@ -220,7 +220,7 @@ ensure_issue() {
 
 echo
 echo "== Ensuring labels =="
-ensure_label "area:pyside" "1D76DB" "General rcompare_pyside area"
+ensure_label "area:pyside" "1D76DB" "General teczka area"
 ensure_label "area:sync" "0E8A16" "Synchronization logic and UI"
 ensure_label "area:folder-view" "2D7FF9" "Folder compare tree and interactions"
 ensure_label "area:profiles" "5319E7" "Session profiles and persistence"
@@ -248,7 +248,7 @@ echo "== Ensuring milestones =="
 ensure_milestone \
   "M1 - Stabilize Core UX" \
   "2026-02-27T23:59:59Z" \
-  "Remove regressions and lock down current rcompare_pyside feature set."
+  "Remove regressions and lock down current teczka feature set."
 ensure_milestone \
   "M2 - Sync Engine Execution" \
   "2026-03-20T23:59:59Z" \
@@ -502,7 +502,7 @@ ensure_issue "RPY-M5-05" "Publish performance report in docs" \
   "false"
 
 # M6
-ensure_issue "RPY-M6-01" "Add/expand CI jobs for rcompare_pyside test gates" \
+ensure_issue "RPY-M6-01" "Add/expand CI jobs for teczka test gates" \
   "M6 - Release Readiness" \
   "type:feature,area:qa,priority:P0,size:M" \
   "" \
@@ -535,4 +535,4 @@ ensure_issue "RPY-M6-05" "Release candidate bug bash and closure criteria" \
 
 echo
 echo "Done."
-echo "Created or reused roadmap issues for rcompare_pyside in $REPO."
+echo "Created or reused roadmap issues for teczka in $REPO."
