@@ -601,9 +601,18 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_toolbar(self) -> None:
-        # Modern layout: no top toolbar. Actions are in sidebar,
-        # session tab bar, and integrated status bar.
-        pass
+        # Modern layout: no top toolbar. Create dummy QAction stubs
+        # so old code referencing _tb_* attributes doesn't crash.
+        self._tb_three_way = QAction(self)
+        self._tb_three_way.setCheckable(True)
+        self._tb_cancel = QAction(self)
+        self._tb_compare = QAction(self)
+        self._tb_filter_all = QAction(self)
+        self._tb_filter_all.setCheckable(True)
+        self._tb_filter_diffs = QAction(self)
+        self._tb_filter_diffs.setCheckable(True)
+        self._tb_filter_same = QAction(self)
+        self._tb_filter_same.setCheckable(True)
 
     # ------------------------------------------------------------------
     # Central widget
@@ -965,9 +974,10 @@ class MainWindow(QMainWindow):
             )
 
         self._status_summary.setText(session.status_summary or "Ready")
+        self._integrated_status.set_status(session.status_summary or "Ready")
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
-        self.statusBar().clearMessage()
+        self._session_tab_bar.set_comparing(False)
         self._update_quick_filter_actions()
         self._update_active_session_title()
 
@@ -1206,7 +1216,10 @@ class MainWindow(QMainWindow):
 
         self._tb_cancel.setEnabled(True)
         self._tb_compare.setEnabled(False)
+        self._session_tab_bar.set_comparing(True)
         self._status_summary.setText("Comparing...")
+        self._integrated_status.set_status("Comparing...")
+        self._integrated_status.show_progress(True)
         self._current_session().status_summary = "Comparing..."
         self._progress_bar.setValue(0)
         self._progress_bar.show()
@@ -1234,9 +1247,11 @@ class MainWindow(QMainWindow):
             self._worker.cancel()
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
+        self._session_tab_bar.set_comparing(False)
         self._status_summary.setText("Cancelled")
+        self._integrated_status.set_status("Cancelled")
+        self._integrated_status.show_progress(False)
         self._current_session().status_summary = "Cancelled"
-        self.statusBar().showMessage("Comparison cancelled.", 5000)
 
     @Slot(object)
     def _on_comparison_finished(self, report: ScanReport) -> None:
@@ -1246,7 +1261,9 @@ class MainWindow(QMainWindow):
         session.report = report
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
+        self._session_tab_bar.set_comparing(False)
         self._progress_bar.hide()
+        self._integrated_status.show_progress(False)
         self._status_stage.setText("")
 
         self._rebuild_folder_tree_from_report()
@@ -1287,9 +1304,12 @@ class MainWindow(QMainWindow):
         """Handle a comparison error."""
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
+        self._session_tab_bar.set_comparing(False)
         self._progress_bar.hide()
+        self._integrated_status.show_progress(False)
         self._status_stage.setText("")
         self._status_summary.setText("Error")
+        self._integrated_status.set_status("Error")
         self._current_session().status_summary = "Error"
         log_error("compare failed", error_text=message)
         QMessageBox.critical(self, "Comparison Error", message)
