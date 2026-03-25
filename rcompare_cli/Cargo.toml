@@ -12,6 +12,10 @@ rcompare_core = { path = "../rcompare_core" }
 
 clap.workspace = true
 anyhow.workspace = true
+ctrlc = { version = "3.4", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

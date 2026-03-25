@@ -16,6 +16,8 @@ use std::fs;
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -323,6 +325,32 @@ impl ScanSource {
 }
 
 fn main() {
+    // Reset SIGPIPE to default behavior so piping to `head` etc. exits cleanly
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
+
+    // Capture panics to the log before unwinding
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown panic".to_string()
+        };
+        let location = info
+            .location()
+            .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        eprintln!("rcompare panicked: {}{}", payload, location);
+        default_hook(info);
+    }));
+
     // Initialize tracing to stderr (so JSON output can go cleanly to stdout)
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -330,6 +358,20 @@ fn main() {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    // Set up Ctrl-C handler with graceful shutdown
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_flag_handler = Arc::clone(&stop_flag);
+    ctrlc::set_handler(move || {
+        if stop_flag_handler.load(Ordering::SeqCst) {
+            // Second Ctrl-C: force exit immediately
+            info!("Second Ctrl-C received, forcing exit");
+            std::process::exit(130);
+        }
+        info!("Ctrl-C received, stopping gracefully...");
+        stop_flag_handler.store(true, Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
 
     let cli = Cli::parse();
 
@@ -393,6 +435,7 @@ fn main() {
                 regex_rule,
                 image_exif,
                 image_tolerance,
+                &stop_flag,
             ) {
                 Ok(scan_result) => {
                     // Exit with appropriate code based on scan results
@@ -1873,6 +1916,7 @@ fn run_scan(
     regex_rules: Vec<String>,
     image_exif: bool,
     image_tolerance: u8,
+    stop_flag: &Arc<AtomicBool>,
 ) -> Result<ScanResult, Box<dyn std::error::Error>> {
     // Validate paths
     if !left.exists() {
@@ -1995,7 +2039,7 @@ fn run_scan(
         None
     };
 
-    let left_entries = scan_source(&left_scanner, &left_source)?;
+    let left_entries = scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?;
 
     if let Some(pb) = &pb_left {
         pb.finish_with_message(format!(
@@ -2023,7 +2067,7 @@ fn run_scan(
         None
     };
 
-    let right_entries = scan_source(&right_scanner, &right_source)?;
+    let right_entries = scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?;
 
     if let Some(pb) = &pb_right {
         pb.finish_with_message(format!(
@@ -2081,7 +2125,7 @@ fn run_scan(
             right_entries,
             left_source.vfs(),
             right_source.vfs(),
-            None,
+            Some(stop_flag.as_ref()),
             Some(move |current, _total| {
                 if let Some(ref pb) = pb_clone {
                     pb.set_position(current as u64);
@@ -2104,13 +2148,14 @@ fn run_scan(
             }),
         )?
     } else {
-        comparison_engine.compare_with_vfs(
+        comparison_engine.compare_with_vfs_and_cancel(
             left_source.root(),
             right_source.root(),
             left_entries,
             right_entries,
             left_source.vfs(),
             right_source.vfs(),
+            Some(stop_flag.as_ref()),
         )?
     };
 
@@ -3970,10 +4015,11 @@ fn should_show_entry(
 fn scan_source(
     scanner: &FolderScanner,
     source: &ScanSource,
+    cancel: Option<&AtomicBool>,
 ) -> Result<Vec<rcompare_common::FileEntry>, rcompare_common::RCompareError> {
     match source {
-        ScanSource::Local { root } => scanner.scan(root),
-        ScanSource::Vfs { vfs, root } => scanner.scan_vfs(vfs.as_ref(), root),
+        ScanSource::Local { root } => scanner.scan_with_cancel(root, cancel),
+        ScanSource::Vfs { vfs, root } => scanner.scan_vfs_with_cancel(vfs.as_ref(), root, cancel),
     }
 }
 
