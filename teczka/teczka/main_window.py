@@ -14,6 +14,7 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -40,6 +41,10 @@ from .views.image_view import ImageView
 from .views.home_view import HomeView
 from .widgets.filter_bar import FilterBar
 from .widgets.color_legend import ColorLegend
+from .widgets.sidebar import Sidebar
+from .widgets.session_tab_bar import SessionTabBar
+from .widgets.compact_path_bar import CompactPathBar
+from .widgets.integrated_status_bar import IntegratedStatusBar
 from .workers.comparison_worker import ComparisonWorker
 from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.sync_dialog import SyncDialog
@@ -596,110 +601,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_toolbar(self) -> None:
-        toolbar = QToolBar("Main Toolbar", self)
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.addToolBar(toolbar)
-
-        # Session / navigation
-        self._tb_home = QAction(self._themed_icon("go-home"), "Home", self)
-        toolbar.addAction(self._tb_home)
-
-        self._tb_new = QAction(self._themed_icon("tab-new"), "Sessions", self)
-        toolbar.addAction(self._tb_new)
-        self._tb_profiles = QAction(self._themed_icon("document-open"), "Profiles", self)
-        toolbar.addAction(self._tb_profiles)
-
-        toolbar.addSeparator()
-        # Quick status filter presets (ideas_for_toolbars)
-        self._tb_filter_all = QAction("All", self)
-        self._tb_filter_all.setCheckable(True)
-        toolbar.addAction(self._tb_filter_all)
-
-        self._tb_filter_diffs = QAction("Diffs", self)
-        self._tb_filter_diffs.setCheckable(True)
-        toolbar.addAction(self._tb_filter_diffs)
-
-        self._tb_filter_same = QAction("Same", self)
-        self._tb_filter_same.setCheckable(True)
-        toolbar.addAction(self._tb_filter_same)
-
-        toolbar.addSeparator()
-
-        self._tb_compare = QAction(self._themed_icon("system-search"), "Compare", self)
-        toolbar.addAction(self._tb_compare)
-
-        self._tb_refresh = QAction(self._themed_icon("view-refresh"), "Refresh", self)
-        self._tb_refresh.setShortcut(QKeySequence(Qt.Key.Key_F5))
-        toolbar.addAction(self._tb_refresh)
-
-        self._tb_swap = QAction(
-            self._themed_icon("view-sort-descending", "object-flip-horizontal"),
-            "Swap",
-            self,
-        )
-        toolbar.addAction(self._tb_swap)
-
-        self._tb_cancel = QAction(self._themed_icon("process-stop"), "Stop", self)
-        self._tb_cancel.setEnabled(False)
-        toolbar.addAction(self._tb_cancel)
-
-        toolbar.addSeparator()
-
-        # 3-Way toggle
-        self._tb_three_way = QAction(self._themed_icon("view-split-left-right"), "3-Way", self)
-        self._tb_three_way.setCheckable(True)
-        toolbar.addAction(self._tb_three_way)
-
-        toolbar.addSeparator()
-
-        # Difference navigation
-        self._tb_prev_diff = QAction(self._themed_icon("go-up-skip", "go-up"), "Prev Diff", self)
-        self._tb_prev_diff.setToolTip("Previous Difference (Alt+Up)")
-        toolbar.addAction(self._tb_prev_diff)
-
-        self._tb_next_diff = QAction(self._themed_icon("go-down-skip", "go-down"), "Next Diff", self)
-        self._tb_next_diff.setToolTip("Next Difference (Alt+Down)")
-        toolbar.addAction(self._tb_next_diff)
-
-        toolbar.addSeparator()
-
-        # Expand All / Collapse All
-        self._tb_expand_all = QAction(self._themed_icon("zoom-in"), "Expand", self)
-        toolbar.addAction(self._tb_expand_all)
-
-        self._tb_collapse_all = QAction(self._themed_icon("zoom-out"), "Collapse", self)
-        toolbar.addAction(self._tb_collapse_all)
-
-        toolbar.addSeparator()
-
-        # Copy actions
-        self._tb_copy_lr = QAction(self._themed_icon("go-next"), "Copy", self)
-        toolbar.addAction(self._tb_copy_lr)
-
-        self._tb_copy_rl = QAction(self._themed_icon("go-previous"), "Copy <-", self)
-        toolbar.addAction(self._tb_copy_rl)
-
-        # Sync
-        self._tb_sync = QAction(self._themed_icon("view-refresh"), "Synchronize", self)
-        toolbar.addAction(self._tb_sync)
-
-        toolbar.addSeparator()
-
-        self._tb_apply = QAction(
-            self._themed_icon("dialog-ok-apply", "dialog-ok"), "Apply", self
-        )
-        self._tb_apply.setToolTip("Apply selected difference (Ctrl+Return)")
-        toolbar.addAction(self._tb_apply)
-
-        toolbar.addSeparator()
-
-        self._tb_save_diff = QAction(self._themed_icon("document-save"), "Save Diff", self)
-        self._tb_save_diff.setToolTip("Save comparison as diff file")
-        toolbar.addAction(self._tb_save_diff)
-
-        self._tb_options = QAction(self._themed_icon("configure"), "Options", self)
-        toolbar.addAction(self._tb_options)
+        # Modern layout: no top toolbar. Actions are in sidebar,
+        # session tab bar, and integrated status bar.
+        pass
 
     # ------------------------------------------------------------------
     # Central widget
@@ -707,48 +611,32 @@ class MainWindow(QMainWindow):
 
     def _build_central_widget(self) -> None:
         central = QWidget(self)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        root_layout = QHBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Session tabs (multi-tab workspace)
-        self._session_tabs = QTabBar(central)
-        self._session_tabs.setExpanding(False)
-        self._session_tabs.setDrawBase(True)
-        self._session_tabs.setMovable(False)
-        self._session_tabs.setTabsClosable(False)
-        layout.addWidget(self._session_tabs)
+        # ── Left: Sidebar activity bar ──
+        self._sidebar = Sidebar(central)
+        root_layout.addWidget(self._sidebar)
 
-        # Path bar
-        self._path_bar = PathBar(central)
-        layout.addWidget(self._path_bar)
+        # ── Right: Content area ──
+        content = QWidget(central)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
-        # View-switcher tab bar
-        self._view_switcher = QTabBar(central)
-        self._view_switcher.addTab("Home")
-        self._view_switcher.addTab("Folder Compare")
-        self._view_switcher.addTab("Text Compare")
-        self._view_switcher.addTab("Hex Compare")
-        self._view_switcher.addTab("Image Compare")
-        self._view_switcher.addTab("Table Compare")
-        self._view_switcher.setTabsClosable(True)
-        for i in range(_BASE_VIEW_TAB_COUNT):
-            self._view_switcher.setTabButton(i, QTabBar.ButtonPosition.RightSide, None)
-            self._view_switcher.setTabButton(i, QTabBar.ButtonPosition.LeftSide, None)
-        layout.addWidget(self._view_switcher)
+        # Session tab bar with Compare/Stop buttons
+        self._session_tab_bar = SessionTabBar(content)
+        content_layout.addWidget(self._session_tab_bar)
 
-        # Filter bar
-        self._filter_bar = FilterBar(central)
-        layout.addWidget(self._filter_bar)
-
-        # Color legend
-        self._color_legend = ColorLegend(central)
-        layout.addWidget(self._color_legend)
+        # Compact path bar (single row)
+        self._compact_path_bar = CompactPathBar(content)
+        content_layout.addWidget(self._compact_path_bar)
 
         # Stacked widget holding the views
-        self._view_stack = QStackedWidget(central)
+        self._view_stack = QStackedWidget(content)
 
-        # Home view (index 0) - shown on startup
+        # Home view (index 0)
         self._home_view = HomeView(self._config, self._view_stack)
         self._view_stack.addWidget(self._home_view)    # index 0
 
@@ -774,14 +662,30 @@ class MainWindow(QMainWindow):
         except ImportError:
             self._table_view = None
 
-        layout.addWidget(self._view_stack, 1)  # stretch factor 1
+        content_layout.addWidget(self._view_stack, 1)  # stretch factor 1
+
+        # Integrated status bar at bottom of content area
+        self._integrated_status = IntegratedStatusBar(content)
+        content_layout.addWidget(self._integrated_status)
+
+        root_layout.addWidget(content, 1)  # content stretches
 
         self.setCentralWidget(central)
 
-        # Initialize first session tab.
+        # ── Compatibility shims for old code that references removed widgets ──
+        # Old code references these; provide shims so nothing breaks
+        self._session_tabs = self._session_tab_bar._tab_bar
+        self._path_bar = self._compact_path_bar
+        self._filter_bar = FilterBar(self)  # hidden, for signal compat
+        self._filter_bar.hide()
+        self._color_legend = ColorLegend(self)  # hidden
+        self._color_legend.hide()
+        self._view_switcher = QTabBar(self)  # hidden dummy
+        self._view_switcher.hide()
+
+        # Initialize first session
         self._sessions = [SessionState(name="Session 1")]
-        self._session_tabs.addTab("Session 1")
-        self._session_tabs.setCurrentIndex(0)
+        self._session_tab_bar.add_session("Session 1")
         self._active_session_index = 0
 
     # ------------------------------------------------------------------
@@ -789,48 +693,44 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_status_bar(self) -> None:
-        status_bar: QStatusBar = self.statusBar()
+        # Hide the default QMainWindow status bar — we use IntegratedStatusBar
+        self.statusBar().hide()
 
-        # Left: general message
-        self._status_summary = QLabel("Ready")
-        status_bar.addWidget(self._status_summary, 1)
-
-        # Progress bar (hidden until a comparison starts)
+        # Compatibility shims for old code that sets status text
+        self._status_summary = QLabel()
         self._progress_bar = QProgressBar()
-        self._progress_bar.setFixedWidth(200)
-        self._progress_bar.setMaximumHeight(16)
-        self._progress_bar.setTextVisible(True)
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
-        self._progress_bar.hide()
-        status_bar.addPermanentWidget(self._progress_bar)
-
-        # Stage label
-        self._status_stage = QLabel("")
-        status_bar.addPermanentWidget(self._status_stage)
-
-        # Center: file navigation indicator
-        self._status_files = QLabel("")
-        status_bar.addPermanentWidget(self._status_files)
-
-        # Right: difference navigation indicator
-        self._status_diffs = QLabel("")
-        status_bar.addPermanentWidget(self._status_diffs)
+        self._status_stage = QLabel()
+        self._status_files = QLabel()
+        self._status_diffs = QLabel()
 
     # ------------------------------------------------------------------
     # Signal connections
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        # PathBar -> store paths
-        self._path_bar.left_path_changed.connect(self._on_left_path_changed)
-        self._path_bar.right_path_changed.connect(self._on_right_path_changed)
-        self._path_bar.base_path_changed.connect(self._on_base_path_changed)
-        self._session_tabs.currentChanged.connect(self._on_session_changed)
+        # ── New modern widgets ──
+        # Sidebar -> view switching
+        self._sidebar.view_requested.connect(self._switch_view)
+        self._sidebar.action_requested.connect(self._on_sidebar_action)
 
-        # FilterBar -> FolderView
-        self._filter_bar.filters_changed.connect(self._on_filters_changed)
-        self._filter_bar.diff_option_changed.connect(self._on_diff_option_changed)
+        # Session tab bar
+        self._session_tab_bar.new_session_requested.connect(self._on_new_session)
+        self._session_tab_bar.session_changed.connect(self._on_session_changed)
+        self._session_tab_bar.session_close_requested.connect(self._on_close_tab)
+        self._session_tab_bar.compare_requested.connect(self._on_compare)
+        self._session_tab_bar.stop_requested.connect(self._on_cancel)
+
+        # Compact path bar
+        self._compact_path_bar.left_path_changed.connect(self._on_left_path_changed)
+        self._compact_path_bar.right_path_changed.connect(self._on_right_path_changed)
+        self._compact_path_bar.base_path_changed.connect(self._on_base_path_changed)
+        self._compact_path_bar.swap_requested.connect(self._on_swap_sides)
+
+        # Integrated status bar
+        self._integrated_status.filters_changed.connect(self._on_integrated_filters)
+        self._integrated_status.search_changed.connect(self._on_search_changed)
+        self._integrated_status.navigate_prev.connect(self._on_prev_diff)
+        self._integrated_status.navigate_next.connect(self._on_next_diff)
 
         # File menu
         self._act_new_tab.triggered.connect(self._on_new_session)
@@ -889,24 +789,7 @@ class MainWindow(QMainWindow):
         self._act_about.triggered.connect(self._on_about)
         self._act_about_kde.triggered.connect(self._on_about_kde)
 
-        # Toolbar actions (keep existing toolbar)
-        self._tb_compare.triggered.connect(self._on_compare)
-        self._tb_cancel.triggered.connect(self._on_cancel)
-        self._tb_refresh.triggered.connect(self._on_refresh)
-        self._tb_new.triggered.connect(self._on_new_session)
-        self._tb_home.triggered.connect(self._on_home)
-        self._tb_swap.triggered.connect(self._on_swap_sides)
-        self._tb_prev_diff.triggered.connect(self._on_prev_diff)
-        self._tb_next_diff.triggered.connect(self._on_next_diff)
-        self._tb_expand_all.triggered.connect(self._folder_view.expand_all)
-        self._tb_collapse_all.triggered.connect(self._folder_view.collapse_all)
-        self._tb_copy_lr.triggered.connect(self._on_copy_lr)
-        self._tb_copy_rl.triggered.connect(self._on_copy_rl)
-        self._tb_sync.triggered.connect(self._on_sync)
-        self._tb_apply.triggered.connect(self._on_apply_diff)
-        self._tb_save_diff.triggered.connect(self._on_save_diff)
-        self._tb_options.triggered.connect(self._on_preferences)
-        self._tb_profiles.triggered.connect(self._on_profiles)
+        # (Old toolbar removed — actions accessible via menu and sidebar)
 
         # HomeView signals
         self._home_view.session_type_selected.connect(self._on_home_session_type)
@@ -916,9 +799,7 @@ class MainWindow(QMainWindow):
         self._folder_view.file_activated.connect(self._on_file_activated)
         self._folder_view.context_command.connect(self._on_folder_context_command)
 
-        # View switcher tab bar <-> stacked widget
-        self._view_switcher.currentChanged.connect(self._on_view_tab_changed)
-        self._view_switcher.tabCloseRequested.connect(self._on_view_tab_close_requested)
+        # (View switcher removed — sidebar handles view switching)
 
         # View menu radio actions -> switch view (indices shifted +1 for HomeView at 0)
         self._act_view_folder.triggered.connect(lambda: self._switch_view(1))
@@ -936,17 +817,14 @@ class MainWindow(QMainWindow):
         self._act_filter_all.triggered.connect(lambda: self._apply_quick_filter_preset("all"))
         self._act_filter_diffs.triggered.connect(lambda: self._apply_quick_filter_preset("diffs"))
         self._act_filter_same.triggered.connect(lambda: self._apply_quick_filter_preset("same"))
-        self._tb_filter_all.triggered.connect(lambda: self._apply_quick_filter_preset("all"))
-        self._tb_filter_diffs.triggered.connect(lambda: self._apply_quick_filter_preset("diffs"))
-        self._tb_filter_same.triggered.connect(lambda: self._apply_quick_filter_preset("same"))
+        # (Old toolbar filter presets removed — use menu or integrated status bar)
         self._act_show_preview.toggled.connect(self._on_preview_toggled)
         self._act_always_show_folders.toggled.connect(self._on_folder_view_options_changed)
         self._act_mode_compare_structure.triggered.connect(self._on_folder_view_options_changed)
         self._act_mode_files_only.triggered.connect(self._on_folder_view_options_changed)
         self._act_mode_ignore_structure.triggered.connect(self._on_folder_view_options_changed)
 
-        # 3-Way toggle
-        self._tb_three_way.toggled.connect(self._on_three_way_toggled)
+        # (3-Way toggle available via menu only)
 
     # ------------------------------------------------------------------
     # Show event -- deferred CLI error dialog
@@ -1448,6 +1326,25 @@ class MainWindow(QMainWindow):
         """Show the Home/Welcome view."""
         self._switch_view(0)
 
+    @Slot(str)
+    def _on_sidebar_action(self, action_id: str) -> None:
+        """Handle sidebar bottom action clicks."""
+        if action_id == "bookmarks":
+            self._on_manage_bookmarks()
+        elif action_id == "settings":
+            self._on_preferences()
+
+    @Slot(bool, bool, bool, bool)
+    def _on_integrated_filters(self, identical: bool, different: bool, left_only: bool, right_only: bool) -> None:
+        """Handle filter changes from IntegratedStatusBar."""
+        self._on_filters_changed(identical, different, left_only, right_only, True)
+
+    @Slot(str)
+    def _on_search_changed(self, text: str) -> None:
+        """Handle search text changes from IntegratedStatusBar."""
+        if hasattr(self._folder_view, 'set_search_filter'):
+            self._folder_view.set_search_filter(text)
+
     @Slot(int)
     def _on_home_session_type(self, view_index: int) -> None:
         """Handle session type card click from HomeView."""
@@ -1519,7 +1416,10 @@ class MainWindow(QMainWindow):
         if index < 0 or index >= self._view_stack.count():
             return
         self._view_stack.setCurrentIndex(index)
-        self._view_switcher.setCurrentIndex(index)
+        self._sidebar.set_active_view(index)
+        # Keep hidden view_switcher in sync for compat
+        if index < self._view_switcher.count():
+            self._view_switcher.setCurrentIndex(index)
 
     @Slot(int)
     def _on_view_tab_close_requested(self, index: int) -> None:
