@@ -23,4 +23,4 @@ regex.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 filetime.workspace = true
-assert_cmd = "2.0"
+assert_cmd = "2.2"
