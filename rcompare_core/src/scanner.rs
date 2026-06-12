@@ -122,8 +122,9 @@ impl FolderScanner {
         let mut builder = GitignoreBuilder::new(root);
         let mut found_any = false;
 
-        // Recursively find all .gitignore files in the directory tree
-        for entry in WalkDir::new(root).into_iter().flatten() {
+        // Recursively find all .gitignore files in the directory tree.
+        // jwalk skips hidden files by default, which would hide .gitignore itself.
+        for entry in WalkDir::new(root).skip_hidden(false).into_iter().flatten() {
             let path = entry.path();
             if path.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
                 if let Some(e) = builder.add(&path) {
@@ -138,7 +139,7 @@ impl FolderScanner {
         if found_any {
             self.gitignore =
                 Some(builder.build().map_err(|e| {
-                    RCompareError::Config(format!("Failed to build gitignore: {}", e))
+                    RCompareError::Config(format!("Failed to build gitignore: {e}"))
                 })?);
             debug!("Built gitignore with nested .gitignore files");
         }
@@ -169,7 +170,7 @@ impl FolderScanner {
             }
 
             let entry = entry.map_err(|e| {
-                RCompareError::Io(std::io::Error::other(format!("Walk error: {}", e)))
+                RCompareError::Io(std::io::Error::other(format!("Walk error: {e}")))
             })?;
 
             let path = entry.path();
@@ -184,7 +185,7 @@ impl FolderScanner {
             }
 
             let metadata = entry.metadata().map_err(|e| {
-                RCompareError::Io(std::io::Error::other(format!("Metadata error: {}", e)))
+                RCompareError::Io(std::io::Error::other(format!("Metadata error: {e}")))
             })?;
 
             // For symlinks, follow them to determine if they point to a directory
