@@ -17,8 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable, beta]
+        # Linux-only: macOS bills at 10x, Windows at 2x; release.yml covers platforms
+        os: [ubuntu-latest]
+        rust: [stable]
 
     steps:
       - name: Checkout code

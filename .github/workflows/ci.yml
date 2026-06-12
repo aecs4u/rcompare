@@ -18,7 +18,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cross-platform coverage happens in release.yml; CI runs Linux-only
+        # to keep Actions minutes down (macOS bills at 10x, Windows at 2x).
+        os: [ubuntu-latest]
         rust: [stable]
 
     steps:
@@ -67,7 +69,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cross-platform coverage happens in release.yml; CI runs Linux-only
+        # to keep Actions minutes down (macOS bills at 10x, Windows at 2x).
+        os: [ubuntu-latest]
         rust: [stable]
 
     steps:
@@ -124,7 +128,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cross-platform coverage happens in release.yml; CI runs Linux-only
+        # to keep Actions minutes down (macOS bills at 10x, Windows at 2x).
+        os: [ubuntu-latest]
         rust: [stable]
 
     steps:
@@ -281,7 +287,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Cross-platform coverage happens in release.yml; CI runs Linux-only
+        # to keep Actions minutes down (macOS bills at 10x, Windows at 2x).
+        os: [ubuntu-latest]
 
     steps:
       - name: Checkout code

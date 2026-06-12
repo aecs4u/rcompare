@@ -1,10 +1,8 @@
 name: Build
 
+# Manual-only: platform builds (incl. macOS at 10x cost) are produced by
+# release.yml on tags; run this by hand when you need ad-hoc binaries.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 env:
