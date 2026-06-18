@@ -63,7 +63,7 @@ calamine = "0.26"
 serde_yml = "0.0.12"
 
 # DataFrame/Parquet processing
-polars = { version = "0.46", features = ["parquet", "lazy", "rows", "dtype-full"] }
+polars = { version = "0.52", features = ["parquet", "lazy", "rows", "dtype-full"] }
 
 # Archive handling
 zip = "0.6"
