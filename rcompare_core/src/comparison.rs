@@ -132,6 +132,13 @@ impl ComparisonEngine {
     /// Default streaming threshold: 100MB
     const DEFAULT_STREAMING_THRESHOLD: u64 = 100 * 1024 * 1024;
 
+    /// Chunk size used by [`partial_hash_file`](Self::partial_hash_file) for
+    /// its first/middle/last sample. Files at or below three chunks are read
+    /// in full by that function (see its doc comment), so a matching partial
+    /// hash for such a file already IS a full-content match — `verify_local_pair`
+    /// uses this to skip re-reading and re-hashing the whole file a second time.
+    const PARTIAL_HASH_CHUNK_SIZE: usize = 16 * 1024;
+
     pub fn new(cache: HashCache) -> Self {
         Self {
             cache,
@@ -453,6 +460,15 @@ impl ComparisonEngine {
             return Ok(DiffStatus::Different);
         }
 
+        // For files at or below three chunks, `partial_hash_file` already
+        // read and hashed the entire file (see its doc comment), so a
+        // matching partial hash already proves full-content equality.
+        // Re-reading and re-hashing both files in full below would just
+        // duplicate I/O we already paid for above.
+        if size <= (Self::PARTIAL_HASH_CHUNK_SIZE as u64) * 3 {
+            return Ok(DiffStatus::Same);
+        }
+
         let use_streaming = size >= self.streaming_threshold;
 
         let same = if use_streaming {
@@ -749,6 +765,9 @@ impl ComparisonEngine {
     }
 
     fn partial_hash_file(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
+        // Keep in sync with `Self::PARTIAL_HASH_CHUNK_SIZE` (a local `const`
+        // can't reference an associated `const` via `Self`, so the value is
+        // duplicated here — `verify_local_pair` relies on both agreeing).
         const CHUNK_SIZE: usize = 16 * 1024;
 
         // Check for broken symlinks first

@@ -1,5 +1,5 @@
 //! `read` command: read one file from a side and export to stdout or a path.
-use super::support::{is_safe_relative_path, read_bytes_from_source_path};
+use super::support::{is_safe_relative_path, read_bytes_from_source_path, Side};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 pub(crate) fn run_read(
     left: PathBuf,
     right: PathBuf,
-    side: String,
+    side: Side,
     rel_path: String,
     out: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -19,15 +19,9 @@ pub(crate) fn run_read(
         return Err("--path must be a safe relative path".into());
     }
 
-    let side = side.to_lowercase();
-    if !matches!(side.as_str(), "left" | "right") {
-        return Err("invalid --side. Use: left, right".into());
-    }
-
-    let bytes = if side == "left" {
-        read_bytes_from_source_path(&left, &rel)?
-    } else {
-        read_bytes_from_source_path(&right, &rel)?
+    let bytes = match side {
+        Side::Left => read_bytes_from_source_path(&left, &rel)?,
+        Side::Right => read_bytes_from_source_path(&right, &rel)?,
     };
 
     if let Some(out_path) = out {

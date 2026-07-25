@@ -1,5 +1,5 @@
 //! `copy` command: copy selected relative paths between left and right roots.
-use super::support::{apply_copy, is_safe_relative_path};
+use super::support::{apply_copy, is_safe_relative_path, CopyDirection};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
@@ -12,7 +12,6 @@ pub(crate) struct CopyItemReport {
     pub(crate) detail: String,
 }
 
-
 #[derive(Default, Serialize)]
 pub(crate) struct CopySummaryReport {
     pub(crate) total_paths: usize,
@@ -21,7 +20,6 @@ pub(crate) struct CopySummaryReport {
     pub(crate) skipped: usize,
     pub(crate) failed: usize,
 }
-
 
 #[derive(Serialize)]
 pub(crate) struct CopyReport {
@@ -34,11 +32,10 @@ pub(crate) struct CopyReport {
     pub(crate) items: Vec<CopyItemReport>,
 }
 
-
 pub(crate) fn run_copy(
     left: PathBuf,
     right: PathBuf,
-    direction: String,
+    direction: CopyDirection,
     paths: Vec<String>,
     paths_file: Option<PathBuf>,
     dry_run: bool,
@@ -48,10 +45,7 @@ pub(crate) fn run_copy(
         return Err("copy currently supports local directory paths only".into());
     }
 
-    let direction = direction.to_lowercase();
-    if !matches!(direction.as_str(), "left_to_right" | "right_to_left") {
-        return Err("invalid --direction. Use: left_to_right, right_to_left".into());
-    }
+    // direction is a typed clap enum; clap already rejected bad values.
 
     let selected_paths = collect_copy_paths(&paths, paths_file.as_deref())?;
     if selected_paths.is_empty() {
@@ -76,15 +70,9 @@ pub(crate) fn run_copy(
             continue;
         }
 
-        let source = if direction == "left_to_right" {
-            left.join(rel)
-        } else {
-            right.join(rel)
-        };
-        let target = if direction == "left_to_right" {
-            right.join(rel)
-        } else {
-            left.join(rel)
+        let (source, target) = match direction {
+            CopyDirection::LeftToRight => (left.join(rel), right.join(rel)),
+            CopyDirection::RightToLeft => (right.join(rel), left.join(rel)),
         };
 
         if !source.exists() {
@@ -102,11 +90,7 @@ pub(crate) fn run_copy(
             items.push(CopyItemReport {
                 path: rel_path,
                 status: "planned".to_string(),
-                detail: format!(
-                    "Would copy {} -> {}",
-                    source.display(),
-                    target.display()
-                ),
+                detail: format!("Would copy {} -> {}", source.display(), target.display()),
             });
             continue;
         }
@@ -135,7 +119,7 @@ pub(crate) fn run_copy(
         schema_version: "1.0.0".to_string(),
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
-        direction,
+        direction: direction.as_str().to_string(),
         dry_run,
         summary,
         items,
@@ -159,7 +143,6 @@ pub(crate) fn run_copy(
 
     Ok(())
 }
-
 
 pub(crate) fn collect_copy_paths(
     cli_paths: &[String],

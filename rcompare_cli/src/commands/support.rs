@@ -1,4 +1,5 @@
 //! Shared helpers used by more than one CLI command.
+use clap::ValueEnum;
 use rcompare_common::{default_cache_dir, load_config, DiffNode, Vfs};
 use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
@@ -8,6 +9,161 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+/// Direction for the `sync` command. Parsed and validated by clap itself
+/// (invalid values are rejected with a generated "possible values" error),
+/// so command code never re-validates these as strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum SyncDirection {
+    LeftToRight,
+    RightToLeft,
+    Bidirectional,
+}
+
+impl SyncDirection {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::LeftToRight => "left_to_right",
+            Self::RightToLeft => "right_to_left",
+            Self::Bidirectional => "bidirectional",
+        }
+    }
+}
+
+/// Direction for the `copy` command (no bidirectional mode, unlike `sync`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum CopyDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+impl CopyDirection {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::LeftToRight => "left_to_right",
+            Self::RightToLeft => "right_to_left",
+        }
+    }
+}
+
+/// How `sync` deletes files that no longer exist on the source side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum DeleteMode {
+    Trash,
+    Permanent,
+}
+
+/// Conflict resolution policy for bidirectional `sync`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum ConflictPolicy {
+    Newest,
+    Left,
+    Right,
+    Skip,
+    Error,
+}
+
+impl ConflictPolicy {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Newest => "newest",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Skip => "skip",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Which source side `read` reads from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum Side {
+    Left,
+    Right,
+}
+
+/// Requested diff mode for `diff-file` and `scan`'s per-format flags, as
+/// typed by the user (`Auto` is resolved away by [`resolve_diff_mode`]
+/// before any comparison engine runs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum DiffModeArg {
+    Auto,
+    Text,
+    Binary,
+    Image,
+    Csv,
+    Excel,
+    Json,
+    Yaml,
+    Parquet,
+}
+
+/// A concrete (non-`Auto`) diff mode, produced by [`resolve_diff_mode`].
+/// Splitting this out from [`DiffModeArg`] lets the dispatch `match` in
+/// `run_diff_file` be exhaustive without an `Auto` arm that can never fire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResolvedDiffMode {
+    Text,
+    Binary,
+    Image,
+    Csv,
+    Excel,
+    Json,
+    Yaml,
+    Parquet,
+}
+
+impl ResolvedDiffMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Binary => "binary",
+            Self::Image => "image",
+            Self::Csv => "csv",
+            Self::Excel => "excel",
+            Self::Json => "json",
+            Self::Yaml => "yaml",
+            Self::Parquet => "parquet",
+        }
+    }
+}
+
+/// Explicit progress-reporting policy for `scan` (`--progress`), decoupled
+/// from `--json`/`--jsonl`. Previously JSON progress events on stderr were
+/// implicitly tied to `--json` with no way to opt in/out independently;
+/// `Auto` reproduces that historical behavior exactly (needed for backward
+/// compatibility — teczka's `comparison_worker.py` parses this stderr
+/// stream), while `Never`/`Json` make the choice explicit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum ProgressPolicy {
+    /// Human progress bar when stderr is a terminal and output isn't JSON;
+    /// structured JSON progress events on stderr when `--json`/`--jsonl` is
+    /// set. Matches the tool's historical implicit behavior.
+    Auto,
+    /// No progress output at all (human bar or JSON events), regardless of
+    /// `--json` or terminal detection.
+    Never,
+    /// Always emit structured JSON progress events on stderr, even with
+    /// human-readable stdout output.
+    Json,
+}
+
+/// Whitespace-handling mode for text comparison (`--ignore-whitespace`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub(crate) enum WhitespaceModeArg {
+    All,
+    Leading,
+    Trailing,
+    Changes,
+}
 
 pub(crate) enum ArchiveKind {
     Zip,
@@ -41,7 +197,6 @@ pub(crate) fn read_bytes_from_source_path(
     let source = build_scan_source(source_path)?;
     read_bytes_from_source(&source, rel)
 }
-
 
 pub(crate) fn read_bytes_from_source(
     source: &ScanSource,
@@ -80,7 +235,6 @@ pub(crate) fn read_bytes_from_source(
     }
 }
 
-
 pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     if path.is_absolute() {
         return false;
@@ -93,7 +247,6 @@ pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
     }
     true
 }
-
 
 pub(crate) fn apply_copy(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !source.exists() {
@@ -110,8 +263,10 @@ pub(crate) fn apply_copy(source: &Path, target: &Path) -> Result<(), Box<dyn std
     Ok(())
 }
 
-
-pub(crate) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn copy_dir_recursive(
+    source: &Path,
+    target: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -129,23 +284,28 @@ pub(crate) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), Box
     Ok(())
 }
 
-
-pub(crate) fn apply_delete(target: &Path, delete_mode: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn apply_delete(
+    target: &Path,
+    delete_mode: DeleteMode,
+) -> Result<(), Box<dyn std::error::Error>> {
     if !target.exists() {
         return Ok(());
     }
-    if delete_mode == "trash" {
-        move_to_local_trash(target)?;
-        return Ok(());
+    match delete_mode {
+        DeleteMode::Trash => {
+            move_to_local_trash(target)?;
+            Ok(())
+        }
+        DeleteMode::Permanent => {
+            if target.is_dir() {
+                fs::remove_dir_all(target)?;
+            } else {
+                fs::remove_file(target)?;
+            }
+            Ok(())
+        }
     }
-    if target.is_dir() {
-        fs::remove_dir_all(target)?;
-    } else {
-        fs::remove_file(target)?;
-    }
-    Ok(())
 }
-
 
 pub(crate) fn move_to_local_trash(target: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let parent = target
@@ -183,28 +343,21 @@ pub(crate) fn move_to_local_trash(target: &Path) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-
 /// Build TextDiffConfig from CLI flags
 pub(crate) fn build_text_diff_config(
-    ignore_whitespace: Option<String>,
+    ignore_whitespace: Option<WhitespaceModeArg>,
     ignore_case: bool,
     regex_rules: Vec<String>,
 ) -> Result<TextDiffConfig, Box<dyn std::error::Error>> {
     let mut config = TextDiffConfig::new();
 
-    // Parse whitespace mode
+    // Whitespace mode is already validated by clap; just map variant to variant.
     if let Some(mode) = ignore_whitespace {
-        config.whitespace_mode = match mode.to_lowercase().as_str() {
-            "all" => WhitespaceMode::IgnoreAll,
-            "leading" => WhitespaceMode::IgnoreLeading,
-            "trailing" => WhitespaceMode::IgnoreTrailing,
-            "changes" => WhitespaceMode::IgnoreChanges,
-            _ => {
-                return Err(format!(
-                    "Invalid whitespace mode '{mode}'. Valid options: all, leading, trailing, changes"
-                )
-                .into())
-            }
+        config.whitespace_mode = match mode {
+            WhitespaceModeArg::All => WhitespaceMode::IgnoreAll,
+            WhitespaceModeArg::Leading => WhitespaceMode::IgnoreLeading,
+            WhitespaceModeArg::Trailing => WhitespaceMode::IgnoreTrailing,
+            WhitespaceModeArg::Changes => WhitespaceMode::IgnoreChanges,
         };
     }
 
@@ -234,7 +387,6 @@ pub(crate) fn build_text_diff_config(
 
     Ok(config)
 }
-
 
 /// Check if a file is likely a text file based on extension
 pub(crate) fn is_text_file(path: &Path) -> bool {
@@ -293,8 +445,9 @@ pub(crate) fn is_text_file(path: &Path) -> bool {
         })
 }
 
-
-pub(crate) fn build_scan_source(path: &std::path::Path) -> Result<ScanSource, Box<dyn std::error::Error>> {
+pub(crate) fn build_scan_source(
+    path: &std::path::Path,
+) -> Result<ScanSource, Box<dyn std::error::Error>> {
     if path.is_dir() {
         return Ok(ScanSource::Local {
             root: path.to_path_buf(),
@@ -325,7 +478,6 @@ pub(crate) fn build_scan_source(path: &std::path::Path) -> Result<ScanSource, Bo
 
     Err(format!("Path does not exist: {}", path.display()).into())
 }
-
 
 pub(crate) fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind> {
     let name = path.file_name()?.to_string_lossy().to_lowercase();
@@ -472,8 +624,8 @@ pub(crate) fn run_core_scan(
     let left_source = build_scan_source(&opts.left)?;
     let right_source = build_scan_source(&opts.right)?;
 
-    let has_archive =
-        matches!(left_source, ScanSource::Vfs { .. }) || matches!(right_source, ScanSource::Vfs { .. });
+    let has_archive = matches!(left_source, ScanSource::Vfs { .. })
+        || matches!(right_source, ScanSource::Vfs { .. });
     if has_archive && !opts.no_verify_hashes {
         verify_hashes = true;
     }
@@ -487,7 +639,9 @@ pub(crate) fn run_core_scan(
         }
     }?;
     let right_outcome = match &right_source {
-        ScanSource::Local { root } => right_scanner.scan_with_cancel(root, Some(stop_flag.as_ref())),
+        ScanSource::Local { root } => {
+            right_scanner.scan_with_cancel(root, Some(stop_flag.as_ref()))
+        }
         ScanSource::Vfs { vfs, root } => {
             right_scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
         }

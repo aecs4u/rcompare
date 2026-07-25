@@ -1,5 +1,8 @@
 //! `sync` command: synchronize two directories using comparison results.
-use super::support::{apply_copy, apply_delete, run_core_scan, CoreScanOptions};
+use super::support::{
+    apply_copy, apply_delete, run_core_scan, ConflictPolicy, CoreScanOptions, DeleteMode,
+    SyncDirection,
+};
 use rcompare_common::{DiffNode, DiffStatus};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -13,7 +16,6 @@ pub(crate) struct SyncActionReport {
     pub(crate) detail: String,
 }
 
-
 #[derive(Default, Serialize)]
 pub(crate) struct SyncSummaryReport {
     pub(crate) total_actions: usize,
@@ -23,7 +25,6 @@ pub(crate) struct SyncSummaryReport {
     pub(crate) skipped: usize,
     pub(crate) failed: usize,
 }
-
 
 #[derive(Serialize)]
 pub(crate) struct SyncReport {
@@ -40,14 +41,13 @@ pub(crate) struct SyncReport {
     pub(crate) actions: Vec<SyncActionReport>,
 }
 
-
 pub(crate) fn run_sync(
     left: PathBuf,
     right: PathBuf,
-    direction: String,
+    direction: SyncDirection,
     dry_run: bool,
-    delete_mode: String,
-    conflict_policy: String,
+    delete_mode: DeleteMode,
+    conflict_policy: ConflictPolicy,
     ignore: Vec<String>,
     follow_symlinks: bool,
     verify_hashes: bool,
@@ -64,26 +64,9 @@ pub(crate) fn run_sync(
         return Err("sync currently supports local directory paths only".into());
     }
 
-    let direction = direction.to_lowercase();
-    if !matches!(
-        direction.as_str(),
-        "left_to_right" | "right_to_left" | "bidirectional"
-    ) {
-        return Err("invalid --direction. Use: left_to_right, right_to_left, bidirectional".into());
-    }
-
-    let delete_mode = delete_mode.to_lowercase();
-    if !matches!(delete_mode.as_str(), "trash" | "permanent") {
-        return Err("invalid --delete-mode. Use: trash, permanent".into());
-    }
-
-    let conflict_policy = conflict_policy.to_lowercase();
-    if !matches!(
-        conflict_policy.as_str(),
-        "newest" | "left" | "right" | "skip" | "error"
-    ) {
-        return Err("invalid --conflict. Use: newest, left, right, skip, error".into());
-    }
+    // direction/delete_mode/conflict_policy are typed clap enums now, so
+    // there's nothing left to validate here — clap rejected bad values
+    // before this function was ever called.
 
     // Scan and compare in-process (no subprocess re-exec, no JSON round-trip).
     let scan_opts = CoreScanOptions {
@@ -101,7 +84,7 @@ pub(crate) fn run_sync(
     };
     let scan_result = run_core_scan(&scan_opts, stop_flag)?;
 
-    let actions = plan_sync_actions(&scan_result.diff_nodes, &direction, &conflict_policy)?;
+    let actions = plan_sync_actions(&scan_result.diff_nodes, direction, conflict_policy)?;
     let mut summary = SyncSummaryReport {
         total_actions: actions.len(),
         ..SyncSummaryReport::default()
@@ -117,17 +100,20 @@ pub(crate) fn run_sync(
             }
         }
     } else {
-        execute_sync_actions(&actions, &left, &right, &delete_mode, &mut summary);
+        execute_sync_actions(&actions, &left, &right, delete_mode, &mut summary);
     }
 
     let report = SyncReport {
         schema_version: "1.0.0".to_string(),
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
-        direction,
+        direction: direction.as_str().to_string(),
         dry_run,
-        delete_mode,
-        conflict_policy,
+        delete_mode: match delete_mode {
+            DeleteMode::Trash => "trash".to_string(),
+            DeleteMode::Permanent => "permanent".to_string(),
+        },
+        conflict_policy: conflict_policy.as_str().to_string(),
         warnings: scan_result.warnings,
         summary,
         actions,
@@ -150,7 +136,11 @@ pub(crate) fn run_sync(
         );
         let show = report.actions.len().min(100);
         if show > 0 {
-            println!("Planned actions (showing {} of {}):", show, report.actions.len());
+            println!(
+                "Planned actions (showing {} of {}):",
+                show,
+                report.actions.len()
+            );
             for action in report.actions.iter().take(show) {
                 println!("  [{}] {} -- {}", action.code, action.path, action.detail);
             }
@@ -172,8 +162,8 @@ pub(crate) fn run_sync(
 
 pub(crate) fn plan_sync_actions(
     entries: &[DiffNode],
-    direction: &str,
-    conflict_policy: &str,
+    direction: SyncDirection,
+    conflict_policy: ConflictPolicy,
 ) -> Result<Vec<SyncActionReport>, Box<dyn std::error::Error>> {
     let mut refs: Vec<&DiffNode> = entries.iter().collect();
     refs.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -195,48 +185,50 @@ pub(crate) fn plan_sync_actions(
             continue;
         }
 
-        if direction == "left_to_right" {
-            match status {
-                DiffStatus::OrphanLeft => actions.push(SyncActionReport {
-                    code: "COPY_LR".to_string(),
-                    path,
-                    detail: "Create on right".to_string(),
-                }),
-                DiffStatus::OrphanRight => actions.push(SyncActionReport {
-                    code: "DELETE_R".to_string(),
-                    path,
-                    detail: "Delete from right".to_string(),
-                }),
-                DiffStatus::Different => actions.push(SyncActionReport {
-                    code: "UPDATE_R".to_string(),
-                    path,
-                    detail: "Overwrite right from left".to_string(),
-                }),
-                _ => {}
+        match direction {
+            SyncDirection::LeftToRight => {
+                match status {
+                    DiffStatus::OrphanLeft => actions.push(SyncActionReport {
+                        code: "COPY_LR".to_string(),
+                        path,
+                        detail: "Create on right".to_string(),
+                    }),
+                    DiffStatus::OrphanRight => actions.push(SyncActionReport {
+                        code: "DELETE_R".to_string(),
+                        path,
+                        detail: "Delete from right".to_string(),
+                    }),
+                    DiffStatus::Different => actions.push(SyncActionReport {
+                        code: "UPDATE_R".to_string(),
+                        path,
+                        detail: "Overwrite right from left".to_string(),
+                    }),
+                    _ => {}
+                }
+                continue;
             }
-            continue;
-        }
-
-        if direction == "right_to_left" {
-            match status {
-                DiffStatus::OrphanRight => actions.push(SyncActionReport {
-                    code: "COPY_RL".to_string(),
-                    path,
-                    detail: "Create on left".to_string(),
-                }),
-                DiffStatus::OrphanLeft => actions.push(SyncActionReport {
-                    code: "DELETE_L".to_string(),
-                    path,
-                    detail: "Delete from left".to_string(),
-                }),
-                DiffStatus::Different => actions.push(SyncActionReport {
-                    code: "UPDATE_L".to_string(),
-                    path,
-                    detail: "Overwrite left from right".to_string(),
-                }),
-                _ => {}
+            SyncDirection::RightToLeft => {
+                match status {
+                    DiffStatus::OrphanRight => actions.push(SyncActionReport {
+                        code: "COPY_RL".to_string(),
+                        path,
+                        detail: "Create on left".to_string(),
+                    }),
+                    DiffStatus::OrphanLeft => actions.push(SyncActionReport {
+                        code: "DELETE_L".to_string(),
+                        path,
+                        detail: "Delete from left".to_string(),
+                    }),
+                    DiffStatus::Different => actions.push(SyncActionReport {
+                        code: "UPDATE_L".to_string(),
+                        path,
+                        detail: "Overwrite left from right".to_string(),
+                    }),
+                    _ => {}
+                }
+                continue;
             }
-            continue;
+            SyncDirection::Bidirectional => {}
         }
 
         // bidirectional
@@ -252,25 +244,25 @@ pub(crate) fn plan_sync_actions(
                 detail: "Missing on left".to_string(),
             }),
             DiffStatus::Different => match conflict_policy {
-                "left" => actions.push(SyncActionReport {
+                ConflictPolicy::Left => actions.push(SyncActionReport {
                     code: "COPY_LR".to_string(),
                     path,
                     detail: "Conflict policy=left".to_string(),
                 }),
-                "right" => actions.push(SyncActionReport {
+                ConflictPolicy::Right => actions.push(SyncActionReport {
                     code: "COPY_RL".to_string(),
                     path,
                     detail: "Conflict policy=right".to_string(),
                 }),
-                "skip" => actions.push(SyncActionReport {
+                ConflictPolicy::Skip => actions.push(SyncActionReport {
                     code: "SKIP".to_string(),
                     path,
                     detail: "Conflict policy=skip".to_string(),
                 }),
-                "error" => {
+                ConflictPolicy::Error => {
                     return Err(format!("conflict encountered for {path} and policy=error").into());
                 }
-                "newest" => {
+                ConflictPolicy::Newest => {
                     let left_m = entry.left.as_ref().map(|e| e.modified);
                     let right_m = entry.right.as_ref().map(|e| e.modified);
                     match (left_m, right_m) {
@@ -291,7 +283,6 @@ pub(crate) fn plan_sync_actions(
                         }),
                     }
                 }
-                _ => {}
             },
             _ => {}
         }
@@ -299,12 +290,11 @@ pub(crate) fn plan_sync_actions(
     Ok(actions)
 }
 
-
 pub(crate) fn execute_sync_actions(
     actions: &[SyncActionReport],
     left_root: &Path,
     right_root: &Path,
-    delete_mode: &str,
+    delete_mode: DeleteMode,
     summary: &mut SyncSummaryReport,
 ) {
     for action in actions {

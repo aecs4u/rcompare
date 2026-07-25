@@ -1,5 +1,8 @@
 //! `diff-file` command: compute one file-level diff by mode.
-use super::support::{build_text_diff_config, is_safe_relative_path, is_text_file, read_bytes_from_source_path};
+use super::support::{
+    build_text_diff_config, is_safe_relative_path, is_text_file, read_bytes_from_source_path,
+    DiffModeArg, ResolvedDiffMode, WhitespaceModeArg,
+};
 use rcompare_core::text_diff::DiffChangeType;
 use rcompare_core::{
     is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
@@ -21,7 +24,6 @@ pub(crate) struct DiffFileReport {
     pub(crate) result: serde_json::Value,
 }
 
-
 #[derive(Serialize)]
 pub(crate) struct DiffFileTextResult {
     pub(crate) total_lines: usize,
@@ -31,13 +33,11 @@ pub(crate) struct DiffFileTextResult {
     pub(crate) lines: Vec<rcompare_core::text_diff::DiffLine>,
 }
 
-
 #[derive(Serialize)]
 pub(crate) struct DiffFileBinaryRange {
     pub(crate) start: u64,
     pub(crate) end_exclusive: u64,
 }
-
 
 #[derive(Serialize)]
 pub(crate) struct DiffFileBinaryResult {
@@ -49,11 +49,9 @@ pub(crate) struct DiffFileBinaryResult {
     pub(crate) truncated_ranges: bool,
 }
 
-
 pub(crate) struct TempFileGuard {
     pub(crate) path: PathBuf,
 }
-
 
 impl TempFileGuard {
     pub(crate) fn create(
@@ -75,9 +73,8 @@ impl TempFileGuard {
         };
 
         for i in 0..32u32 {
-            let path = std::env::temp_dir().join(format!(
-                "rcompare_cli_{prefix}_{pid}_{nanos}_{i}{suffix}"
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("rcompare_cli_{prefix}_{pid}_{nanos}_{i}{suffix}"));
             if path.exists() {
                 continue;
             }
@@ -93,21 +90,19 @@ impl TempFileGuard {
     }
 }
 
-
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
 }
 
-
 pub(crate) fn run_diff_file(
     left: PathBuf,
     right: PathBuf,
     rel_path: String,
-    mode: String,
+    mode: DiffModeArg,
     json: bool,
-    ignore_whitespace: Option<String>,
+    ignore_whitespace: Option<WhitespaceModeArg>,
     ignore_case: bool,
     regex_rules: Vec<String>,
     image_exif: bool,
@@ -122,12 +117,12 @@ pub(crate) fn run_diff_file(
         return Err("--path must be a safe relative path".into());
     }
 
-    let mode = resolve_diff_mode(&rel, &mode)?;
+    let mode = resolve_diff_mode(&rel, mode);
     let left_bytes = read_bytes_from_source_path(&left, &rel)?;
     let right_bytes = read_bytes_from_source_path(&right, &rel)?;
 
-    let result = match mode.as_str() {
-        "text" => {
+    let result = match mode {
+        ResolvedDiffMode::Text => {
             let config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
             let engine = TextDiffEngine::with_config(config);
             let left_text = String::from_utf8(left_bytes)
@@ -153,12 +148,12 @@ pub(crate) fn run_diff_file(
                 lines,
             })?
         }
-        "binary" => serde_json::to_value(build_binary_diff_result(
+        ResolvedDiffMode::Binary => serde_json::to_value(build_binary_diff_result(
             &left_bytes,
             &right_bytes,
             max_binary_ranges,
         ))?,
-        "image" => {
+        ResolvedDiffMode::Image => {
             let suffix = rel
                 .extension()
                 .and_then(|e| e.to_str())
@@ -172,14 +167,14 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        "csv" => {
+        ResolvedDiffMode::Csv => {
             let left_tmp = TempFileGuard::create("diff_csv_left", "csv", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_csv_right", "csv", &right_bytes)?;
             let engine = CsvDiffEngine::new();
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        "excel" => {
+        ResolvedDiffMode::Excel => {
             let suffix = rel
                 .extension()
                 .and_then(|e| e.to_str())
@@ -191,14 +186,14 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        "json" => {
+        ResolvedDiffMode::Json => {
             let left_tmp = TempFileGuard::create("diff_json_left", "json", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_json_right", "json", &right_bytes)?;
             let engine = JsonDiffEngine::new();
             let result = engine.compare_json_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        "yaml" => {
+        ResolvedDiffMode::Yaml => {
             let suffix = rel
                 .extension()
                 .and_then(|e| e.to_str())
@@ -210,14 +205,13 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_yaml_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        "parquet" => {
+        ResolvedDiffMode::Parquet => {
             let left_tmp = TempFileGuard::create("diff_parquet_left", "parquet", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_parquet_right", "parquet", &right_bytes)?;
             let engine = ParquetDiffEngine::new();
             let result = engine.compare_parquet_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
-        _ => return Err(format!("unsupported mode: {mode}").into()),
     };
 
     let report = DiffFileReport {
@@ -225,7 +219,7 @@ pub(crate) fn run_diff_file(
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
         path: rel.to_string_lossy().to_string(),
-        mode,
+        mode: mode.as_str().to_string(),
         result,
     };
 
@@ -243,47 +237,40 @@ pub(crate) fn run_diff_file(
     Ok(())
 }
 
-
-pub(crate) fn resolve_diff_mode(path: &Path, requested_mode: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let mode = requested_mode.trim().to_lowercase();
-    if mode.is_empty() || mode == "auto" {
-        if is_image_file(path) {
-            return Ok("image".to_string());
+/// Resolve a requested mode to a concrete comparison mode. `Auto` sniffs the
+/// file extension; every other variant already IS the answer, since clap
+/// only ever hands us one of the `DiffModeArg` values in the first place.
+pub(crate) fn resolve_diff_mode(path: &Path, requested_mode: DiffModeArg) -> ResolvedDiffMode {
+    match requested_mode {
+        DiffModeArg::Auto => {
+            if is_image_file(path) {
+                ResolvedDiffMode::Image
+            } else if is_csv_file(path) {
+                ResolvedDiffMode::Csv
+            } else if is_excel_file(path) {
+                ResolvedDiffMode::Excel
+            } else if is_json_file(path) {
+                ResolvedDiffMode::Json
+            } else if is_yaml_file(path) {
+                ResolvedDiffMode::Yaml
+            } else if is_parquet_file(path) {
+                ResolvedDiffMode::Parquet
+            } else if is_text_file(path) {
+                ResolvedDiffMode::Text
+            } else {
+                ResolvedDiffMode::Binary
+            }
         }
-        if is_csv_file(path) {
-            return Ok("csv".to_string());
-        }
-        if is_excel_file(path) {
-            return Ok("excel".to_string());
-        }
-        if is_json_file(path) {
-            return Ok("json".to_string());
-        }
-        if is_yaml_file(path) {
-            return Ok("yaml".to_string());
-        }
-        if is_parquet_file(path) {
-            return Ok("parquet".to_string());
-        }
-        if is_text_file(path) {
-            return Ok("text".to_string());
-        }
-        return Ok("binary".to_string());
-    }
-
-    if matches!(
-        mode.as_str(),
-        "text" | "binary" | "image" | "csv" | "excel" | "json" | "yaml" | "parquet"
-    ) {
-        Ok(mode)
-    } else {
-        Err(
-            "invalid --mode. Use: auto, text, binary, image, csv, excel, json, yaml, parquet"
-                .into(),
-        )
+        DiffModeArg::Text => ResolvedDiffMode::Text,
+        DiffModeArg::Binary => ResolvedDiffMode::Binary,
+        DiffModeArg::Image => ResolvedDiffMode::Image,
+        DiffModeArg::Csv => ResolvedDiffMode::Csv,
+        DiffModeArg::Excel => ResolvedDiffMode::Excel,
+        DiffModeArg::Json => ResolvedDiffMode::Json,
+        DiffModeArg::Yaml => ResolvedDiffMode::Yaml,
+        DiffModeArg::Parquet => ResolvedDiffMode::Parquet,
     }
 }
-
 
 pub(crate) fn build_binary_diff_result(
     left: &[u8],

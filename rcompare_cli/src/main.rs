@@ -136,9 +136,8 @@ enum Commands {
         context: Option<usize>,
 
         /// Ignore whitespace when comparing text files
-        /// Options: all, leading, trailing, changes
         #[arg(long, value_name = "MODE")]
-        ignore_whitespace: Option<String>,
+        ignore_whitespace: Option<WhitespaceModeArg>,
 
         /// Ignore case when comparing text files
         #[arg(long)]
@@ -175,6 +174,14 @@ enum Commands {
         #[arg(long, value_name = "N")]
         hash_jobs: Option<usize>,
 
+        /// Progress reporting policy. `auto` matches historical behavior
+        /// (human spinner on a terminal, JSON progress events on stderr
+        /// when --json/--jsonl is set); `never` suppresses all progress
+        /// output; `json` always emits structured progress events on
+        /// stderr regardless of output format.
+        #[arg(long, default_value = "auto")]
+        progress: ProgressPolicy,
+
         /// Pretty-print JSON output (default is compact, one document)
         #[arg(long)]
         pretty: bool,
@@ -206,21 +213,21 @@ enum Commands {
         /// Right directory path
         right: PathBuf,
 
-        /// Direction: left_to_right, right_to_left, bidirectional
+        /// Sync direction
         #[arg(long, default_value = "left_to_right")]
-        direction: String,
+        direction: SyncDirection,
 
         /// Dry-run mode (plan only, no filesystem changes)
         #[arg(long)]
         dry_run: bool,
 
-        /// Delete handling mode: trash or permanent
+        /// Delete handling mode
         #[arg(long, default_value = "trash")]
-        delete_mode: String,
+        delete_mode: DeleteMode,
 
-        /// Conflict policy for bidirectional different files: newest, left, right, skip, error
+        /// Conflict policy for bidirectional different files
         #[arg(long, default_value = "newest")]
-        conflict: String,
+        conflict: ConflictPolicy,
 
         /// Ignore patterns (can be specified multiple times)
         #[arg(short, long)]
@@ -273,9 +280,9 @@ enum Commands {
         /// Right directory path
         right: PathBuf,
 
-        /// Direction: left_to_right, right_to_left
+        /// Copy direction
         #[arg(long, default_value = "left_to_right")]
-        direction: String,
+        direction: CopyDirection,
 
         /// Relative path to copy (can be provided multiple times)
         #[arg(long = "path", value_name = "REL_PATH")]
@@ -306,17 +313,17 @@ enum Commands {
         #[arg(long)]
         path: String,
 
-        /// Diff mode: auto, text, binary, image, csv, excel, json, yaml, parquet
+        /// Diff mode
         #[arg(long, default_value = "auto")]
-        mode: String,
+        mode: DiffModeArg,
 
         /// Output JSON report
         #[arg(long)]
         json: bool,
 
-        /// Ignore whitespace for text mode: all, leading, trailing, changes
+        /// Ignore whitespace for text mode
         #[arg(long, value_name = "MODE")]
-        ignore_whitespace: Option<String>,
+        ignore_whitespace: Option<WhitespaceModeArg>,
 
         /// Ignore case when comparing text files
         #[arg(long)]
@@ -347,9 +354,9 @@ enum Commands {
         /// Right source path (directory or supported archive)
         right: PathBuf,
 
-        /// Which source side to read from: left or right
+        /// Which source side to read from
         #[arg(long)]
-        side: String,
+        side: Side,
 
         /// Relative path inside selected source
         #[arg(long)]
@@ -457,6 +464,7 @@ fn main() {
             no_cache,
             cache_read_only,
             hash_jobs,
+            progress,
             pretty,
             jsonl,
             summary_only,
@@ -504,6 +512,7 @@ fn main() {
                 no_cache,
                 cache_read_only,
                 hash_jobs,
+                progress,
                 output_opts,
                 &stop_flag,
             ) {
@@ -931,7 +940,9 @@ mod tests {
             sync_test_entry("b.txt", DiffStatus::Different, Some(20), Some(15)),
         ];
 
-        let actions = plan_sync_actions(&entries, "left_to_right", "newest").unwrap();
+        let actions =
+            plan_sync_actions(&entries, SyncDirection::LeftToRight, ConflictPolicy::Newest)
+                .unwrap();
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].code, "COPY_LR");
         assert_eq!(actions[1].code, "UPDATE_R");
@@ -946,7 +957,12 @@ mod tests {
             Some(10),
         )];
 
-        let actions = plan_sync_actions(&entries, "bidirectional", "newest").unwrap();
+        let actions = plan_sync_actions(
+            &entries,
+            SyncDirection::Bidirectional,
+            ConflictPolicy::Newest,
+        )
+        .unwrap();
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].code, "COPY_LR");
     }
@@ -959,7 +975,9 @@ mod tests {
         assert!(!is_safe_relative_path(Path::new("/etc/passwd")));
     }
 
-    fn diff_line(change_type: rcompare_core::text_diff::DiffChangeType) -> rcompare_core::text_diff::DiffLine {
+    fn diff_line(
+        change_type: rcompare_core::text_diff::DiffChangeType,
+    ) -> rcompare_core::text_diff::DiffLine {
         rcompare_core::text_diff::DiffLine {
             line_number_left: Some(1),
             line_number_right: Some(1),
@@ -972,7 +990,10 @@ mod tests {
     #[test]
     fn test_trim_diff_context_none_returns_all_lines() {
         use rcompare_core::text_diff::DiffChangeType;
-        let lines = vec![diff_line(DiffChangeType::Equal), diff_line(DiffChangeType::Insert)];
+        let lines = vec![
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Insert),
+        ];
         let trimmed = trim_diff_context(lines.clone(), None);
         assert_eq!(trimmed.len(), lines.len());
     }
@@ -1045,20 +1066,20 @@ mod tests {
     #[test]
     fn test_resolve_diff_mode_auto_binary_fallback() {
         assert_eq!(
-            resolve_diff_mode(Path::new("blob.bin"), "auto").unwrap(),
-            "binary"
+            resolve_diff_mode(Path::new("blob.bin"), DiffModeArg::Auto),
+            ResolvedDiffMode::Binary
         );
     }
 
     #[test]
     fn test_resolve_diff_mode_auto_text_and_image() {
         assert_eq!(
-            resolve_diff_mode(Path::new("src/main.rs"), "auto").unwrap(),
-            "text"
+            resolve_diff_mode(Path::new("src/main.rs"), DiffModeArg::Auto),
+            ResolvedDiffMode::Text
         );
         assert_eq!(
-            resolve_diff_mode(Path::new("assets/logo.png"), "auto").unwrap(),
-            "image"
+            resolve_diff_mode(Path::new("assets/logo.png"), DiffModeArg::Auto),
+            ResolvedDiffMode::Image
         );
     }
 
