@@ -98,16 +98,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-target-release-
 
-      - name: Build CLI (release)
-        run: cargo build --package rcompare_cli --release --target ${{ matrix.target }} --verbose
+      - name: Build CLI (dist)
+        run: cargo build --package rcompare_cli --profile dist --target ${{ matrix.target }} --verbose
 
-      - name: Build GUI (release)
-        run: cargo build --package rcompare_gui --release --target ${{ matrix.target }} --verbose
+      - name: Build GUI (dist)
+        run: cargo build --package rcompare_gui --profile dist --target ${{ matrix.target }} --verbose
 
       - name: Package binaries (Unix)
         if: runner.os != 'Windows'
         run: |
-          cd target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/dist
           strip rcompare_cli rcompare_gui || true
 
           # Copy binaries with platform-specific names
@@ -126,7 +126,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cd target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/dist
 
           # Copy binaries with platform-specific names
           Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}.exe

@@ -8,14 +8,11 @@ repository.workspace = true
 
 [dependencies]
 rcompare_common = { path = "../rcompare_common" }
-rcompare_core = { path = "../rcompare_core" }
+rcompare_core = { path = "../rcompare_core", default-features = false, features = ["archives", "specialized"] }
 
 clap.workspace = true
 anyhow.workspace = true
 ctrlc = { version = "3.4", features = ["termination"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -23,6 +20,12 @@ tracing-subscriber.workspace = true
 directories.workspace = true
 indicatif.workspace = true
 regex.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

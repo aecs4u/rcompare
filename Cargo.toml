@@ -110,3 +110,114 @@ url = "2.5"
 
 # Benchmarking (dev dependency)
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.release]
+strip = true
+
+# Used only for packaged release artifacts (see .github/workflows/release.yml).
+# Whole-crate LTO + codegen-units=1 cuts binary size noticeably but multiplies
+# clean-build time (~15s -> ~6min for rcompare_cli in local testing), so it must
+# stay out of the default `release` profile used by everyday `cargo build --release`
+# and CI (`ci.yml` builds --release on every push).
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+
+[workspace.lints.clippy]
+# === Allowed (legitimate patterns in this codebase) ===
+too_many_arguments = "allow"        # Many functions need numerous config parameters
+type_complexity = "allow"           # Complex types are sometimes necessary
+enum_variant_names = "allow"        # Not always possible to use different names
+collapsible_else_if = "allow"       # Sometimes more readable expanded
+needless_range_loop = "allow"       # Sometimes more readable with index
+
+# === Correctness & Safety ===
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+undocumented_unsafe_blocks = "warn"
+float_cmp = "warn"
+invalid_upcast_comparisons = "warn"
+suspicious_operation_groupings = "warn"
+suspicious_xor_used_as_pow = "warn"
+fallible_impl_from = "warn"
+debug_assert_with_mut_call = "warn"
+unused_result_ok = "warn"
+unused_async = "warn"
+
+# === Performance ===
+trivially_copy_pass_by_ref = "warn"
+large_types_passed_by_value = "warn"
+needless_pass_by_value = "warn"
+needless_pass_by_ref_mut = "warn"
+implicit_clone = "warn"
+redundant_clone = "warn"
+needless_collect = "warn"
+stable_sort_primitive = "warn"
+mutex_atomic = "warn"
+mutex_integer = "warn"
+
+# === Style & Clarity ===
+uninlined_format_args = "warn"
+manual_let_else = "warn"
+manual_assert = "warn"
+manual_ok_or = "warn"
+manual_instant_elapsed = "warn"
+manual_is_variant_and = "warn"
+match_bool = "warn"
+match_same_arms = "warn"
+match_wildcard_for_single_variants = "warn"
+bool_to_int_with_if = "warn"
+equatable_if_let = "warn"
+flat_map_option = "warn"
+filter_map_next = "warn"
+from_iter_instead_of_collect = "warn"
+map_unwrap_or = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+expl_impl_clone_on_copy = "warn"
+iter_filter_is_ok = "warn"
+iter_filter_is_some = "warn"
+iter_on_empty_collections = "warn"
+iter_with_drain = "warn"
+option_as_ref_cloned = "warn"
+question_mark = "warn"
+use_self = "warn"
+useless_let_if_seq = "warn"
+verbose_file_reads = "warn"
+
+# === Code Organization ===
+wildcard_imports = "warn"
+enum_glob_use = "warn"
+macro_use_imports = "warn"
+redundant_else = "warn"
+semicolon_if_nothing_returned = "warn"
+needless_continue = "warn"
+needless_for_each = "warn"
+needless_bitwise_bool = "warn"
+needless_raw_strings = "warn"
+unnecessary_wraps = "warn"
+unnecessary_join = "warn"
+unnecessary_box_returns = "warn"
+unnested_or_patterns = "warn"
+string_add_assign = "warn"
+range_minus_one = "warn"
+range_plus_one = "warn"
+ref_option_ref = "warn"
+same_functions_in_if_condition = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+branches_sharing_code = "warn"
+collection_is_never_read = "warn"
+lossy_float_literal = "warn"
+pathbuf_init_then_push = "warn"
+path_buf_push_overwrite = "warn"
+trivial_regex = "warn"
+used_underscore_binding = "warn"
+unused_self = "warn"
+mut_mut = "warn"
+ignored_unit_patterns = "warn"
+empty_enum_variants_with_brackets = "warn"
+error_impl_error = "warn"

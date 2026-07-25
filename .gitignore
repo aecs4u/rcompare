@@ -3,12 +3,6 @@
 debug/
 target/
 
-# RCompare executables
-rcompare_cli
-rcompare_gui
-rcompare_cli.exe
-rcompare_gui.exe
-
 # Cargo build artifacts
 **/*.rs.bk
 *.pdb
