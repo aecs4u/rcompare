@@ -36,18 +36,14 @@ The main CI pipeline runs on every push to `main` or `develop` branches and on a
    - Requires external services (S3, WebDAV servers)
    - Allowed to fail without blocking PR merges
 
-5. **test-gui** - GUI Tests & Build
-   - Runs on: Linux, Windows, macOS
-   - Tests: GUI compile tests (`ui_compile`)
-   - Builds: Both debug and release GUI binaries
-   - Artifacts: Uploads binaries with 7-day retention
-   - **Required for merge** ✅
-   - May have platform-specific dependencies (see Troubleshooting section)
-
-6. **ci-success** - Final Gate
+5. **ci-success** - Final Gate
    - Runs after all required jobs
    - Blocks merge if any required job fails
-   - Enforces that core tests, CLI tests, GUI tests, and quality checks all pass
+   - Enforces that core tests, CLI tests, FFI tests, and quality checks all pass
+
+> **Note:** The Rust `rcompare_gui` (Slint) crate has been removed. The desktop GUI is now
+> `teczka`, a PySide6/Qt6 application under `teczka/`, tested and packaged separately
+> (see `uv sync && uv run pytest` and the GUI release job in `release.yml`).
 
 ### Code Coverage Pipeline (`coverage.yml`)
 
@@ -83,7 +79,7 @@ Automatically labels pull requests based on changed files.
 #### Labels Applied
 - **core**: Changes to `rcompare_core/`
 - **cli**: Changes to `rcompare_cli/`
-- **gui**: Changes to `rcompare_gui/`
+- **gui**: Changes to `teczka/`
 - **common**: Changes to `rcompare_common/`
 - **documentation**: Changes to `.md` files or `docs/`
 - **ci**: Changes to `.github/workflows/`
@@ -212,20 +208,27 @@ Builds for three platforms:
 
 #### Build Process
 
-**build-release** - Builds and Releases Binaries (parallel across platforms)
-- Compiles CLI and GUI in release mode for all platforms
+**build-release** - Builds and Releases the CLI binary (parallel across platforms)
+- Compiles `rcompare_cli` in `dist` profile (LTO + single codegen unit) for all platforms
 - Strips binaries (Unix) for smaller size
 - Packages as `tar.gz` (Unix) or `zip` (Windows)
 - Creates GitHub release (if it doesn't exist)
-- Uploads individual binaries and combined archives
+- Uploads standalone binary and archive, named with the Rust target triple
 - Uses modern `softprops/action-gh-release` action (v1)
+
+**build-gui-release** - Builds and Releases the teczka GUI (parallel across platforms)
+- Packages the PySide6/Qt6 `teczka` app with PyInstaller into a standalone app per platform
+- Packages as `tar.gz` (Unix) or `zip` (Windows)
+- Uploads to the same GitHub release
+
+**checksums** - Publishes `SHA256SUMS` and the release notes after all builds finish
 
 #### Artifacts
 
 Each release includes:
-- Individual binaries: `rcompare_cli-{platform}-x86_64[.exe]`
-- Individual binaries: `rcompare_gui-{platform}-x86_64[.exe]`
-- Combined archives: `rcompare-{version}-{platform}-x86_64.{tar.gz|zip}`
+- CLI binary: `rcompare_cli-{version}-{target-triple}[.exe]` and matching `.tar.gz`/`.zip`
+- GUI bundle: `teczka-{version}-{platform}-{arch}.{tar.gz|zip}`
+- `SHA256SUMS` covering all of the above
 
 #### Creating a Release
 
@@ -265,9 +268,6 @@ To enable CI gating on GitHub:
    - `CLI Tests (ubuntu-latest)`
    - `CLI Tests (windows-latest)`
    - `CLI Tests (macos-latest)`
-   - `GUI Tests & Build (ubuntu-latest)`
-   - `GUI Tests & Build (windows-latest)`
-   - `GUI Tests & Build (macos-latest)`
    - `Code Quality`
    - `CI Success Gate`
 
@@ -282,11 +282,8 @@ cargo test --package rcompare_core --lib
 # CLI tests
 cargo test --package rcompare_cli
 
-# GUI compile tests
-cargo test --package rcompare_gui --test ui_compile
-
-# Build GUI binary
-cargo build --package rcompare_gui --release
+# GUI (teczka) tests
+cd teczka && uv sync && uv run pytest
 
 # Formatting check
 cargo fmt --all -- --check
@@ -309,15 +306,13 @@ The CI pipeline uses aggressive caching to minimize build times:
 Typical execution times:
 - Core tests: ~2-3 minutes per platform
 - CLI tests: ~3-4 minutes per platform
-- GUI tests: ~4-5 minutes per platform (includes debug and release builds)
 - Quality checks: ~2-3 minutes
-- Total pipeline: ~15-20 minutes (with parallelization)
+- Total pipeline: ~10-15 minutes (with parallelization)
 
 #### Artifacts
 
 The CI pipeline uploads build artifacts with 7-day retention:
 - **CLI binaries**: `rcompare_cli-{Linux|Windows|macOS}`
-- **GUI binaries**: `rcompare_gui-{Linux|Windows|macOS}`
 
 These artifacts are useful for testing PR builds without running the full build locally.
 
@@ -333,14 +328,14 @@ These artifacts are useful for testing PR builds without running the full build 
 
 This is expected if you don't have S3/WebDAV services configured. These tests are marked with `#[ignore]` and only run with `--include-ignored` flag. They're not required for CI to pass.
 
-### GUI Build Failing
+### teczka (GUI) Build Failing
 
-GUI builds may fail due to missing system dependencies:
+PyInstaller builds may fail due to missing Qt6 runtime dependencies:
 
 **Linux:**
 ```bash
-sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-                     libxkbcommon-dev libssl-dev libfontconfig1-dev
+sudo apt-get install libxcb-cursor0 libxcb-render0 libxcb-shape0 libxcb-xfixes0 \
+                     libxkbcommon0 libgl1 libegl1
 ```
 
 **Windows/macOS:**

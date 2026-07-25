@@ -27,6 +27,16 @@ libc = "0.2"
 [lints]
 workspace = true
 
+# Matches the archive naming produced by .github/workflows/release.yml,
+# e.g. rcompare_cli-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [dev-dependencies]
 tempfile.workspace = true
 filetime.workspace = true

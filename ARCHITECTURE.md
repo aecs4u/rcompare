@@ -29,7 +29,7 @@ This document serves as the authoritative requirements specification and initial
 - Binary data
 - Images
 
-By leveraging the **Rust** programming language, the project targets "zero-cost abstractions," ensuring that high-level architectural modularity does not compromise runtime performance. The graphical user interface (GUI) is built with **PySide6** (Qt for Python), following the "czkawka_pyside6" frontend pattern from the Czkawka ecosystem. The legacy Slint-based GUI (`rcompare_gui`) is deprecated.
+By leveraging the **Rust** programming language, the project targets "zero-cost abstractions," ensuring that high-level architectural modularity does not compromise runtime performance. The graphical user interface (GUI) is built with **PySide6** (Qt for Python) as `teczka/`, following the "czkawka_pyside6" frontend pattern from the Czkawka ecosystem. The legacy Slint-based GUI (`rcompare_gui`), described throughout Section 4 and the roadmap below as historical design context, has been removed from the workspace.
 
 ### 1.2 Design Philosophy: The Czkawka Model
 

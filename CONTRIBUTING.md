@@ -65,7 +65,6 @@ cargo build --release
 
 # Build specific component
 cargo build --package rcompare_cli
-cargo build --package rcompare_gui
 ```
 
 ### 3. Run Tests
@@ -114,8 +113,8 @@ rcompare/
 ├── rcompare_common/     # Shared types and utilities
 ├── rcompare_core/       # Core business logic (NO UI dependencies)
 ├── rcompare_cli/        # Command-line interface
-├── rcompare_gui/        # Slint-based graphical interface
 ├── rcompare_ffi/        # C FFI layer for external integrations
+├── teczka/              # Desktop GUI (PySide6/Qt6, Python — see teczka/pyproject.toml)
 └── examples/            # Usage examples
 ```
 
@@ -199,7 +198,7 @@ pub fn parse_file(path: &Path) -> Data {
 ```
 
 - **Library code** (`rcompare_core`, `rcompare_common`): Never use `unwrap()` or `expect()`
-- **Application code** (`rcompare_cli`, `rcompare_gui`): Use `expect()` with descriptive messages when failure is truly unrecoverable
+- **Application code** (`rcompare_cli`): Use `expect()` with descriptive messages when failure is truly unrecoverable
 - **Test code**: `unwrap()` is acceptable
 
 ### Documentation

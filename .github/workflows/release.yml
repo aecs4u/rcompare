@@ -16,40 +16,12 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  build-release:
-    name: Build Release (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            platform: linux
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            platform: linux
-            arch: arm64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform: windows
-            arch: x86_64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            platform: macos
-            arch: x86_64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            platform: macos
-            arch: arm64
-
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Get version from tag
         id: get_version
         shell: bash
@@ -62,17 +34,39 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
 
+  build-release:
+    name: Build Release (${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -101,26 +95,18 @@ jobs:
       - name: Build CLI (dist)
         run: cargo build --package rcompare_cli --profile dist --target ${{ matrix.target }} --verbose
 
-      - name: Build GUI (dist)
-        run: cargo build --package rcompare_gui --profile dist --target ${{ matrix.target }} --verbose
-
       - name: Package binaries (Unix)
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/dist
-          strip rcompare_cli rcompare_gui || true
+          strip rcompare_cli || true
 
-          # Copy binaries with platform-specific names
-          cp rcompare_cli rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}
-          cp rcompare_gui rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}
+          # Standalone binary
+          cp rcompare_cli rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}
+          mv rcompare_cli-${{ env.VERSION }}-${{ matrix.target }} ${{ github.workspace }}/
 
-          # Create combined archive
-          tar czf rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz rcompare_cli rcompare_gui
-
-          # Move artifacts to workspace
-          mv rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }} ${{ github.workspace }}/
-          mv rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }} ${{ github.workspace }}/
-          mv rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz ${{ github.workspace }}/
+          # Archive (name matches cargo-binstall's default pkg-url template)
+          tar czf ${{ github.workspace }}/rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}.tar.gz rcompare_cli
 
       - name: Package binaries (Windows)
         if: runner.os == 'Windows'
@@ -128,66 +114,163 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/dist
 
-          # Copy binaries with platform-specific names
-          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}.exe
-          Copy-Item rcompare_gui.exe -Destination rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}.exe
+          # Standalone binary
+          Copy-Item rcompare_cli.exe -Destination rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}.exe
+          Move-Item rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}.exe -Destination ${{ github.workspace }}/
 
-          # Create combined archive
-          Compress-Archive -Path rcompare_cli.exe, rcompare_gui.exe -DestinationPath rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip
+          # Archive (name matches cargo-binstall's default pkg-url template)
+          Compress-Archive -Path rcompare_cli.exe -DestinationPath ${{ github.workspace }}/rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}.zip
 
-          # Move artifacts to workspace
-          Move-Item rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}.exe -Destination ${{ github.workspace }}/
-          Move-Item rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}.exe -Destination ${{ github.workspace }}/
-          Move-Item rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.zip -Destination ${{ github.workspace }}/
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: RCompare ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }}
+            rcompare_cli-${{ env.VERSION }}-${{ matrix.target }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-gui-release:
+    name: Build GUI Release (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-13
+            platform: macos-x86_64
+          - os: macos-14
+            platform: macos-arm64
+
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Linux Qt6 runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxkbcommon0 libgl1 libegl1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Sync dependencies
+        working-directory: teczka
+        run: uv sync --extra full --group build
+
+      - name: Build standalone app (Unix)
+        if: runner.os != 'Windows'
+        working-directory: teczka
+        run: |
+          uv run pyinstaller --noconfirm --clean --windowed --name teczka \
+            --add-data "teczka/i18n:teczka/i18n" \
+            teczka/__main__.py
+
+      - name: Build standalone app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: teczka
+        run: |
+          uv run pyinstaller --noconfirm --clean --windowed --name teczka `
+            --add-data "teczka/i18n;teczka/i18n" `
+            teczka/__main__.py
+
+      - name: Package archive (Unix)
+        if: runner.os != 'Windows'
+        working-directory: teczka
+        run: |
+          cd dist
+          tar czf ${{ github.workspace }}/teczka-${{ env.VERSION }}-${{ matrix.platform }}.tar.gz teczka
+
+      - name: Package archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: teczka
+        run: |
+          Compress-Archive -Path dist/teczka -DestinationPath ${{ github.workspace }}/teczka-${{ env.VERSION }}-${{ matrix.platform }}.zip
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: RCompare ${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            teczka-${{ env.VERSION }}-${{ matrix.platform }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  checksums:
+    name: Publish checksums and release notes
+    needs: [prepare, build-release, build-gui-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        run: |
+          mkdir dist
+          gh release download "${{ env.VERSION }}" -D dist -R ${{ github.repository }}
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Create Release Notes
-        id: release_notes
-        shell: bash
         run: |
-          cat > release_notes.md << 'EOF'
-          ## RCompare ${{ steps.get_version.outputs.version }}
+          cat > release_notes.md << EOF
+          ## RCompare ${{ env.VERSION }}
 
-          ### Downloads
+          ### Downloads (rcompare_cli)
 
-          Download the appropriate binary for your platform below:
+          Download the appropriate binary for your platform below, or install with
+          [cargo-binstall](https://github.com/cargo-bins/cargo-binstall): \`cargo binstall rcompare_cli\`.
 
-          - **Linux x86_64**: `rcompare_cli-linux-x86_64`, `rcompare_gui-linux-x86_64`
-          - **Linux arm64**: `rcompare_cli-linux-arm64`, `rcompare_gui-linux-arm64`
-          - **Windows**: `rcompare_cli-windows-x86_64.exe`, `rcompare_gui-windows-x86_64.exe`
-          - **macOS x86_64**: `rcompare_cli-macos-x86_64`, `rcompare_gui-macos-x86_64`
-          - **macOS arm64**: `rcompare_cli-macos-arm64`, `rcompare_gui-macos-arm64`
+          - **Linux x86_64**: \`rcompare_cli-${{ env.VERSION }}-x86_64-unknown-linux-gnu\`
+          - **Linux arm64**: \`rcompare_cli-${{ env.VERSION }}-aarch64-unknown-linux-gnu\`
+          - **Windows x86_64**: \`rcompare_cli-${{ env.VERSION }}-x86_64-pc-windows-msvc.exe\`
+          - **macOS x86_64**: \`rcompare_cli-${{ env.VERSION }}-x86_64-apple-darwin\`
+          - **macOS arm64**: \`rcompare_cli-${{ env.VERSION }}-aarch64-apple-darwin\`
 
-          Or download the combined archives:
-          - `rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz`
-          - `rcompare-${{ steps.get_version.outputs.version }}-linux-arm64.tar.gz`
-          - `rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip`
-          - `rcompare-${{ steps.get_version.outputs.version }}-macos-x86_64.tar.gz`
-          - `rcompare-${{ steps.get_version.outputs.version }}-macos-arm64.tar.gz`
+          Each binary is also available as a \`.tar.gz\` (Unix) / \`.zip\` (Windows) archive.
+          Verify downloads against \`SHA256SUMS\`.
 
           ### Installation
 
           #### Linux/macOS
-          ```bash
-          # Extract archive (Linux)
-          tar xzf rcompare-${{ steps.get_version.outputs.version }}-linux-x86_64.tar.gz
-
-          # Or use standalone binaries
-          chmod +x rcompare_cli-linux-x86_64
-          chmod +x rcompare_gui-linux-x86_64
-
-          # Move to PATH (optional)
-          sudo mv rcompare_cli-linux-x86_64 /usr/local/bin/rcompare_cli
-          sudo mv rcompare_gui-linux-x86_64 /usr/local/bin/rcompare_gui
-          ```
+          \`\`\`bash
+          chmod +x rcompare_cli-${{ env.VERSION }}-x86_64-unknown-linux-gnu
+          sudo mv rcompare_cli-${{ env.VERSION }}-x86_64-unknown-linux-gnu /usr/local/bin/rcompare_cli
+          \`\`\`
 
           #### Windows
-          ```powershell
-          # Extract archive
-          Expand-Archive rcompare-${{ steps.get_version.outputs.version }}-windows-x86_64.zip
-
-          # Or use standalone binaries directly
-          # Add to PATH in System Environment Variables
-          ```
+          Download the \`.exe\` or extract the \`.zip\` and add it to your \`PATH\`.
 
           ### Features
 
@@ -195,16 +278,26 @@ jobs:
           - **Specialized Comparisons**: Text, CSV, JSON, Excel, Images, Parquet
           - **Archive Support**: ZIP, TAR, 7Z, RAR (read-only)
           - **Cloud Storage**: S3, SFTP, WebDAV support
-          - **PySide6 GUI**: KDE-compliant desktop app with multi-tab sessions, sync preview, profiles
           - **Powerful CLI**: Colored output, JSON export, pattern filtering
           - **WinMerge Parity**: Whitespace handling, case-insensitive, regex rules, EXIF metadata
 
-          ### PySide6 GUI (Python)
+          ### Downloads (teczka GUI)
 
-          The primary GUI is a PySide6 desktop application. Install separately:
-          ```bash
+          The desktop GUI (\`teczka\`, PySide6/Qt6) is packaged as a standalone app per platform:
+
+          - **Linux x86_64**: \`teczka-${{ env.VERSION }}-linux-x86_64.tar.gz\`
+          - **Windows x86_64**: \`teczka-${{ env.VERSION }}-windows-x86_64.zip\`
+          - **macOS x86_64**: \`teczka-${{ env.VERSION }}-macos-x86_64.tar.gz\`
+          - **macOS arm64**: \`teczka-${{ env.VERSION }}-macos-arm64.tar.gz\`
+
+          Extract the archive and run the \`teczka\` (or \`teczka.exe\`) binary inside. The GUI
+          shells out to \`rcompare_cli\` for all comparisons, so also install the CLI above and
+          either put it on your \`PATH\` or set its path in teczka's settings.
+
+          Alternatively, run from source:
+          \`\`\`bash
           cd teczka && uv sync && uv run teczka
-          ```
+          \`\`\`
 
           ### Documentation
 
@@ -214,20 +307,10 @@ jobs:
 
           ### Changelog
 
-          See the [commit history](https://github.com/aecs4u/rcompare/commits/${{ steps.get_version.outputs.version }}) for detailed changes.
+          See the [commit history](https://github.com/aecs4u/rcompare/commits/${{ env.VERSION }}) for detailed changes.
           EOF
 
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          name: RCompare ${{ steps.get_version.outputs.version }}
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
-          files: |
-            rcompare_cli-${{ matrix.platform }}-${{ matrix.arch }}${{ runner.os == 'Windows' && '.exe' || '' }}
-            rcompare_gui-${{ matrix.platform }}-${{ matrix.arch }}${{ runner.os == 'Windows' && '.exe' || '' }}
-            rcompare-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload checksums and release notes
+        run: |
+          gh release upload "${{ env.VERSION }}" dist/SHA256SUMS -R ${{ github.repository }} --clobber
+          gh release edit "${{ env.VERSION }}" -R ${{ github.repository }} --notes-file release_notes.md

@@ -120,7 +120,9 @@ Current implementation status of RCompare features and components.
 
 ### ✅ GUI (90% Complete)
 
-- [x] Slint UI framework
+> Note: the Rust/Slint `rcompare_gui` crate has been removed. The GUI is now **teczka**
+> (PySide6/Qt6, Python) under `teczka/`.
+
 - [x] File tree view (left/right)
 - [x] File details panel
 - [x] Copy operations (left→right, right→left)
@@ -219,7 +221,6 @@ Current implementation status of RCompare features and components.
 | rcompare_core | 231 | ✅ Passing |
 | rcompare_ffi | 37 | ✅ Passing |
 | rcompare_cli | 8 | ✅ Passing |
-| rcompare_gui | 0 | ⚠️ No tests |
 | **Total** | **282** | **✅ All passing** |
 
 ### Test Coverage
@@ -375,7 +376,6 @@ Current implementation status of RCompare features and components.
 | blake3 | 1.5 | Fast hashing | ✅ Stable |
 | jwalk | 0.8 | Parallel traversal | ✅ Stable |
 | similar | 2.6 | Text diffing | ✅ Stable |
-| slint | 1.9 | GUI framework | ✅ Stable |
 | syntect | 5.2 | Syntax highlighting | ✅ Stable |
 | ignore | 0.4 | Gitignore support | ✅ Stable |
 | serde | 1.0 | Serialization | ✅ Stable |

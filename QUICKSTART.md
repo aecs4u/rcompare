@@ -16,9 +16,8 @@ cd rcompare
 # Build release binaries
 cargo build --release
 
-# Binaries will be in target/release/
+# Binary will be in target/release/
 # - rcompare_cli (4.6 MB)
-# - rcompare_gui (21 MB)
 ```
 
 ### Install Locally
@@ -27,8 +26,8 @@ cargo build --release
 # Install CLI
 cargo install --path rcompare_cli
 
-# Install GUI
-cargo install --path rcompare_gui
+# Install the GUI (teczka, PySide6/Qt6)
+cd teczka && uv sync
 ```
 
 ## Using the CLI
@@ -83,55 +82,24 @@ rcompare_cli scan /left /right -L
 
 ## Using the GUI
 
-RCompare provides two graphical interfaces:
-- **Slint GUI** (rcompare_gui): Native, lightweight, cross-platform
-- **PySide6 GUI** (Python frontend): Feature-rich with advanced diff viewers
-
-### Slint GUI (Native)
-
-#### Launch the GUI
-
-```bash
-rcompare_gui
-```
-
-#### GUI Features
-
-1. **Select Directories**: Click "Select Left..." and "Select Right..." to choose directories
-2. **Compare**: Click the "Compare" button to run the comparison
-3. **View Results**: Files are displayed side-by-side with color coding:
-   - 🟢 Green background: Identical files
-   - 🔴 Red background: Different files
-   - 🟡 Yellow background: Left only
-   - 🔵 Blue background: Right only
-4. **Status Bar**: Shows summary statistics at the bottom
-5. **Refresh**: Click "Refresh" to re-run the comparison
-
-### PySide6 GUI (Python Frontend)
-
-The PySide6 frontend provides advanced features including specialized diff viewers for text, images, CSV, Excel, JSON, and binary files.
+RCompare's desktop GUI is **teczka**, a PySide6/Qt6 application under `teczka/`. It shells out
+to `rcompare_cli` for all comparisons, so build/install the CLI first.
 
 #### Installation
 
 ```bash
-# Install Python dependencies
-pip install PySide6 Pillow openpyxl
-
-# Or use requirements file (if available)
-pip install -r frontend/requirements.txt
+cd teczka
+uv sync
 ```
 
-#### Launch the PySide6 GUI
+#### Launch teczka
 
 ```bash
-# From the repository root
-python frontend/main.py
-
-# Or if installed as a package
-teczka
+cd teczka
+uv run teczka
 ```
 
-#### PySide6 Features
+#### teczka Features
 
 1. **Directory Comparison**: Full directory tree comparison with expand/collapse
 2. **Specialized Diff Viewers**:
@@ -559,8 +527,7 @@ RCompare currently provides:
 
 ### User Interfaces
 - ✅ CLI with progress indicators and JSON output
-- ✅ Native Slint GUI
-- ✅ PySide6 GUI with specialized viewers
+- ✅ PySide6/Qt6 GUI (teczka) with specialized viewers
 - ✅ Copy operations (left/right)
 
 ## What's Next?

@@ -3,7 +3,6 @@ members = [
     "rcompare_common",
     "rcompare_core",
     "rcompare_cli",
-    "rcompare_gui",  # DEPRECATED: Use teczka instead
     "rcompare_ffi",
 ]
 resolver = "2"
@@ -88,8 +87,6 @@ directories = "5.0"
 # Trash
 trash = "5.0"
 
-# GUI (Slint is deprecated — kept for rcompare_gui backward compat)
-slint = { version = "1.14", default-features = false, features = ["backend-winit", "renderer-femtovg", "compat-1-2"] }
 filetime = "0.2"
 tempfile = "3.8"
 

@@ -279,8 +279,7 @@ rcompare/
 ├── rcompare_common/      # Shared types, traits, and errors
 ├── rcompare_core/        # Core business logic (UI-agnostic)
 ├── rcompare_cli/         # Command-line interface
-├── teczka/               # Desktop GUI (PySide6)
-├── rcompare_gui/         # DEPRECATED — Slint GUI (use teczka)
+├── teczka/               # Desktop GUI (PySide6/Qt6)
 └── rcompare_ffi/         # C FFI layer (libkomparediff2-compatible)
 ```
 

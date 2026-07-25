@@ -6,9 +6,9 @@
 # Use 'ignore' list to suppress specific advisories from transitive dependencies
 yanked = "deny"
 # Ignore unmaintained/unsound crate warnings from transitive dependencies
-# These are indirect dependencies from slint, syntect, image, aws-sdk-s3, etc.
+# These are indirect dependencies from syntect, image, aws-sdk-s3, etc.
 ignore = [
-    "RUSTSEC-2025-0141", # bincode (unmaintained) - from syntect and slint
+    "RUSTSEC-2025-0141", # bincode (unmaintained) - from syntect
     "RUSTSEC-2025-0119", # number_prefix (unmaintained) - from indicatif
     "RUSTSEC-2024-0436", # paste (unmaintained) - from rav1e/image
     "RUSTSEC-2024-0320", # yaml-rust (unmaintained) - from syntect
@@ -32,10 +32,6 @@ allow = [
     "Unicode-3.0",                  # Unicode License v3
     "Unicode-DFS-2016",
     "Zlib",
-    # Slint GUI framework licensing (offers choice of GPL, royalty-free, or commercial)
-    "GPL-3.0-only",
-    "LicenseRef-Slint-Royalty-free-2.0",
-    "LicenseRef-Slint-Software-3.0",
 ]
 confidence-threshold = 0.8
 

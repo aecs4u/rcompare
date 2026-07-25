@@ -280,77 +280,10 @@ jobs:
         run: cargo test --package rcompare_core --lib vfs::tests_cloud -- --include-ignored --nocapture
         continue-on-error: true
 
-  # GUI tests and build
-  test-gui:
-    name: GUI Tests & Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # Cross-platform coverage happens in release.yml; CI runs Linux-only
-        # to keep Actions minutes down (macOS bills at 10x, Windows at 2x).
-        os: [ubuntu-latest]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libfontconfig1-dev
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
-
-      - name: Cache target directory
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-gui-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-target-gui-
-
-      - name: Run GUI compile tests
-        run: cargo test --package rcompare_gui --test ui_compile --verbose
-
-      - name: Build GUI binary (debug)
-        run: cargo build --package rcompare_gui --verbose
-
-      - name: Build GUI binary (release)
-        run: cargo build --package rcompare_gui --release --verbose
-
-      - name: Upload GUI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rcompare_gui-${{ runner.os }}
-          path: |
-            target/release/rcompare_gui${{ runner.os == 'Windows' && '.exe' || '' }}
-          retention-days: 7
-
   # Final gating job - must pass for merge
   ci-success:
     name: CI Success Gate
-    needs: [test-core, test-cli, test-ffi, test-gui, quality]
+    needs: [test-core, test-cli, test-ffi, quality]
     runs-on: ubuntu-latest
     if: always()
 
@@ -367,10 +300,6 @@ jobs:
           fi
           if [ "${{ needs.test-ffi.result }}" != "success" ]; then
             echo "FFI tests failed!"
-            exit 1
-          fi
-          if [ "${{ needs.test-gui.result }}" != "success" ]; then
-            echo "GUI tests failed!"
             exit 1
           fi
           if [ "${{ needs.quality.result }}" != "success" ]; then

@@ -2,6 +2,10 @@
 
 Status legend: Implemented, Partial, Missing, Not verified
 
+> **Stale evidence notice**: This matrix predates the removal of the Rust/Slint `rcompare_gui`
+> crate. Rows citing `rcompare_gui/...` as evidence describe functionality that has moved to
+> `teczka/` (PySide6/Qt6) or been removed outright; treat those rows as unverified until re-audited.
+
 ## ARCHITECTURE.md Requirements
 
 | Area | Requirement | Status | Evidence |

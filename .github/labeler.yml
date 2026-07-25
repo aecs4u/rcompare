@@ -13,7 +13,7 @@ cli:
 # GUI changes
 gui:
   - changed-files:
-    - any-glob-to-any-file: 'rcompare_gui/**/*'
+    - any-glob-to-any-file: 'teczka/**/*'
 
 # Common/shared changes
 common:
