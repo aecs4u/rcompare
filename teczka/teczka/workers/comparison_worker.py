@@ -37,6 +37,77 @@ class ProgressInfo:
     percent: int
 
 
+class CliJsonWorker(QObject):
+    """Non-blocking QProcess wrapper for CLI subcommands that emit a single JSON report.
+
+    Used for copy/sync (and any future one-shot command) so long-running
+    operations don't block the Qt event loop the way subprocess.run does.
+    """
+
+    finished = Signal(object)  # dict parsed from JSON stdout
+    error = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._process = QProcess(self)
+        self._stderr_buffer = ""
+        self._accepted_exit_codes: tuple[int, ...] = (0,)
+        self._process.finished.connect(self._on_finished)
+        self._process.readyReadStandardError.connect(self._on_stderr)
+
+    def start(self, cmd: list[str], accepted_exit_codes: tuple[int, ...] = (0,)) -> None:
+        """Start the given command asynchronously."""
+        self._accepted_exit_codes = accepted_exit_codes
+        self._stderr_buffer = ""
+        log_info(
+            "starting cli json process",
+            command=cmd[0] if cmd else "",
+            args=cmd[1:] if len(cmd) > 1 else [],
+        )
+        self._process.start(cmd[0], cmd[1:])
+
+    def cancel(self) -> None:
+        if self._process.state() != QProcess.NotRunning:
+            log_info("cancelling cli json process")
+            self._process.kill()
+
+    def is_running(self) -> bool:
+        return self._process.state() != QProcess.NotRunning
+
+    def _on_stderr(self) -> None:
+        data = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        if data:
+            self._stderr_buffer += data
+
+    def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        stdout = self._process.readAllStandardOutput().data().decode("utf-8", errors="replace")
+        stderr_tail = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        if stderr_tail:
+            self._stderr_buffer += stderr_tail
+        stderr = self._stderr_buffer.strip()
+
+        if exit_status == QProcess.CrashExit:
+            log_error("cli json process crashed")
+            self.error.emit("Process crashed")
+            return
+
+        if exit_code not in self._accepted_exit_codes:
+            details = stderr or "no stderr output"
+            log_error("cli json process failed", exit_code=exit_code, details=details)
+            self.error.emit(f"Command failed (exit {exit_code}): {details}")
+            return
+
+        try:
+            data = _json.loads(stdout)
+        except Exception as e:
+            log_exception("failed to decode cli json output")
+            self.error.emit(f"Failed to parse result: {e}")
+            return
+
+        log_info("cli json process completed", exit_code=exit_code)
+        self.finished.emit(data)
+
+
 class ComparisonWorker(QObject):
     """Uses QProcess for non-blocking CLI invocation."""
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import difflib
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 from ..widgets.diff_text_edit import DiffTextEdit, CharHighlights
 from ..widgets.diff_overview_bar import DiffOverviewBar
 from ..utils.cli_bridge import CliBridge, TextDiffReport, TextDiffLine
+from ..workers.function_worker import FunctionWorker
 
 
 # Default colors for diff lines
@@ -39,6 +42,114 @@ def _color_equal() -> QColor:
     if app:
         return app.palette().color(QPalette.ColorRole.Base)
     return QColor("#ffffff")
+
+
+def _char_highlights(
+    left_line: str, right_line: str
+) -> tuple[list[tuple[int, int, QColor]], list[tuple[int, int, QColor]]]:
+    """Compute character-level diff highlights for a pair of changed lines.
+
+    Pure function (no Qt widget access) so it can run on a worker thread.
+    """
+    char_matcher = difflib.SequenceMatcher(None, left_line, right_line)
+    left_hl: list[tuple[int, int, QColor]] = []
+    right_hl: list[tuple[int, int, QColor]] = []
+    for op, a1, a2, b1, b2 in char_matcher.get_opcodes():
+        if op == "replace":
+            left_hl.append((a1, a2, COLOR_CHAR_DELETE))
+            right_hl.append((b1, b2, COLOR_CHAR_INSERT))
+        elif op == "delete":
+            left_hl.append((a1, a2, COLOR_CHAR_DELETE))
+        elif op == "insert":
+            right_hl.append((b1, b2, COLOR_CHAR_INSERT))
+    return left_hl, right_hl
+
+
+@dataclass
+class _FileDiffResult:
+    """Result of a background file-load + difflib computation."""
+
+    display_left: list[str] = field(default_factory=list)
+    display_right: list[str] = field(default_factory=list)
+    colors_left: list[QColor] = field(default_factory=list)
+    colors_right: list[QColor] = field(default_factory=list)
+    nums_left: list[str] = field(default_factory=list)
+    nums_right: list[str] = field(default_factory=list)
+    char_hl_left: CharHighlights = field(default_factory=list)
+    char_hl_right: CharHighlights = field(default_factory=list)
+
+
+def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> _FileDiffResult:
+    """Read both files and compute the side-by-side diff (runs off the GUI thread).
+
+    Raises ``OSError`` if either file can't be read; the caller (FunctionWorker)
+    turns that into an ``error`` signal.
+    """
+    left_text = Path(left_path).read_text(errors="replace")
+    right_text = Path(right_path).read_text(errors="replace")
+
+    left_lines = left_text.splitlines()
+    right_lines = right_text.splitlines()
+
+    matcher = difflib.SequenceMatcher(None, left_lines, right_lines)
+    result = _FileDiffResult()
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for i, j in zip(range(i1, i2), range(j1, j2)):
+                result.display_left.append(left_lines[i])
+                result.display_right.append(right_lines[j])
+                result.colors_left.append(color_equal)
+                result.colors_right.append(color_equal)
+                result.nums_left.append(str(i + 1))
+                result.nums_right.append(str(j + 1))
+                result.char_hl_left.append([])
+                result.char_hl_right.append([])
+        elif tag == "replace":
+            max_len = max(i2 - i1, j2 - j1)
+            for k in range(max_len):
+                has_left = i1 + k < i2
+                has_right = j1 + k < j2
+
+                l_line = left_lines[i1 + k] if has_left else ""
+                r_line = right_lines[j1 + k] if has_right else ""
+
+                result.display_left.append(l_line)
+                result.display_right.append(r_line)
+                result.colors_left.append(COLOR_DELETE if has_left else COLOR_GAP)
+                result.colors_right.append(COLOR_INSERT if has_right else COLOR_GAP)
+                result.nums_left.append(str(i1 + k + 1) if has_left else "")
+                result.nums_right.append(str(j1 + k + 1) if has_right else "")
+
+                if has_left and has_right:
+                    l_hl, r_hl = _char_highlights(l_line, r_line)
+                    result.char_hl_left.append(l_hl)
+                    result.char_hl_right.append(r_hl)
+                else:
+                    result.char_hl_left.append([])
+                    result.char_hl_right.append([])
+        elif tag == "delete":
+            for i in range(i1, i2):
+                result.display_left.append(left_lines[i])
+                result.display_right.append("")
+                result.colors_left.append(COLOR_DELETE)
+                result.colors_right.append(COLOR_GAP)
+                result.nums_left.append(str(i + 1))
+                result.nums_right.append("")
+                result.char_hl_left.append([])
+                result.char_hl_right.append([])
+        elif tag == "insert":
+            for j in range(j1, j2):
+                result.display_left.append("")
+                result.display_right.append(right_lines[j])
+                result.colors_left.append(COLOR_GAP)
+                result.colors_right.append(COLOR_INSERT)
+                result.nums_left.append("")
+                result.nums_right.append(str(j + 1))
+                result.char_hl_left.append([])
+                result.char_hl_right.append([])
+
+    return result
 
 
 class TextView(QWidget):
@@ -207,111 +318,47 @@ class TextView(QWidget):
         left_line: str, right_line: str
     ) -> tuple[list[tuple[int, int, QColor]], list[tuple[int, int, QColor]]]:
         """Compute character-level diff highlights for a pair of changed lines."""
-        import difflib
-
-        char_matcher = difflib.SequenceMatcher(None, left_line, right_line)
-        left_hl: list[tuple[int, int, QColor]] = []
-        right_hl: list[tuple[int, int, QColor]] = []
-        for op, a1, a2, b1, b2 in char_matcher.get_opcodes():
-            if op == "replace":
-                left_hl.append((a1, a2, COLOR_CHAR_DELETE))
-                right_hl.append((b1, b2, COLOR_CHAR_INSERT))
-            elif op == "delete":
-                left_hl.append((a1, a2, COLOR_CHAR_DELETE))
-            elif op == "insert":
-                right_hl.append((b1, b2, COLOR_CHAR_INSERT))
-        return left_hl, right_hl
+        return _char_highlights(left_line, right_line)
 
     def compare_files(self, left_path: str, right_path: str) -> None:
-        """Compare two text files using Python difflib."""
-        import difflib
+        """Compare two text files using Python difflib.
 
+        File reads and the difflib computation run on a background thread
+        (:class:`FunctionWorker`) so large files don't block the GUI.
+        """
         self._left_path = left_path
         self._right_path = right_path
         self._left_path_label.setText(left_path)
         self._right_path_label.setText(right_path)
+        self._pending_diff_paths = (left_path, right_path)
 
-        try:
-            left_text = Path(left_path).read_text(errors="replace")
-            right_text = Path(right_path).read_text(errors="replace")
-        except OSError as e:
-            self._left_editor.setPlainText(f"Error reading file: {e}")
+        worker = FunctionWorker(_compute_file_diff, left_path, right_path, _color_equal(), parent=self)
+        worker.finished_with_result.connect(
+            lambda result, lp=left_path, rp=right_path: self._on_file_diff_computed(lp, rp, result)
+        )
+        worker.error.connect(
+            lambda msg, lp=left_path, rp=right_path: self._on_file_diff_error(lp, rp, msg)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._diff_worker = worker
+        worker.start()
+
+    def _on_file_diff_computed(self, left_path: str, right_path: str, result: _FileDiffResult) -> None:
+        """Apply a background diff computation, if it's still the active request."""
+        if self._pending_diff_paths != (left_path, right_path):
+            return  # a newer compare_files() call superseded this one
+        self._left_editor.set_content(
+            result.display_left, result.colors_left, result.nums_left, result.char_hl_left
+        )
+        self._right_editor.set_content(
+            result.display_right, result.colors_right, result.nums_right, result.char_hl_right
+        )
+        self._update_overview_bars(result.colors_left, result.colors_right)
+
+    def _on_file_diff_error(self, left_path: str, right_path: str, message: str) -> None:
+        if self._pending_diff_paths != (left_path, right_path):
             return
-
-        left_lines = left_text.splitlines()
-        right_lines = right_text.splitlines()
-
-        # Generate side-by-side diff
-        matcher = difflib.SequenceMatcher(None, left_lines, right_lines)
-
-        display_left: list[str] = []
-        display_right: list[str] = []
-        colors_left: list[QColor] = []
-        colors_right: list[QColor] = []
-        nums_left: list[str] = []
-        nums_right: list[str] = []
-        char_hl_left: CharHighlights = []
-        char_hl_right: CharHighlights = []
-
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag == "equal":
-                for i, j in zip(range(i1, i2), range(j1, j2)):
-                    display_left.append(left_lines[i])
-                    display_right.append(right_lines[j])
-                    colors_left.append(_color_equal())
-                    colors_right.append(_color_equal())
-                    nums_left.append(str(i + 1))
-                    nums_right.append(str(j + 1))
-                    char_hl_left.append([])
-                    char_hl_right.append([])
-            elif tag == "replace":
-                max_len = max(i2 - i1, j2 - j1)
-                for k in range(max_len):
-                    has_left = i1 + k < i2
-                    has_right = j1 + k < j2
-
-                    l_line = left_lines[i1 + k] if has_left else ""
-                    r_line = right_lines[j1 + k] if has_right else ""
-
-                    display_left.append(l_line)
-                    display_right.append(r_line)
-                    colors_left.append(COLOR_DELETE if has_left else COLOR_GAP)
-                    colors_right.append(COLOR_INSERT if has_right else COLOR_GAP)
-                    nums_left.append(str(i1 + k + 1) if has_left else "")
-                    nums_right.append(str(j1 + k + 1) if has_right else "")
-
-                    # Compute character-level highlights for paired lines
-                    if has_left and has_right:
-                        l_hl, r_hl = self._compute_char_highlights(l_line, r_line)
-                        char_hl_left.append(l_hl)
-                        char_hl_right.append(r_hl)
-                    else:
-                        char_hl_left.append([])
-                        char_hl_right.append([])
-            elif tag == "delete":
-                for i in range(i1, i2):
-                    display_left.append(left_lines[i])
-                    display_right.append("")
-                    colors_left.append(COLOR_DELETE)
-                    colors_right.append(COLOR_GAP)
-                    nums_left.append(str(i + 1))
-                    nums_right.append("")
-                    char_hl_left.append([])
-                    char_hl_right.append([])
-            elif tag == "insert":
-                for j in range(j1, j2):
-                    display_left.append("")
-                    display_right.append(right_lines[j])
-                    colors_left.append(COLOR_GAP)
-                    colors_right.append(COLOR_INSERT)
-                    nums_left.append("")
-                    nums_right.append(str(j + 1))
-                    char_hl_left.append([])
-                    char_hl_right.append([])
-
-        self._left_editor.set_content(display_left, colors_left, nums_left, char_hl_left)
-        self._right_editor.set_content(display_right, colors_right, nums_right, char_hl_right)
-        self._update_overview_bars(colors_left, colors_right)
+        self._left_editor.setPlainText(f"Error reading file: {message}")
 
     @staticmethod
     def _parse_cli_segments(segments: list[dict], color: QColor) -> list[tuple[int, int, QColor]]:
