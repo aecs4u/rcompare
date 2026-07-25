@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPixmap, QWheelEvent
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QImageReader, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QGraphicsPixmapItem,
@@ -28,6 +28,28 @@ from PySide6.QtWidgets import (
 _GREEN = QColor("#2e7d32")
 _YELLOW = QColor("#f9a825")
 _RED = QColor("#c62828")
+
+# Cap on the longest edge we'll decode at for on-screen display. Comparison
+# images (camera photos, scans) can be tens of megapixels; decoding those at
+# native resolution just to display/zoom them in a viewport wastes memory
+# and time for no visible benefit. Pixel-statistics computation still reads
+# the original file at full resolution via Pillow, unaffected by this cap.
+_MAX_PREVIEW_DIM = 4096
+
+
+def _load_pixmap_for_display(path: str) -> QPixmap:
+    """Decode *path* into a QPixmap, downscaling during decode (not after)
+    if it exceeds :data:`_MAX_PREVIEW_DIM` on its longest edge.
+    """
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    size = reader.size()
+    if size.isValid() and max(size.width(), size.height()) > _MAX_PREVIEW_DIM:
+        scale = _MAX_PREVIEW_DIM / max(size.width(), size.height())
+        reader.setScaledSize(
+            QSize(max(1, int(size.width() * scale)), max(1, int(size.height() * scale)))
+        )
+    return QPixmap.fromImageReader(reader)
 
 
 def _similarity_color(similarity_pct: float) -> QColor:
@@ -268,7 +290,7 @@ class ImageView(QWidget):
             label.setToolTip("")
             return False
 
-        pixmap = QPixmap(path)
+        pixmap = _load_pixmap_for_display(path)
         if pixmap.isNull():
             label.setText("(unreadable image)")
             label.setToolTip(path)
