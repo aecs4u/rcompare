@@ -134,13 +134,55 @@ def _configure_stdlib(level: int, log_file: str | None) -> None:
 # Public logger factory
 # ------------------------------------------------------------------
 
+class _StdlibLoggerAdapter:
+    """Wraps a stdlib :class:`logging.Logger` to accept structlog-style
+    keyword arguments (e.g. ``log.info("msg", key=value)``).
+    """
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+
+    def _log(self, level: int, event: str, *args: Any, **kwargs: Any) -> None:
+        exc_info = kwargs.pop("exc_info", None)
+        if kwargs:
+            fields = " ".join(f"{k}={v!r}" for k, v in kwargs.items())
+            event = f"{event} ({fields})"
+        self._logger.log(level, event, *args, exc_info=exc_info)
+
+    def debug(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self._log(logging.DEBUG, event, *args, **kwargs)
+
+    def info(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self._log(logging.INFO, event, *args, **kwargs)
+
+    def warning(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self._log(logging.WARNING, event, *args, **kwargs)
+
+    warn = warning
+
+    def error(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self._log(logging.ERROR, event, *args, **kwargs)
+
+    def critical(self, event: str, *args: Any, **kwargs: Any) -> None:
+        self._log(logging.CRITICAL, event, *args, **kwargs)
+
+    def exception(self, event: str, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("exc_info", True)
+        self._log(logging.ERROR, event, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._logger, name)
+
+
 def get_logger(name: str) -> Any:
     """Return a logger bound to *name*.
 
     When *structlog* is available this returns a
     :class:`structlog.stdlib.BoundLogger`; otherwise a stdlib
-    :class:`logging.Logger`.
+    :class:`logging.Logger` wrapped in :class:`_StdlibLoggerAdapter` so
+    structlog-style keyword arguments (``log.info("msg", key=value)``)
+    don't raise ``TypeError``.
     """
     if structlog is not None:
         return structlog.get_logger(name)
-    return logging.getLogger(name)
+    return _StdlibLoggerAdapter(logging.getLogger(name))

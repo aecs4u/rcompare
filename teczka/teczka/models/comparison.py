@@ -22,17 +22,31 @@ class TreeNode:
     right_modified: Optional[int] = None
     children: list[TreeNode] = field(default_factory=list)
     parent: Optional[TreeNode] = field(default=None, repr=False)
+    _row: int = field(default=0, repr=False)
+    _child_map: dict[str, TreeNode] = field(default_factory=dict, repr=False)
 
     @property
     def row(self) -> int:
-        """Return this node's index within its parent's children."""
-        if self.parent is None:
-            return 0
-        return self.parent.children.index(self)
+        """Return this node's index within its parent's children.
+
+        Cached at insertion/sort time — no longer a linear
+        ``parent.children.index(self)`` scan.
+        """
+        return self._row
 
     @property
     def child_count(self) -> int:
         return len(self.children)
+
+    def add_child(self, child: TreeNode) -> None:
+        """Append *child*, keeping the name->node lookup map in sync."""
+        child._row = len(self.children)
+        self.children.append(child)
+        self._child_map[child.name] = child
+
+    def get_child(self, name: str) -> Optional[TreeNode]:
+        """O(1) lookup of a direct child by name."""
+        return self._child_map.get(name)
 
 
 def build_tree(report: ScanReport) -> TreeNode:
@@ -82,12 +96,7 @@ def _build_tree_from_entries(entries: Iterable[DiffEntry]) -> TreeNode:
         current = root
         for i, part in enumerate(parts):
             is_last = i == len(parts) - 1
-            # Find existing child
-            child = None
-            for c in current.children:
-                if c.name == part:
-                    child = c
-                    break
+            child = current.get_child(part)
             if child is None:
                 path_so_far = str(PurePosixPath(*parts[: i + 1]))
                 is_dir_node = not is_last
@@ -102,7 +111,7 @@ def _build_tree_from_entries(entries: Iterable[DiffEntry]) -> TreeNode:
                     is_dir=is_dir_node,
                     parent=current,
                 )
-                current.children.append(child)
+                current.add_child(child)
             if is_last:
                 child.status = entry.status
                 if entry.left:
@@ -142,7 +151,7 @@ def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:
         if entry.right:
             node.right_size = entry.right.size
             node.right_modified = entry.right.modified_unix
-        root.children.append(node)
+        root.add_child(node)
 
     _aggregate_status(root)
     _sort_children(root)
@@ -175,5 +184,6 @@ def _aggregate_status(node: TreeNode) -> None:
 def _sort_children(node: TreeNode) -> None:
     """Sort: directories first, then alphabetically."""
     node.children.sort(key=lambda c: (not c.is_dir, c.name.lower()))
-    for child in node.children:
+    for i, child in enumerate(node.children):
+        child._row = i
         _sort_children(child)

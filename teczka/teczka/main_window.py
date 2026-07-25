@@ -45,7 +45,7 @@ from .widgets.sidebar import Sidebar
 from .widgets.session_tab_bar import SessionTabBar
 from .widgets.compact_path_bar import CompactPathBar
 from .widgets.integrated_status_bar import IntegratedStatusBar
-from .workers.comparison_worker import ComparisonWorker
+from .workers.comparison_worker import ComparisonWorker, CliJsonWorker
 from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.sync_dialog import SyncDialog
 from .dialogs.profiles_dialog import ProfilesDialog
@@ -117,6 +117,8 @@ class MainWindow(QMainWindow):
         # --- Core state ------------------------------------------------
         self._config: AppConfig = config
         self._worker: Optional[ComparisonWorker] = None
+        self._copy_worker: Optional[CliJsonWorker] = None
+        self._sync_worker: Optional[CliJsonWorker] = None
         self._current_report: Optional[ScanReport] = None
         self._settings: ComparisonSettings = ComparisonSettings()
         self._profile_manager: ProfileManager = ProfileManager()
@@ -1357,13 +1359,19 @@ class MainWindow(QMainWindow):
     @Slot(bool, bool, bool, bool)
     def _on_integrated_filters(self, identical: bool, different: bool, left_only: bool, right_only: bool) -> None:
         """Handle filter changes from IntegratedStatusBar."""
-        self._on_filters_changed(identical, different, left_only, right_only, True)
+        self._on_filters_changed(identical, different, left_only, right_only, True, self._integrated_status.search_text)
 
     @Slot(str)
     def _on_search_changed(self, text: str) -> None:
         """Handle search text changes from IntegratedStatusBar."""
-        if hasattr(self._folder_view, 'set_search_filter'):
-            self._folder_view.set_search_filter(text)
+        self._on_filters_changed(
+            self._act_show_identical.isChecked(),
+            self._act_show_different.isChecked(),
+            self._act_show_left_only.isChecked(),
+            self._act_show_right_only.isChecked(),
+            self._act_show_files_only.isChecked(),
+            text,
+        )
 
     @Slot(int)
     def _on_home_session_type(self, view_index: int) -> None:
@@ -1704,42 +1712,65 @@ class MainWindow(QMainWindow):
 
         if self._cli_bridge is not None:
             direction = "left_to_right" if left_to_right else "right_to_left"
-            try:
-                report = self._cli_bridge.copy_paths(
-                    left=self._left_path,
-                    right=self._right_path,
-                    direction=direction,
-                    paths=rel_paths,
-                    dry_run=False,
-                )
-                summary = report.get("summary", {})
-                copied = int(summary.get("copied", 0))
-                missing = int(summary.get("missing", 0))
-                skipped = int(summary.get("skipped", 0))
-                failed = int(summary.get("failed", 0))
-                label = "Left -> Right" if left_to_right else "Right -> Left"
-                self.statusBar().showMessage(
-                    f"Copied {copied} item(s), {missing} missing, {skipped} skipped, "
-                    f"{failed} failed ({label})",
-                    8000,
-                )
-                log_info(
-                    "copy completed via cli",
-                    copied=copied,
-                    missing=missing,
-                    skipped=skipped,
-                    failed=failed,
-                    direction=direction,
-                )
-                self._on_refresh()
-                return
-            except Exception as exc:
-                log_warning("copy via cli failed; fallback to local", error=str(exc))
-                self.statusBar().showMessage(
-                    f"CLI copy failed, using local fallback: {exc}",
-                    7000,
-                )
+            if self._copy_worker is not None and self._copy_worker.is_running():
+                self._copy_worker.cancel()
 
+            args = self._cli_bridge.build_copy_args(
+                left=self._left_path,
+                right=self._right_path,
+                direction=direction,
+                paths=rel_paths,
+                dry_run=False,
+            )
+            cmd = self._cli_bridge.build_command(args)
+
+            self._copy_worker = CliJsonWorker(self)
+            self._copy_worker.finished.connect(
+                lambda report: self._on_copy_finished(report, left_to_right=left_to_right)
+            )
+            self._copy_worker.error.connect(
+                lambda message: self._on_copy_error(message, rel_paths=rel_paths, left_to_right=left_to_right)
+            )
+            self.statusBar().showMessage("Copying...")
+            self._copy_worker.start(cmd)
+            return
+
+        self._copy_paths_local_fallback(rel_paths, left_to_right=left_to_right)
+
+    def _on_copy_finished(self, report: dict, *, left_to_right: bool) -> None:
+        summary = report.get("summary", {})
+        copied = int(summary.get("copied", 0))
+        missing = int(summary.get("missing", 0))
+        skipped = int(summary.get("skipped", 0))
+        failed = int(summary.get("failed", 0))
+        direction = "left_to_right" if left_to_right else "right_to_left"
+        label = "Left -> Right" if left_to_right else "Right -> Left"
+        self.statusBar().showMessage(
+            f"Copied {copied} item(s), {missing} missing, {skipped} skipped, "
+            f"{failed} failed ({label})",
+            8000,
+        )
+        log_info(
+            "copy completed via cli",
+            copied=copied,
+            missing=missing,
+            skipped=skipped,
+            failed=failed,
+            direction=direction,
+        )
+        self._on_refresh()
+
+    def _on_copy_error(self, message: str, *, rel_paths: list[str], left_to_right: bool) -> None:
+        log_warning("copy via cli failed; fallback to local", error=message)
+        self.statusBar().showMessage(
+            f"CLI copy failed, using local fallback: {message}",
+            7000,
+        )
+        self._copy_paths_local_fallback(rel_paths, left_to_right=left_to_right)
+
+    def _copy_paths_local_fallback(self, rel_paths: list[str], *, left_to_right: bool) -> None:
+        left_root = Path(self._left_path)
+        right_root = Path(self._right_path)
         copied = 0
         missing = 0
         failed = 0
@@ -1885,49 +1916,71 @@ class MainWindow(QMainWindow):
 
         # Prefer CLI backend so sync behavior stays consistent with scan logic.
         if self._cli_bridge is not None:
-            try:
-                report = self._cli_bridge.sync_folders(
-                    left=self._left_path,
-                    right=self._right_path,
-                    direction=direction,
-                    dry_run=dry_run,
-                    use_trash=use_trash,
-                    ignore_patterns=list(self._settings.ignore_patterns),
-                    follow_symlinks=self._settings.follow_symlinks,
-                    verify_hashes=self._settings.use_hash_verification,
-                    conflict="newest",
-                )
-                summary = report.get("summary", {})
-                copied = int(summary.get("copied", 0))
-                updated = int(summary.get("updated", 0))
-                deleted = int(summary.get("deleted", 0))
-                skipped = int(summary.get("skipped", 0))
-                failed = int(summary.get("failed", 0))
-                label = "Sync dry-run" if dry_run else "Sync complete"
-                self.statusBar().showMessage(
-                    f"{label}: {copied} copied, {updated} updated, {deleted} deleted, "
-                    f"{skipped} skipped, {failed} failed.",
-                    10000,
-                )
-                log_info(
-                    "sync completed via cli",
-                    copied=copied,
-                    updated=updated,
-                    deleted=deleted,
-                    skipped=skipped,
-                    failed=failed,
-                    dry_run=dry_run,
-                )
-                if not dry_run:
-                    self._on_refresh()
-                return
-            except Exception as exc:
-                log_warning("sync via cli failed; fallback to local", error=str(exc))
-                self.statusBar().showMessage(
-                    f"CLI sync failed, using local fallback: {exc}",
-                    7000,
-                )
+            if self._sync_worker is not None and self._sync_worker.is_running():
+                self._sync_worker.cancel()
 
+            args = self._cli_bridge.build_sync_args(
+                left=self._left_path,
+                right=self._right_path,
+                direction=direction,
+                dry_run=dry_run,
+                use_trash=use_trash,
+                ignore_patterns=list(self._settings.ignore_patterns),
+                follow_symlinks=self._settings.follow_symlinks,
+                verify_hashes=self._settings.use_hash_verification,
+                conflict="newest",
+            )
+            cmd = self._cli_bridge.build_command(args)
+
+            self._sync_worker = CliJsonWorker(self)
+            self._sync_worker.finished.connect(
+                lambda report: self._on_sync_finished(report, dry_run=dry_run)
+            )
+            self._sync_worker.error.connect(
+                lambda message: self._on_sync_error(
+                    message, direction=direction, dry_run=dry_run, use_trash=use_trash
+                )
+            )
+            self.statusBar().showMessage("Sync dry-run..." if dry_run else "Syncing...")
+            self._sync_worker.start(cmd)
+            return
+
+        self._sync_local_fallback(direction, dry_run, use_trash)
+
+    def _on_sync_finished(self, report: dict, *, dry_run: bool) -> None:
+        summary = report.get("summary", {})
+        copied = int(summary.get("copied", 0))
+        updated = int(summary.get("updated", 0))
+        deleted = int(summary.get("deleted", 0))
+        skipped = int(summary.get("skipped", 0))
+        failed = int(summary.get("failed", 0))
+        label = "Sync dry-run" if dry_run else "Sync complete"
+        self.statusBar().showMessage(
+            f"{label}: {copied} copied, {updated} updated, {deleted} deleted, "
+            f"{skipped} skipped, {failed} failed.",
+            10000,
+        )
+        log_info(
+            "sync completed via cli",
+            copied=copied,
+            updated=updated,
+            deleted=deleted,
+            skipped=skipped,
+            failed=failed,
+            dry_run=dry_run,
+        )
+        if not dry_run:
+            self._on_refresh()
+
+    def _on_sync_error(self, message: str, *, direction: str, dry_run: bool, use_trash: bool) -> None:
+        log_warning("sync via cli failed; fallback to local", error=message)
+        self.statusBar().showMessage(
+            f"CLI sync failed, using local fallback: {message}",
+            7000,
+        )
+        self._sync_local_fallback(direction, dry_run, use_trash)
+
+    def _sync_local_fallback(self, direction: str, dry_run: bool, use_trash: bool) -> None:
         left_root = Path(self._left_path)
         right_root = Path(self._right_path)
         if not left_root.is_dir() or not right_root.is_dir():

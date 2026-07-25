@@ -212,3 +212,8 @@ class IntegratedStatusBar(QWidget):
         self._pill_different.setChecked(different)
         self._pill_left_only.setChecked(left_only)
         self._pill_right_only.setChecked(right_only)
+
+    @property
+    def search_text(self) -> str:
+        """Current text in the search/filter field."""
+        return self._search_edit.text()

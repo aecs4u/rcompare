@@ -5,15 +5,33 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from PySide6.QtCore import QStandardPaths
+
 
 def _default_config_path() -> Path:
-    """Return the default config file path."""
-    config_dir = Path.home() / ".config" / "rcompare"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    """Return the default config file path.
+
+    Uses ``QStandardPaths.AppConfigLocation`` so the location honours XDG
+    on Linux, ``%APPDATA%`` on Windows, and ``~/Library/Application Support``
+    on macOS. Falls back to a temp directory if the config location cannot
+    be created (e.g. a read-only home or a locked-down test environment).
+    """
+    config_dir = Path(
+        QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    )
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        config_dir = Path(tempfile.gettempdir()) / "rcompare"
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
     return config_dir / "pyside.json"
 
 
@@ -96,7 +114,7 @@ class AppConfig:
                 )
                 config._config_file = str(path)
                 return config
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
                 pass
         config = cls()
         config._config_file = str(path)
@@ -106,9 +124,11 @@ class AppConfig:
         return config
 
     def save(self) -> None:
-        """Persist config to disk."""
+        """Persist config to disk atomically. Failures are swallowed —
+        losing preferences is preferable to crashing the GUI on exit,
+        e.g. on a read-only home or a full disk.
+        """
         path = Path(self._config_file or str(_default_config_path()))
-        path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "cli_path": self.cli_path,
             "theme": self.theme,
@@ -123,7 +143,23 @@ class AppConfig:
             "appearance": self.appearance,
             "bookmarks": self.bookmarks,
         }
-        path.write_text(json.dumps(data, indent=2))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_name, path)
+            except OSError:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+                raise
+        except OSError:
+            pass
 
     def get_cli_path(self) -> str:
         """Return CLI path, raising if not found."""
