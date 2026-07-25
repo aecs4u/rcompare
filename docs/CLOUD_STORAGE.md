@@ -2,6 +2,12 @@
 
 RCompare v2.0+ provides native support for cloud storage backends through its Virtual File System (VFS) abstraction. This document explains how to use S3 and WebDAV storage with RCompare.
 
+> **Wiring status (2026-07-25):** these VFS backends are real, tested `rcompare_core`
+> APIs, used here directly as a Rust library. They are **not yet reachable from
+> `rcompare_cli` or teczka** — no CLI path syntax (e.g. `s3://...`) or GUI path-bar
+> support exists yet. See [docs/roadmap.md](roadmap.md) and
+> [docs/modules/rcompare_core.md](modules/rcompare_core.md).
+
 ## Table of Contents
 
 - [S3 Storage Support](#s3-storage-support)
@@ -196,6 +202,11 @@ RCompare supports WebDAV servers including Nextcloud, ownCloud, Apache mod_dav, 
 - ✅ Create directories (MKCOL)
 - ✅ Multiple authentication methods
 - ⚠️ No modification time setting (most WebDAV servers)
+- ⚠️ Reading modification time is also unreliable: `parse_date()` currently
+  always returns "now" rather than the server-reported mtime — don't rely on
+  WebDAV timestamps for comparison decisions yet.
+- ⚠️ PROPFIND response parsing is a simplified substring search, not a full
+  XML parser — may misbehave on servers with unusual PROPFIND response shapes.
 
 ### Authentication Methods
 

@@ -54,8 +54,8 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Ignore whitespace / case | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | Regex rules | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No |
 | Patience diff | ✅ Yes | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies |
-| 3-way merge workflow | ⏳ Planned for CLI/PySide UX (core merge engine exists) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Conflict-resolution UI | ⏳ Planned with 3-way UX | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| 3-way merge workflow | ✅ Yes (teczka `merge_view.py`, line-level `difflib` diff) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| Conflict-resolution UI | ✅ Yes (young/undertested — see [docs/roadmap.md](docs/roadmap.md)) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Binary and Image Comparison
 
@@ -93,7 +93,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Dry-run sync planning | ✅ Yes | ✅ Yes | PySide also shows sync preview |
 | Conflict policy controls | ✅ Yes (`newest/left/right/skip/error`) | ✅ Yes | |
 | Selected-path copy | ✅ Yes (`copy --path/--paths-file`) | ✅ Yes | |
-| Resume interrupted sync | ❌ No | ✅ Yes | Roadmap item for RCompare |
+| Resume interrupted sync | 🔌 Engine exists (`ResumableCopy`), not wired into CLI | ✅ Yes | Wiring gap, not a missing feature — see [docs/roadmap.md](docs/roadmap.md) |
 
 ---
 
@@ -101,12 +101,12 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 | Feature | RCompare | Beyond Compare | Notes |
 |---------|----------|----------------|-------|
-| ZIP/TAR/7Z read-write | ✅ Yes | ✅ Yes | |
+| ZIP/TAR/7Z read-write | ✅ Yes (write is core-API only, not wired into CLI/GUI yet) | ✅ Yes | |
 | RAR read support | ✅ Yes | ✅ Yes | RCompare requires unrar backend |
 | Compressed streams (`.gz/.bz2/.xz`) | ✅ Yes | ✅ Yes | |
 | SFTP sources | ✅ Yes | ✅ Yes | |
-| Cloud/WebDAV backends | ⚠️ Core support exists; UI parity still evolving | ✅ Yes | Check current release scope |
-| Overlay/union virtual folders | ✅ Yes | ⚠️ Limited | |
+| Cloud/WebDAV backends | 🔌 Core support exists (S3/SFTP/WebDAV); not reachable from CLI or GUI yet. WebDAV also has 3 known bugs (fake digest auth, naive PROPFIND parsing, mtime always "now") | ✅ Yes | See [docs/modules/rcompare_core.md](docs/modules/rcompare_core.md) |
+| Overlay/union virtual folders | 🔌 Real, tested, core-API only | ⚠️ Limited | Not reachable from CLI or GUI yet |
 | Snapshot VFS | ⏳ Planned | ❌ No | |
 
 ---
@@ -123,7 +123,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Diff option presets | ✅ Yes (differences/orphans/newer modes) | ✅ Yes | |
 | Rich context menu actions | ✅ Yes | ✅ Yes | Copy/move/delete/rename/touch/new folder/attributes/sync |
 | File-type-aware double-click open | ✅ Yes | ✅ Yes | Opens compare tabs by file type |
-| Drag and drop | ⏳ Planned | ✅ Yes | |
+| Drag and drop | ✅ Yes (bug: dropping >2 paths silently keeps only the first two) | ✅ Yes | |
 
 ---
 
@@ -179,16 +179,23 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 - Text compare improvements (whitespace modes, ignore-case, regex rules).
 - Image EXIF comparison and structured telemetry/logging integration.
 
-### In Progress / Near-Term
-- 3-way merge UX exposure in CLI/PySide.
-- Drag-and-drop workflows in PySide.
-- Progress/event streaming and schema evolution for CLI JSON.
-- KDE-compliance hardening plan execution for PySide UX.
+3-way merge UX and drag-and-drop, both listed here as "in progress" as
+recently as this document's last revision, turned out to already be
+implemented — see [docs/roadmap.md](docs/roadmap.md) for the current,
+source-verified list. That document is the maintained source of truth for
+what's actually left; the summary below is kept only as a quick pointer.
 
-### Longer-Term
-- Snapshot/reflink and larger-scale sync reliability features.
+### Near-term focus (see docs/roadmap.md for detail)
+- Wire already-built `rcompare_core` APIs (archive write, cloud VFS,
+  resumable copy, union/filtered VFS) into `rcompare_cli` and teczka.
+- Fix WebDAV's auth/parsing/mtime bugs.
+- KDE-compliance hardening for teczka (~35% → ≥90% target).
+- CLI progress/event streaming and JSON schema v2.
+
+### Longer-term
+- Snapshot VFS and larger-scale sync reliability features.
 - Deeper VCS-backed virtual filesystem workflows.
-- Full remote source parity in desktop UI for cloud/WebDAV backends.
+- Additional cloud providers (GCS/Azure/Dropbox/OneDrive).
 
 ---
 
@@ -196,8 +203,8 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 - [README.md](README.md)
 - [docs/README.md](docs/README.md)
-- [docs/RCOMPARE_CLI_FEATURE_ROADMAP.md](docs/RCOMPARE_CLI_FEATURE_ROADMAP.md)
-- [docs/RCOMPARE_PYSIDE_KDE_COMPLIANCE_PLAN.md](docs/RCOMPARE_PYSIDE_KDE_COMPLIANCE_PLAN.md)
+- [docs/roadmap.md](docs/roadmap.md) — maintained, source-verified remaining-work list
+- [docs/modules/](docs/modules/) — per-crate/module reference docs
 - [Beyond Compare](https://www.scootersoftware.com/)
 - [WinMerge](https://winmerge.org/)
 - [Meld](https://meldmerge.org/)

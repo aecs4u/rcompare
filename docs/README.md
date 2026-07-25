@@ -8,40 +8,39 @@ This file is the consolidated entrypoint for all Markdown documentation in this 
 - [Quick Start](../QUICKSTART.md): End-to-end usage examples for CLI and GUI.
 - [Changelog](../CHANGELOG.md): Versioned change history.
 
-## Core Engineering Docs
+## By Module
 
-- [Architecture](../ARCHITECTURE.md): Core architecture and implementation handbook.
-- [Development Status](../DEVELOPMENT_STATUS.md): Current state of implemented components.
-- [Known Gaps](../GAPS.md): Limitations and incomplete areas.
+One doc per workspace crate/component, each source-verified and cross-linked:
+
+- [rcompare_common](modules/rcompare_common.md): Shared types, traits, errors.
+- [rcompare_core](modules/rcompare_core.md): Comparison engine, VFS/archive/cloud backends, merge engine, patch system.
+- [rcompare_cli](modules/rcompare_cli.md): Command-line interface reference.
+- [rcompare_ffi](modules/rcompare_ffi.md): Pointer to [rcompare_ffi/README.md](../rcompare_ffi/README.md), the C FFI API.
+- [teczka](modules/teczka.md): PySide6/Qt6 desktop GUI feature inventory.
+
+## Status and Roadmap
+
+- [Project Status](status.md): Current state, test counts, known weak spots.
+- [Roadmap](roadmap.md): **Source-verified**, prioritized list of remaining work for parity with Beyond Compare/WinMerge/Meld/KDiff3. The maintained source of truth — keep this current instead of adding new standalone roadmap docs.
 - [Feature Comparison](../FEATURE_COMPARISON.md): Comparison with competing tools.
-- [Compliance Matrix](../COMPLIANCE_MATRIX.md): Requirement/feature compliance tracking.
-
-## Roadmaps and Plans
-
-- [Main Roadmap](../ROADMAP.md): Product roadmap.
-- [VFS & Archive Roadmap](../ROADMAP_VFS.md): Storage/archive-focused roadmap.
-- [CLI Feature Roadmap](RCOMPARE_CLI_FEATURE_ROADMAP.md): Planned CLI milestones.
-- [PySide GitHub Plan](RCOMPARE_PYSIDE_GITHUB_PLAN.md): PySide release/milestone planning.
-- [KDE Compliance](KDE_COMPLIANCE.md): KDE/Plasma compliance documentation (audits, checklist, shortcuts, implementation plan).
-- [WinMerge Parity Plan](WINMERGE_PARITY.md): Detailed parity plan.
-- [WinMerge Parity Phase 1](WINMERGE_PARITY_PHASE1.md): Phase completion report.
+- [Architecture](../ARCHITECTURE.md): Original design handbook (largely historical — see the notice at its top; current module boundaries are documented in `docs/modules/` instead).
 
 ## Cloud and Storage Docs
 
-- [Cloud Storage Guide](CLOUD_STORAGE.md): Cloud backend capabilities and usage.
+- [Cloud Storage Guide](CLOUD_STORAGE.md): Cloud backend capabilities and usage (core-API-only — see wiring status note at top of that doc).
 - [Cloud Quick Start](QUICK_START_CLOUD.md): Focused cloud onboarding.
-- [Cloud Features Summary](../CLOUD_FEATURES_SUMMARY.md): Implemented cloud scope summary.
 
-## Quality, CI, and Reviews
+## KDE/Plasma Compliance
 
-- [Test Coverage Report](TEST_COVERAGE_REPORT.md): Test scope and coverage details.
-- [CI and Pattern Improvements](CI_AND_PATTERN_IMPROVEMENTS.md): CI and ignore-pattern enhancements.
-- [Review Report](../REVIEW_REPORT.md): Comprehensive review findings.
-- [PR Summary](PR_SUMMARY.md): Historical PR-level implementation summary.
+- [KDE Compliance](KDE_COMPLIANCE.md): Audits, checklist, shortcuts, implementation plan for teczka's KDE/Plasma UX compliance (~35% of target as of this doc's last update).
 
-## API / Integration Docs
+## History (dated, point-in-time — not maintained, not rewritten to match current state)
 
-- [FFI API Guide](../rcompare_ffi/README.md): C/C++ API usage and reference.
+- [PR Summary](history/PR_SUMMARY.md): Historical PR-level implementation summary.
+- [Review Report](history/REVIEW_REPORT.md): Dated automated code review (2026-02-13).
+- [WinMerge Parity Plan](history/WINMERGE_PARITY.md) / [Phase 1](history/WINMERGE_PARITY_PHASE1.md): Phase implementation write-ups.
+- [CI and Pattern Improvements](history/CI_AND_PATTERN_IMPROVEMENTS.md): Dated CI/ignore-pattern change summary (2026-01-26).
+- [Test Coverage Report](history/TEST_COVERAGE_REPORT.md): Dated test-count snapshot (2026-01-26) — see [status.md](status.md) for current counts.
 
 ## Contributor Docs
 
@@ -50,7 +49,20 @@ This file is the consolidated entrypoint for all Markdown documentation in this 
 
 ## Consolidation Rules
 
-- Keep **high-level docs** in repository root:
-  - `README.md`, `QUICKSTART.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CHANGELOG.md`, `CONTRIBUTING.md`.
-- Keep **deep-dive and report docs** in `docs/`.
+- Keep **high-level docs** in repository root: `README.md`, `QUICKSTART.md`,
+  `ARCHITECTURE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `FEATURE_COMPARISON.md`.
+- Keep **per-module docs** in `docs/modules/` — one file per workspace crate
+  (`rcompare_common`/`rcompare_core`/`rcompare_cli`/`rcompare_ffi`) plus `teczka`.
+- Keep **status/roadmap** in `docs/status.md` and `docs/roadmap.md` — these are
+  the living, source-verified documents. Don't create a new standalone
+  roadmap/gaps doc; add to `docs/roadmap.md` instead.
+- Keep **deep-dive guides** (cloud, KDE compliance) in `docs/`.
+- Keep **dated, point-in-time reports** (PR summaries, phase reports, past
+  reviews) in `docs/history/` — never rewrite these to match later reality;
+  add a new doc instead if something needs re-reporting.
+- Every status claim in `docs/modules/`, `docs/status.md`, and `docs/roadmap.md`
+  should trace to something checked against actual source, not carried forward
+  from an older doc — this repo has a history of docs drifting from source in
+  both directions (claiming things are missing that are actually done, and
+  vice versa).
 - When adding a new Markdown file, add it to this hub under the correct section.

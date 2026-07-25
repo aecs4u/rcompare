@@ -2,6 +2,10 @@
 
 This guide provides quick examples to get started with S3 and WebDAV cloud storage in RCompare.
 
+> **Wiring status:** these are `rcompare_core` library APIs (Rust). Not yet
+> reachable from `rcompare_cli` or teczka — see [docs/roadmap.md](roadmap.md).
+> WebDAV also has known auth/mtime caveats, see [docs/CLOUD_STORAGE.md](CLOUD_STORAGE.md).
+
 ## S3 Quick Start
 
 ### Example 1: Connect to AWS S3 (Default Credentials)

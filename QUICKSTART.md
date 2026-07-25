@@ -496,7 +496,7 @@ rcompare_cli scan \
 ## Getting Help
 
 - **Documentation**: See [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
-- **Development Status**: See [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md)
+- **Development Status**: See [docs/status.md](docs/status.md)
 - **Issues**: Report bugs on GitHub
 - **CLI Help**: `rcompare_cli --help`
 
@@ -552,7 +552,7 @@ Future enhancements planned:
 - 📋 Semantic diff (AST-based)
 - 📋 Plugin/extension system
 
-See [ROADMAP.md](ROADMAP.md) for detailed development timeline.
+See [docs/roadmap.md](docs/roadmap.md) for the current, source-verified remaining-work list.
 
 ---
 

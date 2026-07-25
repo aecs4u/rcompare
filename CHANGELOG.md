@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-07-25) — Documentation consolidation
+
+- Replaced five overlapping/stale roadmap docs (`GAPS.md`, `ROADMAP.md`,
+  `ROADMAP_VFS.md`, `docs/RCOMPARE_CLI_FEATURE_ROADMAP.md`,
+  `docs/RCOMPARE_PYSIDE_GITHUB_PLAN.md`) and the stale `DEVELOPMENT_STATUS.md`/
+  `COMPLIANCE_MATRIX.md`/`CLOUD_FEATURES_SUMMARY.md` with a source-verified
+  set: `docs/roadmap.md` (remaining work for competitive parity), `docs/status.md`,
+  and one doc per workspace module under `docs/modules/`.
+- A source audit while writing these found the deleted docs wrong in both
+  directions: archive write (ZIP/TAR/7Z), RAR read, and Union/Filtered VFS are
+  real and tested in `rcompare_core` but unreachable from `rcompare_cli` or
+  teczka; the `ResumableCopy` checkpoint engine has zero callers; and several
+  teczka features marked "planned" were already implemented (multi-tab
+  sessions, session profiles, sync-preview dialog, drag-and-drop, a working
+  three-way merge view, synced scrolling with a gutter map, a hex viewer).
+  Also found three real WebDAV bugs: digest auth silently falls back to
+  Basic, PROPFIND parsing is a substring search rather than real XML, and
+  file mtimes are never actually read (`parse_date()` always returns "now").
+  See `docs/roadmap.md` for the full, prioritized list.
+- Moved dated point-in-time reports (`PR_SUMMARY.md`, `REVIEW_REPORT.md`,
+  `WINMERGE_PARITY.md`/`_PHASE1.md`, `CI_AND_PATTERN_IMPROVEMENTS.md`,
+  `TEST_COVERAGE_REPORT.md`) into `docs/history/` — content unchanged, just
+  relocated for discoverability without cluttering the main docs hub.
+- Corrected stale rows in `FEATURE_COMPARISON.md` (drag-and-drop and 3-way
+  merge UI were marked "planned"; both are implemented) and added wiring-status
+  callouts to `docs/CLOUD_STORAGE.md`/`docs/QUICK_START_CLOUD.md`.
+
 ### Added (2026-07-25)
 
 #### Release Pipeline

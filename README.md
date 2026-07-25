@@ -5,7 +5,7 @@ A high-performance file and directory comparison toolkit with a Rust core, CLI, 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml/badge.svg)](https://github.com/aecs4u/rcompare/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/aecs4u/rcompare/branch/main/graph/badge.svg)](https://codecov.io/gh/aecs4u/rcompare)
-[![Tests](https://img.shields.io/badge/tests-210%2B%20passing-brightgreen.svg)](docs/TEST_COVERAGE_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-210%2B%20passing-brightgreen.svg)](docs/status.md)
 
 ## Features
 
@@ -409,18 +409,20 @@ Documentation is consolidated in:
 - [Documentation Hub](docs/README.md) - Single entrypoint to all Markdown docs
 
 ### Architecture & Design
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Detailed architecture specification
-- [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md) - Current implementation status
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Original architecture specification (largely historical, see notice at top)
+- [docs/modules/](docs/modules/) - Current per-crate/module reference docs
+- [docs/status.md](docs/status.md) - Current implementation status, test counts, known weak spots
 - [CLAUDE.md](CLAUDE.md) - Development guidelines for Claude Code
 
 ### User Guides
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide and examples
-- [ROADMAP.md](ROADMAP.md) - Current roadmap and planned milestones
+- [docs/roadmap.md](docs/roadmap.md) - Source-verified, prioritized roadmap for competitive parity
 
 ### Testing & CI/CD
-- [Test Coverage Report](docs/TEST_COVERAGE_REPORT.md) - Comprehensive test suite documentation (170+ tests)
+- [docs/status.md](docs/status.md) - Current test counts per crate
 - [CI/CD Documentation](.github/workflows/README.md) - GitHub Actions pipeline and setup
-- [CI and Pattern Improvements](docs/CI_AND_PATTERN_IMPROVEMENTS.md) - Recent improvements to ignore patterns and CI
+- [docs/history/TEST_COVERAGE_REPORT.md](docs/history/TEST_COVERAGE_REPORT.md) - Dated test-suite snapshot (2026-01-26)
+- [docs/history/CI_AND_PATTERN_IMPROVEMENTS.md](docs/history/CI_AND_PATTERN_IMPROVEMENTS.md) - Dated CI/ignore-pattern change summary (2026-01-26)
 
 ## Project Status
 
