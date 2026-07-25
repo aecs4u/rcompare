@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import io
 import os
 from typing import Optional
 
@@ -399,6 +398,7 @@ class TableView(QWidget):
 
             if left_row_data is None:
                 # Row only on right side
+                assert right_row_data is not None
                 for col_idx in range(max_cols):
                     val = right_row_data[col_idx] if col_idx < len(right_row_data) else ""
                     left_items.append(DiffTableModel.make_item("", STATUS_MISSING))

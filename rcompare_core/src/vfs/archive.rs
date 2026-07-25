@@ -95,7 +95,7 @@ impl Vfs for ZipVfs {
         let prefix = if path_str.is_empty() {
             String::new()
         } else {
-            format!("{}/", path_str)
+            format!("{path_str}/")
         };
 
         for i in 0..archive.len() {
@@ -993,11 +993,11 @@ impl CompressionType {
     pub fn from_path(path: &Path) -> Option<Self> {
         let name = path.file_name()?.to_string_lossy().to_lowercase();
         if name.ends_with(".gz") && !name.ends_with(".tar.gz") {
-            Some(CompressionType::Gzip)
+            Some(Self::Gzip)
         } else if name.ends_with(".bz2") && !name.ends_with(".tar.bz2") {
-            Some(CompressionType::Bzip2)
+            Some(Self::Bzip2)
         } else if name.ends_with(".xz") && !name.ends_with(".tar.xz") {
-            Some(CompressionType::Xz)
+            Some(Self::Xz)
         } else {
             None
         }
@@ -1006,9 +1006,9 @@ impl CompressionType {
     /// Get the extension for this compression type
     pub fn extension(&self) -> &'static str {
         match self {
-            CompressionType::Gzip => ".gz",
-            CompressionType::Bzip2 => ".bz2",
-            CompressionType::Xz => ".xz",
+            Self::Gzip => ".gz",
+            Self::Bzip2 => ".bz2",
+            Self::Xz => ".xz",
         }
     }
 }
@@ -1450,9 +1450,6 @@ impl Write for ContentWriter {
         Ok(())
     }
 }
-
-// ContentWriter needs Send for Box<dyn Write + Send>
-unsafe impl Send for ContentWriter {}
 
 #[cfg(test)]
 mod tests {

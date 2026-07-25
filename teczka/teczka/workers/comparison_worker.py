@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass
-from typing import Optional
-
 from PySide6.QtCore import QObject, QProcess, Signal
+from ..models.comparison import TreeNode, build_tree_with_options
 from ..utils.cli_bridge import CliBridge, ScanReport
-from ..utils.telemetry import log_error, log_exception, log_info
+from ..utils.telemetry import log_error, log_info
+from .function_worker import FunctionWorker
 
 _PROGRESS_PREFIX = "PROGRESS:"
 
@@ -37,6 +37,14 @@ class ProgressInfo:
     percent: int
 
 
+@dataclass
+class ComparisonResult:
+    """Parsed report and pre-built tree produced outside the GUI thread."""
+
+    report: ScanReport
+    tree: TreeNode
+
+
 class CliJsonWorker(QObject):
     """Non-blocking QProcess wrapper for CLI subcommands that emit a single JSON report.
 
@@ -52,6 +60,8 @@ class CliJsonWorker(QObject):
         self._process = QProcess(self)
         self._stderr_buffer = ""
         self._accepted_exit_codes: tuple[int, ...] = (0,)
+        self._result_worker: FunctionWorker | None = None
+        self._cancelled = False
         self._process.finished.connect(self._on_finished)
         self._process.readyReadStandardError.connect(self._on_stderr)
 
@@ -59,6 +69,7 @@ class CliJsonWorker(QObject):
         """Start the given command asynchronously."""
         self._accepted_exit_codes = accepted_exit_codes
         self._stderr_buffer = ""
+        self._cancelled = False
         log_info(
             "starting cli json process",
             command=cmd[0] if cmd else "",
@@ -67,25 +78,36 @@ class CliJsonWorker(QObject):
         self._process.start(cmd[0], cmd[1:])
 
     def cancel(self) -> None:
+        self._cancelled = True
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling cli json process")
             self._process.kill()
 
     def is_running(self) -> bool:
-        return self._process.state() != QProcess.NotRunning
+        return self._process.state() != QProcess.NotRunning or (
+            self._result_worker is not None and self._result_worker.isRunning()
+        )
 
     def _on_stderr(self) -> None:
-        data = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        data = bytes(self._process.readAllStandardError().data()).decode(
+            "utf-8", errors="replace"
+        )
         if data:
             self._stderr_buffer += data
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        stdout = self._process.readAllStandardOutput().data().decode("utf-8", errors="replace")
-        stderr_tail = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        stdout = bytes(self._process.readAllStandardOutput().data()).decode(
+            "utf-8", errors="replace"
+        )
+        stderr_tail = bytes(self._process.readAllStandardError().data()).decode(
+            "utf-8", errors="replace"
+        )
         if stderr_tail:
             self._stderr_buffer += stderr_tail
         stderr = self._stderr_buffer.strip()
 
+        if self._cancelled:
+            return
         if exit_status == QProcess.CrashExit:
             log_error("cli json process crashed")
             self.error.emit("Process crashed")
@@ -97,15 +119,28 @@ class CliJsonWorker(QObject):
             self.error.emit(f"Command failed (exit {exit_code}): {details}")
             return
 
-        try:
-            data = _json.loads(stdout)
-        except Exception as e:
-            log_exception("failed to decode cli json output")
-            self.error.emit(f"Failed to parse result: {e}")
-            return
+        self._result_worker = FunctionWorker(_json.loads, stdout, parent=self)
+        self._result_worker.finished_with_result.connect(
+            lambda data: self._on_json_ready(data, exit_code)
+        )
+        self._result_worker.error.connect(self._on_json_error)
+        self._result_worker.start()
 
+    def _on_json_ready(self, data: dict, exit_code: int) -> None:
+        if self._cancelled:
+            self._result_worker = None
+            return
         log_info("cli json process completed", exit_code=exit_code)
         self.finished.emit(data)
+        self._result_worker = None
+
+    def _on_json_error(self, message: str) -> None:
+        if self._cancelled:
+            self._result_worker = None
+            return
+        log_error("failed to decode cli json output", details=message)
+        self.error.emit(f"Failed to parse result: {message}")
+        self._result_worker = None
 
 
 class ComparisonWorker(QObject):
@@ -121,6 +156,10 @@ class ComparisonWorker(QObject):
         self._cli_bridge = cli_bridge
         self._process = QProcess(self)
         self._stderr_buffer = ""
+        self._result_worker: FunctionWorker | None = None
+        self._folder_view_mode = "compare_structure"
+        self._always_show_folders = True
+        self._cancelled = False
         self._process.finished.connect(self._on_finished)
         self._process.readyReadStandardError.connect(self._on_stderr)
 
@@ -142,6 +181,8 @@ class ComparisonWorker(QObject):
         parquet_diff: bool = False,
         ignore_whitespace: str | None = None,
         ignore_case: bool = False,
+        folder_view_mode: str = "compare_structure",
+        always_show_folders: bool = True,
     ) -> None:
         """Start an async folder scan."""
         args = ["scan", left, right, "--json"]
@@ -176,6 +217,9 @@ class ComparisonWorker(QObject):
 
         cmd = self._cli_bridge.build_command(args)
         self._stderr_buffer = ""
+        self._cancelled = False
+        self._folder_view_mode = folder_view_mode
+        self._always_show_folders = always_show_folders
         log_info(
             "starting async scan process",
             command=cmd[0] if cmd else "",
@@ -186,20 +230,29 @@ class ComparisonWorker(QObject):
 
     def cancel(self) -> None:
         """Cancel a running comparison."""
+        self._cancelled = True
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling comparison process")
             self._process.kill()
 
     def is_running(self) -> bool:
-        return self._process.state() != QProcess.NotRunning
+        return self._process.state() != QProcess.NotRunning or (
+            self._result_worker is not None and self._result_worker.isRunning()
+        )
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        stdout = self._process.readAllStandardOutput().data().decode("utf-8", errors="replace")
-        stderr_tail = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        stdout = bytes(self._process.readAllStandardOutput().data()).decode(
+            "utf-8", errors="replace"
+        )
+        stderr_tail = bytes(self._process.readAllStandardError().data()).decode(
+            "utf-8", errors="replace"
+        )
         if stderr_tail:
             self._stderr_buffer += stderr_tail
         stderr = self._stderr_buffer.strip()
 
+        if self._cancelled:
+            return
         if exit_status == QProcess.CrashExit:
             log_error("comparison process crashed")
             self.error.emit("Comparison process crashed")
@@ -219,21 +272,57 @@ class ComparisonWorker(QObject):
             self.error.emit(f"Comparison failed (exit {exit_code}): {details}")
             return
 
-        try:
-            report = self._cli_bridge.parse_scan_report(stdout)
-            log_info(
-                "comparison process completed",
-                exit_code=exit_code,
-                entries=len(report.entries),
-                different=report.summary.different,
-            )
-            self.finished.emit(report)
-        except Exception as e:
-            log_exception("failed to parse comparison result")
-            self.error.emit(f"Failed to parse results: {e}")
+        # JSON decoding and tree construction scale with the complete result
+        # set, so keep both away from the Qt event loop.
+        self._result_worker = FunctionWorker(
+            self._parse_report_and_tree,
+            stdout,
+            self._folder_view_mode,
+            self._always_show_folders,
+            parent=self,
+        )
+        self._result_worker.finished_with_result.connect(
+            lambda result: self._on_result_ready(result, exit_code)
+        )
+        self._result_worker.error.connect(self._on_result_error)
+        self._result_worker.start()
+
+    def _parse_report_and_tree(
+        self, stdout: str, folder_view_mode: str, always_show_folders: bool
+    ) -> ComparisonResult:
+        report = self._cli_bridge.parse_scan_report(stdout)
+        tree = build_tree_with_options(
+            report,
+            folder_view_mode,
+            always_show_folders=always_show_folders,
+        )
+        return ComparisonResult(report=report, tree=tree)
+
+    def _on_result_ready(self, result: ComparisonResult, exit_code: int) -> None:
+        if self._cancelled:
+            self._result_worker = None
+            return
+        log_info(
+            "comparison process completed",
+            exit_code=exit_code,
+            entries=len(result.report.entries),
+            different=result.report.summary.different,
+        )
+        self.finished.emit(result)
+        self._result_worker = None
+
+    def _on_result_error(self, message: str) -> None:
+        if self._cancelled:
+            self._result_worker = None
+            return
+        log_error("failed to parse comparison result", details=message)
+        self.error.emit(f"Failed to parse results: {message}")
+        self._result_worker = None
 
     def _on_stderr(self) -> None:
-        data = self._process.readAllStandardError().data().decode("utf-8", errors="replace")
+        data = bytes(self._process.readAllStandardError().data()).decode(
+            "utf-8", errors="replace"
+        )
         if not data:
             return
         self._stderr_buffer += data

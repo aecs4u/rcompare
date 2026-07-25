@@ -53,6 +53,8 @@ class ColorLegend(QWidget):
         # Remove existing items
         while self._layout.count():
             item = self._layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()

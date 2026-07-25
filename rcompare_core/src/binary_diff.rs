@@ -111,14 +111,14 @@ impl BinaryDiffEngine {
 
     /// Format a hex chunk for display
     pub fn format_hex_line(&self, offset: u64, data: &[u8]) -> String {
-        let mut result = format!("{:08X}  ", offset);
+        let mut result = format!("{offset:08X}  ");
 
         // Hex representation
         for (i, byte) in data.iter().enumerate() {
             if i == 8 {
                 result.push(' ');
             }
-            result.push_str(&format!("{:02X} ", byte));
+            result.push_str(&format!("{byte:02X} "));
         }
 
         // Pad if less than 16 bytes

@@ -175,65 +175,63 @@ impl FileOperations {
                         verified: true,
                         retries,
                     });
-                } else {
-                    retries += 1;
-                    if retries >= self.max_retries {
-                        warn!(
-                            "Hash mismatch after {} retries for {} -> {}",
-                            retries,
-                            source.display(),
-                            dest.display()
-                        );
-                        return Ok(OperationResult {
-                            source: source.to_path_buf(),
-                            destination: Some(dest.to_path_buf()),
-                            operation: FileOperation::Copy,
-                            success: false,
-                            error: Some(format!(
-                                "Hash mismatch after {} retries (source: {:?}, dest: {:?})",
-                                retries,
-                                source_hash,
-                                Some(dest_hash)
-                            )),
-                            bytes_processed: bytes,
-                            source_hash,
-                            dest_hash: Some(dest_hash),
-                            verified: false,
-                            retries,
-                        });
-                    }
-                    warn!(
-                        "Hash mismatch for {} -> {}, retrying ({}/{})",
-                        source.display(),
-                        dest.display(),
-                        retries,
-                        self.max_retries
-                    );
-                    // Delete the corrupted destination and retry
-                    let _ = fs::remove_file(dest);
-                    continue;
                 }
-            } else {
-                // No verification
-                info!(
-                    "Copied {} bytes from {} to {}",
-                    bytes,
+                retries += 1;
+                if retries >= self.max_retries {
+                    warn!(
+                        "Hash mismatch after {} retries for {} -> {}",
+                        retries,
+                        source.display(),
+                        dest.display()
+                    );
+                    return Ok(OperationResult {
+                        source: source.to_path_buf(),
+                        destination: Some(dest.to_path_buf()),
+                        operation: FileOperation::Copy,
+                        success: false,
+                        error: Some(format!(
+                            "Hash mismatch after {} retries (source: {:?}, dest: {:?})",
+                            retries,
+                            source_hash,
+                            Some(dest_hash)
+                        )),
+                        bytes_processed: bytes,
+                        source_hash,
+                        dest_hash: Some(dest_hash),
+                        verified: false,
+                        retries,
+                    });
+                }
+                warn!(
+                    "Hash mismatch for {} -> {}, retrying ({}/{})",
                     source.display(),
-                    dest.display()
+                    dest.display(),
+                    retries,
+                    self.max_retries
                 );
-                return Ok(OperationResult {
-                    source: source.to_path_buf(),
-                    destination: Some(dest.to_path_buf()),
-                    operation: FileOperation::Copy,
-                    success: true,
-                    error: None,
-                    bytes_processed: bytes,
-                    source_hash: None,
-                    dest_hash: None,
-                    verified: false,
-                    retries: 0,
-                });
+                // Delete the corrupted destination and retry
+                let _ = fs::remove_file(dest);
+                continue;
             }
+            // No verification
+            info!(
+                "Copied {} bytes from {} to {}",
+                bytes,
+                source.display(),
+                dest.display()
+            );
+            return Ok(OperationResult {
+                source: source.to_path_buf(),
+                destination: Some(dest.to_path_buf()),
+                operation: FileOperation::Copy,
+                success: true,
+                error: None,
+                bytes_processed: bytes,
+                source_hash: None,
+                dest_hash: None,
+                verified: false,
+                retries: 0,
+            });
         }
     }
 
@@ -271,7 +269,7 @@ impl FileOperations {
 
         // Try rename first (fast path for same filesystem)
         match fs::rename(source, dest) {
-            Ok(_) => {
+            Ok(()) => {
                 info!("Moved {} to {} (rename)", source.display(), dest.display());
             }
             Err(e) => {

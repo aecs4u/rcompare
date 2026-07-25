@@ -22,6 +22,7 @@ One doc per workspace crate/component, each source-verified and cross-linked:
 
 - [Project Status](status.md): Current state, test counts, known weak spots.
 - [Roadmap](roadmap.md): **Source-verified**, prioritized list of remaining work for parity with Beyond Compare/WinMerge/Meld/KDiff3. The maintained source of truth — keep this current instead of adding new standalone roadmap docs.
+- [Development Plan](development-plan.md): Execution plan — how the roadmap's remaining work is sequenced into phases and shippable work items, with acceptance criteria. Scope lives in `roadmap.md`; sequencing lives here.
 - [Feature Comparison](../FEATURE_COMPARISON.md): Comparison with competing tools.
 - [Architecture](../ARCHITECTURE.md): Original design handbook (largely historical — see the notice at its top; current module boundaries are documented in `docs/modules/` instead).
 

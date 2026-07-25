@@ -315,14 +315,14 @@ impl ImageDiffEngine {
         let left_img = image::open(left).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open left image: {}", e),
+                format!("Failed to open left image: {e}"),
             ))
         })?;
 
         let right_img = image::open(right).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open right image: {}", e),
+                format!("Failed to open right image: {e}"),
             ))
         })?;
 

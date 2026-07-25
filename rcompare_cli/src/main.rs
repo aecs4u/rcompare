@@ -174,6 +174,10 @@ enum Commands {
         #[arg(long, value_name = "N")]
         hash_jobs: Option<usize>,
 
+        /// Number of source scans allowed to run concurrently (1 or 2)
+        #[arg(long, value_name = "N", default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=2))]
+        scan_jobs: u8,
+
         /// Progress reporting policy. `auto` matches historical behavior
         /// (human spinner on a terminal, JSON progress events on stderr
         /// when --json/--jsonl is set); `never` suppresses all progress
@@ -266,6 +270,10 @@ enum Commands {
         /// (default: one per CPU core)
         #[arg(long, value_name = "N")]
         hash_jobs: Option<usize>,
+
+        /// Number of source scans allowed to run concurrently (1 or 2)
+        #[arg(long, value_name = "N", default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=2))]
+        scan_jobs: u8,
 
         /// Output results as JSON
         #[arg(long)]
@@ -464,6 +472,7 @@ fn main() {
             no_cache,
             cache_read_only,
             hash_jobs,
+            scan_jobs,
             progress,
             pretty,
             jsonl,
@@ -512,6 +521,7 @@ fn main() {
                 no_cache,
                 cache_read_only,
                 hash_jobs,
+                scan_jobs,
                 progress,
                 output_opts,
                 &stop_flag,
@@ -550,6 +560,7 @@ fn main() {
             no_cache,
             cache_read_only,
             hash_jobs,
+            scan_jobs,
             json,
         } => {
             if let Err(e) = run_sync(
@@ -568,6 +579,7 @@ fn main() {
                 no_cache,
                 cache_read_only,
                 hash_jobs,
+                scan_jobs,
                 json,
                 &stop_flag,
             ) {

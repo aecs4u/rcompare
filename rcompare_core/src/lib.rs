@@ -5,6 +5,15 @@
 #![allow(clippy::branches_sharing_code)] // Often clearer to keep branches explicit
 #![allow(clippy::unnecessary_wraps)] // Result wrapping maintained for API consistency and future error paths
 #![allow(clippy::match_same_arms)] // Explicit matching per variant aids readability
+#![cfg_attr(
+    test,
+    allow(
+        clippy::float_cmp,
+        clippy::implicit_clone,
+        clippy::redundant_clone,
+        clippy::uninlined_format_args
+    )
+)] // Exact values and fixture diagnostics are intentional in tests.
 
 //! Core business logic for RCompare file and directory comparison.
 //!
@@ -188,8 +197,8 @@ pub use merge_engine::MergeEngine;
 pub use patch_engine::PatchEngine;
 pub use patch_parser::PatchParser;
 pub use patch_serializer::PatchSerializer;
-pub use resumable_copy::{CopyCheckpoint, ResumableCopy, ResumableResult};
 pub use progress::{ProgressCounters, ProgressData, ProgressHandler, ScanStage};
+pub use resumable_copy::{CopyCheckpoint, ResumableCopy, ResumableResult};
 pub use scanner::{FolderScanner, ScanOutcome, ScanWarning};
 pub use text_diff::TextDiffEngine;
 pub use vfs::LocalVfs;

@@ -33,7 +33,7 @@ impl CopyCheckpoint {
     fn checkpoint_path(checkpoint_dir: &Path, source: &Path, dest: &Path) -> PathBuf {
         let source_str = source.to_string_lossy();
         let dest_str = dest.to_string_lossy();
-        let combined = format!("{}->{}", source_str, dest_str);
+        let combined = format!("{source_str}->{dest_str}");
         let hash = blake3::hash(combined.as_bytes());
         checkpoint_dir.join(format!(
             "checkpoint_{}.json",
@@ -53,8 +53,8 @@ impl CopyCheckpoint {
         }
 
         let data = fs::read_to_string(&path)?;
-        let checkpoint: CopyCheckpoint = serde_json::from_str(&data).map_err(|e| {
-            RCompareError::Serialization(format!("Failed to parse checkpoint: {}", e))
+        let checkpoint: Self = serde_json::from_str(&data).map_err(|e| {
+            RCompareError::Serialization(format!("Failed to parse checkpoint: {e}"))
         })?;
 
         Ok(Some(checkpoint))
@@ -65,7 +65,7 @@ impl CopyCheckpoint {
         fs::create_dir_all(checkpoint_dir)?;
         let path = Self::checkpoint_path(checkpoint_dir, &self.source, &self.destination);
         let data = serde_json::to_string_pretty(self).map_err(|e| {
-            RCompareError::Serialization(format!("Failed to serialize checkpoint: {}", e))
+            RCompareError::Serialization(format!("Failed to serialize checkpoint: {e}"))
         })?;
         fs::write(&path, data)?;
         Ok(())

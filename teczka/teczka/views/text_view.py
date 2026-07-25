@@ -6,7 +6,7 @@ import difflib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from ..widgets.diff_text_edit import DiffTextEdit, CharHighlights
 from ..widgets.diff_overview_bar import DiffOverviewBar
-from ..utils.cli_bridge import CliBridge, TextDiffReport, TextDiffLine
+from ..utils.cli_bridge import TextDiffReport
 from ..workers.function_worker import FunctionWorker
 
 

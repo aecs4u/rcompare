@@ -109,14 +109,14 @@ impl CsvDiffEngine {
         let mut left_reader = Reader::from_path(left).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open left CSV file: {}", e),
+                format!("Failed to open left CSV file: {e}"),
             ))
         })?;
 
         let mut right_reader = Reader::from_path(right).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open right CSV file: {}", e),
+                format!("Failed to open right CSV file: {e}"),
             ))
         })?;
 
@@ -125,7 +125,7 @@ impl CsvDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read left CSV headers: {}", e),
+                    format!("Failed to read left CSV headers: {e}"),
                 ))
             })?
             .iter()
@@ -137,7 +137,7 @@ impl CsvDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read right CSV headers: {}", e),
+                    format!("Failed to read right CSV headers: {e}"),
                 ))
             })?
             .iter()
@@ -184,7 +184,7 @@ impl CsvDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read left CSV records: {}", e),
+                    format!("Failed to read left CSV records: {e}"),
                 ))
             })?;
 
@@ -194,7 +194,7 @@ impl CsvDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read right CSV records: {}", e),
+                    format!("Failed to read right CSV records: {e}"),
                 ))
             })?;
 
@@ -286,7 +286,7 @@ impl CsvDiffEngine {
             let record = result.map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read left CSV record: {}", e),
+                    format!("Failed to read left CSV record: {e}"),
                 ))
             })?;
             let key = self.build_key(&record, &key_indices);
@@ -298,7 +298,7 @@ impl CsvDiffEngine {
             let record = result.map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read right CSV record: {}", e),
+                    format!("Failed to read right CSV record: {e}"),
                 ))
             })?;
             let key = self.build_key(&record, &key_indices);

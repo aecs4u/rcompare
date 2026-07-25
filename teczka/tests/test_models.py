@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from teczka.state import AppState, CompareState, ActiveView
 from teczka.models.undo_stack import OperationHistory, Operation
+from teczka.models.comparison import TreeNode
+from teczka.models.tree_model import ComparisonTreeModel
+from teczka.utils.cli_bridge import DiffStatus
 
 
 class TestAppState:
@@ -67,3 +70,21 @@ class TestOperationHistory:
         for i in range(60):
             history.push(Operation(op_type="copy", source_path=f"/{i}", dest_path=f"/{i}b"))
         assert len(history._operations) <= 50
+
+
+def test_tree_model_tracks_large_node_count(qapp):
+    root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+    for index in range(10_000):
+        root.add_child(
+            TreeNode(
+                name=f"file-{index}.txt",
+                path=f"file-{index}.txt",
+                status=DiffStatus.DIFFERENT,
+                is_dir=False,
+            )
+        )
+
+    model = ComparisonTreeModel()
+    model.set_tree(root)
+    assert model.node_count == 10_001
+    assert model.rowCount() == 10_000

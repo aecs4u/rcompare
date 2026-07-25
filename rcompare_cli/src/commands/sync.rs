@@ -57,6 +57,7 @@ pub(crate) fn run_sync(
     no_cache: bool,
     cache_read_only: bool,
     hash_jobs: Option<usize>,
+    scan_jobs: u8,
     json: bool,
     stop_flag: &Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -81,6 +82,7 @@ pub(crate) fn run_sync(
         no_cache,
         cache_read_only,
         hash_jobs,
+        scan_jobs,
     };
     let scan_result = run_core_scan(&scan_opts, stop_flag)?;
 

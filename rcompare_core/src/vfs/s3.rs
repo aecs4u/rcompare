@@ -61,8 +61,7 @@ impl S3Vfs {
         // Create a Tokio runtime for async operations
         let runtime = Runtime::new().map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to create async runtime: {}",
-                e
+                "Failed to create async runtime: {e}"
             )))
         })?;
 
@@ -147,7 +146,7 @@ impl S3Vfs {
     /// Ensure directory keys end with /
     fn normalize_dir_key(key: &str, is_dir: bool) -> String {
         if is_dir && !key.ends_with('/') {
-            format!("{}/", key)
+            format!("{key}/")
         } else {
             key.to_string()
         }
@@ -215,7 +214,7 @@ impl Vfs for S3Vfs {
                                 is_symlink: false,
                             })
                         }
-                        _ => Err(VfsError::NotFound(format!("S3 object not found: {}", key))),
+                        _ => Err(VfsError::NotFound(format!("S3 object not found: {key}"))),
                     }
                 }
             }
@@ -244,8 +243,7 @@ impl Vfs for S3Vfs {
 
                 let output = list_request.send().await.map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to list S3 objects: {}",
-                        e
+                        "Failed to list S3 objects: {e}"
                     )))
                 })?;
 
@@ -258,14 +256,11 @@ impl Vfs for S3Vfs {
                         }
 
                         let path = self.s3_key_to_path(key);
-                        let size = object.size().map(|s| s as u64).unwrap_or(0);
-                        let modified = object
-                            .last_modified()
-                            .map(|dt| {
-                                let secs = dt.secs() as u64;
-                                UNIX_EPOCH + std::time::Duration::from_secs(secs)
-                            })
-                            .unwrap_or(SystemTime::now());
+                        let size = object.size().map_or(0, |s| s as u64);
+                        let modified = object.last_modified().map_or(SystemTime::now(), |dt| {
+                            let secs = dt.secs() as u64;
+                            UNIX_EPOCH + std::time::Duration::from_secs(secs)
+                        });
 
                         entries.push(FileEntry {
                             path,
@@ -315,7 +310,7 @@ impl Vfs for S3Vfs {
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!("Failed to get S3 object: {}", e),
+                        format!("Failed to get S3 object: {e}"),
                     ))
                 })?;
 
@@ -326,8 +321,7 @@ impl Vfs for S3Vfs {
                 .await
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to read S3 object body: {}",
-                        e
+                        "Failed to read S3 object body: {e}"
                     )))
                 })?
                 .into_bytes();
@@ -348,8 +342,7 @@ impl Vfs for S3Vfs {
                 .await
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to delete S3 object: {}",
-                        e
+                        "Failed to delete S3 object: {e}"
                     )))
                 })?;
 
@@ -373,8 +366,7 @@ impl Vfs for S3Vfs {
                 .await
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to copy S3 object: {}",
-                        e
+                        "Failed to copy S3 object: {e}"
                     )))
                 })?;
 
@@ -417,8 +409,7 @@ impl Vfs for S3Vfs {
                 .await
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to create S3 directory: {}",
-                        e
+                        "Failed to create S3 directory: {e}"
                     )))
                 })?;
 
@@ -451,8 +442,7 @@ impl Vfs for S3Vfs {
                 .await
                 .map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to write S3 object: {}",
-                        e
+                        "Failed to write S3 object: {e}"
                     )))
                 })?;
 
@@ -503,7 +493,7 @@ impl std::io::Write for S3Writer {
                 .body(aws_sdk_s3::primitives::ByteStream::from(data))
                 .send()
                 .await
-                .map_err(|e| std::io::Error::other(format!("Failed to upload to S3: {}", e)))?;
+                .map_err(|e| std::io::Error::other(format!("Failed to upload to S3: {e}")))?;
 
             Ok(())
         })

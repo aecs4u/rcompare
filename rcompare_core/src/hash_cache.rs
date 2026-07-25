@@ -10,8 +10,8 @@
 //! - **Persistent storage**: Hashes survive across program runs
 //! - **Thread-safe**: Uses RwLock for concurrent access
 //! - **Automatic invalidation**: Cache entries include size/mtime for validation
-//! - **Full and partial hashes**: Supports both complete file hashing and partial (8KB)
-//! - **Binary serialization**: Uses bincode for efficient disk storage
+//! - **Incremental persistence**: Appends only changed entries between compactions
+//! - **Binary serialization**: Uses bincode snapshots and journal records
 //!
 //! # Cache Key Strategy
 //!
@@ -58,7 +58,8 @@
 
 use rcompare_common::{Blake3Hash, CacheKey, RCompareError};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -106,13 +107,20 @@ pub struct HashCache {
     cache_dir: PathBuf,
     mode: CacheMode,
     memory_cache: Arc<RwLock<HashMap<CacheKey, Blake3Hash>>>,
+    /// Entries not yet appended to the incremental journal.
+    pending: Arc<RwLock<HashMap<CacheKey, Blake3Hash>>>,
     /// Set whenever a new entry is recorded; `persist()` skips the disk
     /// write entirely when this is still `false`, avoiding a pointless
     /// serialize-and-rewrite of an unchanged (or read-only/disabled) cache.
     dirty: AtomicBool,
+    /// Set by operations (such as pruning/clear) that cannot be represented
+    /// by an append-only update and therefore require a snapshot compaction.
+    compact: AtomicBool,
 }
 
 impl HashCache {
+    const JOURNAL_COMPACT_BYTES: u64 = 8 * 1024 * 1024;
+
     pub fn new(cache_dir: PathBuf) -> Result<Self, RCompareError> {
         Self::with_mode(cache_dir, CacheMode::ReadWrite)
     }
@@ -124,7 +132,9 @@ impl HashCache {
             cache_dir: PathBuf::new(),
             mode: CacheMode::Disabled,
             memory_cache: Arc::new(RwLock::new(HashMap::new())),
+            pending: Arc::new(RwLock::new(HashMap::new())),
             dirty: AtomicBool::new(false),
+            compact: AtomicBool::new(false),
         }
     }
 
@@ -161,11 +171,67 @@ impl HashCache {
             }
         }
 
+        // New writes use an append-only journal so a scan only serializes its
+        // changed entries. A truncated final record (for example after power
+        // loss) is ignored; earlier complete records remain usable.
+        let journal_file = cache_dir.join("hash_cache.journal");
+        let mut journal_needs_compaction = false;
+        if journal_file.exists() {
+            match fs::File::open(&journal_file) {
+                Ok(mut file) => loop {
+                    let mut length = [0_u8; 8];
+                    match file.read(&mut length[..1]) {
+                        Ok(0) => break,
+                        Ok(1) => {}
+                        Ok(_) => unreachable!("one-byte read returned more than one byte"),
+                        Err(e) => {
+                            warn!("Failed to read cache journal: {}", e);
+                            journal_needs_compaction = true;
+                            break;
+                        }
+                    }
+                    if file.read_exact(&mut length[1..]).is_err() {
+                        warn!("Ignoring truncated cache journal length");
+                        journal_needs_compaction = true;
+                        break;
+                    }
+                    let record_len = u64::from_le_bytes(length);
+                    let Ok(record_len) = usize::try_from(record_len) else {
+                        warn!("Ignoring oversized cache journal record");
+                        journal_needs_compaction = true;
+                        break;
+                    };
+                    if record_len > Self::JOURNAL_COMPACT_BYTES as usize {
+                        warn!("Ignoring oversized cache journal record");
+                        journal_needs_compaction = true;
+                        break;
+                    }
+                    let mut record = vec![0_u8; record_len];
+                    if file.read_exact(&mut record).is_err() {
+                        warn!("Ignoring truncated cache journal record");
+                        journal_needs_compaction = true;
+                        break;
+                    }
+                    match bincode::deserialize::<Vec<(CacheKey, Blake3Hash)>>(&record) {
+                        Ok(entries) => memory_cache.extend(entries),
+                        Err(e) => {
+                            warn!("Ignoring invalid cache journal record: {}", e);
+                            journal_needs_compaction = true;
+                            break;
+                        }
+                    }
+                },
+                Err(e) => warn!("Failed to open cache journal: {}", e),
+            }
+        }
+
         Ok(Self {
             cache_dir,
             mode,
             memory_cache: Arc::new(RwLock::new(memory_cache)),
+            pending: Arc::new(RwLock::new(HashMap::new())),
             dirty: AtomicBool::new(false),
+            compact: AtomicBool::new(journal_needs_compaction),
         })
     }
 
@@ -183,7 +249,10 @@ impl HashCache {
             return;
         }
         if let Ok(mut cache) = self.memory_cache.write() {
-            cache.insert(key, hash);
+            cache.insert(key.clone(), hash);
+            if let Ok(mut pending) = self.pending.write() {
+                pending.insert(key, hash);
+            }
             self.dirty.store(true, Ordering::Relaxed);
         }
     }
@@ -201,9 +270,6 @@ impl HashCache {
             return Ok(());
         }
 
-        let cache_file = self.cache_dir.join("hash_cache.bin");
-        let temp_file = self.cache_dir.join("hash_cache.bin.tmp");
-
         let mut cache = self
             .memory_cache
             .write()
@@ -216,20 +282,59 @@ impl HashCache {
         cache.retain(|key, _| key.path.exists());
         let pruned = before - cache.len();
         if pruned > 0 {
-            debug!("Pruned {} stale cache entries (file no longer exists)", pruned);
+            debug!(
+                "Pruned {} stale cache entries (file no longer exists)",
+                pruned
+            );
+            self.compact.store(true, Ordering::Relaxed);
         }
 
-        let data =
-            bincode::serialize(&*cache).map_err(|e| RCompareError::Serialization(e.to_string()))?;
+        let cache_file = self.cache_dir.join("hash_cache.bin");
+        let journal_file = self.cache_dir.join("hash_cache.journal");
+        let journal_too_large = journal_file
+            .metadata()
+            .map(|meta| meta.len() >= Self::JOURNAL_COMPACT_BYTES)
+            .unwrap_or(false);
 
-        // Write to temporary file first
-        fs::write(&temp_file, data)?;
+        if self.compact.load(Ordering::Relaxed) || journal_too_large {
+            let temp_file = self.cache_dir.join("hash_cache.bin.tmp");
+            let data = bincode::serialize(&*cache)
+                .map_err(|e| RCompareError::Serialization(e.to_string()))?;
+            fs::write(&temp_file, data)?;
+            fs::rename(&temp_file, &cache_file)?;
+            if journal_file.exists() {
+                fs::remove_file(&journal_file)?;
+            }
+            self.pending
+                .write()
+                .map_err(|e| RCompareError::Cache(format!("Lock error: {e}")))?
+                .clear();
+            self.compact.store(false, Ordering::Relaxed);
+            debug!("Compacted {} cache entries to disk", cache.len());
+        } else {
+            let mut pending = self
+                .pending
+                .write()
+                .map_err(|e| RCompareError::Cache(format!("Lock error: {e}")))?;
+            let entries: Vec<_> = pending
+                .iter()
+                .map(|(key, hash)| (key.clone(), *hash))
+                .collect();
+            if !entries.is_empty() {
+                let data = bincode::serialize(&entries)
+                    .map_err(|e| RCompareError::Serialization(e.to_string()))?;
+                let mut journal = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&journal_file)?;
+                journal.write_all(&(data.len() as u64).to_le_bytes())?;
+                journal.write_all(&data)?;
+                journal.sync_data()?;
+                pending.clear();
+                debug!("Appended {} changed cache entries", entries.len());
+            }
+        }
 
-        // Atomically rename temporary file to final cache file
-        // This ensures the cache file is never corrupted even if the process crashes
-        fs::rename(&temp_file, &cache_file)?;
-
-        debug!("Persisted {} cache entries to disk (atomic)", cache.len());
         self.dirty.store(false, Ordering::Relaxed);
 
         Ok(())
@@ -239,6 +344,10 @@ impl HashCache {
     pub fn clear(&self) {
         if let Ok(mut cache) = self.memory_cache.write() {
             cache.clear();
+            if let Ok(mut pending) = self.pending.write() {
+                pending.clear();
+            }
+            self.compact.store(true, Ordering::Relaxed);
             self.dirty.store(true, Ordering::Relaxed);
         }
     }
@@ -305,6 +414,42 @@ mod tests {
             let cache = HashCache::new(cache_dir).unwrap();
             assert_eq!(cache.get(&key), Some(hash));
         }
+    }
+
+    #[test]
+    fn test_hash_cache_persists_incremental_journal_records() {
+        let temp = TempDir::new().unwrap();
+        let cache_dir = temp.path().join("cache");
+        let first_path = temp.path().join("first.txt");
+        let second_path = temp.path().join("second.txt");
+        std::fs::write(&first_path, b"first").unwrap();
+        std::fs::write(&second_path, b"second").unwrap();
+        let first_key = CacheKey {
+            path: first_path,
+            modified: SystemTime::now(),
+            size: 5,
+        };
+        let second_key = CacheKey {
+            path: second_path,
+            modified: SystemTime::now(),
+            size: 6,
+        };
+
+        let cache = HashCache::new(cache_dir.clone()).unwrap();
+        cache.put(first_key.clone(), Blake3Hash([7; 32]));
+        cache.persist().unwrap();
+        let journal = cache_dir.join("hash_cache.journal");
+        let first_len = journal.metadata().unwrap().len();
+
+        cache.put(second_key.clone(), Blake3Hash([8; 32]));
+        cache.persist().unwrap();
+        assert!(journal.metadata().unwrap().len() > first_len);
+        assert!(!cache_dir.join("hash_cache.bin").exists());
+        drop(cache);
+
+        let reloaded = HashCache::new(cache_dir).unwrap();
+        assert_eq!(reloaded.get(&first_key), Some(Blake3Hash([7; 32])));
+        assert_eq!(reloaded.get(&second_key), Some(Blake3Hash([8; 32])));
     }
 
     #[test]

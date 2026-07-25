@@ -33,3 +33,9 @@ teczka = "teczka.__main__:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.mypy]
+ignore_missing_imports = true
+# PySide6 exposes many compatibility enum aliases dynamically and its model
+# callback stubs are narrower than Qt's accepted Python overrides.
+disable_error_code = ["attr-defined", "override"]

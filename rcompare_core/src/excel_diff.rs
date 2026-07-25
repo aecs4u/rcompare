@@ -100,20 +100,20 @@ impl ExcelDiffEngine {
         let mut left_workbook = open_workbook_auto(left).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open left Excel file: {}", e),
+                format!("Failed to open left Excel file: {e}"),
             ))
         })?;
 
         let mut right_workbook = open_workbook_auto(right).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to open right Excel file: {}", e),
+                format!("Failed to open right Excel file: {e}"),
             ))
         })?;
 
         // Get sheet names
-        let left_sheet_names = left_workbook.sheet_names().to_vec();
-        let right_sheet_names = right_workbook.sheet_names().to_vec();
+        let left_sheet_names = left_workbook.sheet_names();
+        let right_sheet_names = right_workbook.sheet_names();
 
         let sheet_names_match = left_sheet_names == right_sheet_names;
 
@@ -286,7 +286,7 @@ impl ExcelDiffEngine {
                 if data.is_empty() {
                     String::new()
                 } else if let Some(s) = data.as_string() {
-                    s.to_string()
+                    s
                 } else if let Some(f) = data.as_f64() {
                     f.to_string()
                 } else if let Some(i) = data.as_i64() {
@@ -294,10 +294,10 @@ impl ExcelDiffEngine {
                 } else if data.is_bool() {
                     // is_bool returns true if it's a bool, but doesn't give us the value
                     // so we use Debug formatting
-                    format!("{:?}", data)
+                    format!("{data:?}")
                 } else {
                     // For other types (datetime, duration, error), use Debug formatting
-                    format!("{:?}", data)
+                    format!("{data:?}")
                 }
             }
             None => String::new(),

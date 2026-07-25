@@ -1,3 +1,4 @@
+#[cfg(feature = "archives")]
 pub mod archive;
 pub mod local;
 #[cfg(feature = "cloud")]
@@ -14,12 +15,13 @@ mod tests_cloud;
 #[cfg(test)]
 mod tests_local;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "archives"))]
 mod tests_archive;
 
 #[cfg(test)]
 mod tests_virtual;
 
+#[cfg(feature = "archives")]
 pub use archive::{
     CompressedFileVfs, CompressionType, RarVfs, SevenZVfs, TarVfs, Writable7zVfs,
     WritableCompressedFileVfs, WritableTarVfs, WritableZipVfs, ZipVfs,

@@ -9,7 +9,7 @@
 //! - **Two-way comparison**: Compare files between left and right trees
 //! - **Three-way comparison**: Compare files across base, left, and right trees
 //! - **BLAKE3 hashing**: Fast, cryptographic-quality hashing with caching
-//! - **Partial hash optimization**: Quick comparison using first N bytes
+//! - **Single-pass verification**: Cached hashes avoid duplicate file reads
 //! - **Hash verification**: Optional re-hashing to verify cache integrity
 //! - **VFS support**: Works with both filesystem and virtual file systems
 //! - **Cancellation**: Supports cancelling long-running comparisons
@@ -19,8 +19,7 @@
 //! The comparison engine determines file status by:
 //! 1. Comparing file sizes (fastest check)
 //! 2. Comparing modification times (if sizes match)
-//! 3. Computing partial hashes (first 8KB) for quick detection
-//! 4. Computing full hashes only when necessary
+//! 3. Computing cached full hashes or streaming very large files
 //!
 //! # Examples
 //!
@@ -91,7 +90,7 @@ use rcompare_common::{
     ThreeWayDiffStatus, Vfs,
 };
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, info};
@@ -131,13 +130,6 @@ pub struct ComparisonEngine {
 impl ComparisonEngine {
     /// Default streaming threshold: 100MB
     const DEFAULT_STREAMING_THRESHOLD: u64 = 100 * 1024 * 1024;
-
-    /// Chunk size used by [`partial_hash_file`](Self::partial_hash_file) for
-    /// its first/middle/last sample. Files at or below three chunks are read
-    /// in full by that function (see its doc comment), so a matching partial
-    /// hash for such a file already IS a full-content match — `verify_local_pair`
-    /// uses this to skip re-reading and re-hashing the whole file a second time.
-    const PARTIAL_HASH_CHUNK_SIZE: usize = 16 * 1024;
 
     pub fn new(cache: HashCache) -> Self {
         Self {
@@ -316,9 +308,8 @@ impl ComparisonEngine {
                         let right_path = right_root.join(&r.path);
                         pending.push((idx, left_path, right_path, l, r));
                     } else {
-                        let status = self.compare_files(
-                            left_root, right_root, left_vfs, right_vfs, &l, &r,
-                        )?;
+                        let status =
+                            self.compare_files(left_root, right_root, left_vfs, right_vfs, &l, &r)?;
                         slots[idx] = Some(DiffNode {
                             relative_path: path.clone(),
                             left: Some(l),
@@ -428,47 +419,19 @@ impl ComparisonEngine {
         }
     }
 
-    /// Verify a same-size local (non-VFS) file pair by hash, using the same
-    /// partial-hash-first / streaming-for-large-files strategy as
-    /// [`compare_files`](Self::compare_files)'s local branch. Extracted so it
-    /// can be called from within a rayon parallel iterator.
+    /// Verify a same-size local (non-VFS) file pair in a single pass.
+    ///
+    /// Sampling first and then hashing the complete file made equal files pay
+    /// for two sets of reads. Full hashes are already cached, so normal files
+    /// now go straight through that path. Very large files retain the
+    /// chunk-by-chunk early-exit comparison, which also reads each byte at
+    /// most once.
     fn verify_local_pair(
         &self,
         left_path: &Path,
         right_path: &Path,
         size: u64,
     ) -> Result<DiffStatus, RCompareError> {
-        let left_partial = match self.partial_hash_file(left_path) {
-            Ok(hash) => hash,
-            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!("Skipping broken symlink: {}", left_path.display());
-                return Ok(DiffStatus::Different);
-            }
-            Err(e) => return Err(e),
-        };
-
-        let right_partial = match self.partial_hash_file(right_path) {
-            Ok(hash) => hash,
-            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!("Skipping broken symlink: {}", right_path.display());
-                return Ok(DiffStatus::Different);
-            }
-            Err(e) => return Err(e),
-        };
-
-        if left_partial != right_partial {
-            return Ok(DiffStatus::Different);
-        }
-
-        // For files at or below three chunks, `partial_hash_file` already
-        // read and hashed the entire file (see its doc comment), so a
-        // matching partial hash already proves full-content equality.
-        // Re-reading and re-hashing both files in full below would just
-        // duplicate I/O we already paid for above.
-        if size <= (Self::PARTIAL_HASH_CHUNK_SIZE as u64) * 3 {
-            return Ok(DiffStatus::Same);
-        }
-
         let use_streaming = size >= self.streaming_threshold;
 
         let same = if use_streaming {
@@ -762,83 +725,6 @@ impl ComparisonEngine {
                     ))
                 })
         }
-    }
-
-    fn partial_hash_file(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
-        // Keep in sync with `Self::PARTIAL_HASH_CHUNK_SIZE` (a local `const`
-        // can't reference an associated `const` via `Self`, so the value is
-        // duplicated here — `verify_local_pair` relies on both agreeing).
-        const CHUNK_SIZE: usize = 16 * 1024;
-
-        // Check for broken symlinks first
-        let symlink_meta = std::fs::symlink_metadata(path).map_err(|e| {
-            RCompareError::Io(std::io::Error::new(
-                e.kind(),
-                format!("Failed to read metadata for {}: {}", path.display(), e),
-            ))
-        })?;
-
-        if symlink_meta.file_type().is_symlink() {
-            match std::fs::metadata(path) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(RCompareError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Broken symlink (target does not exist): {}", path.display()),
-                    )));
-                }
-                Err(e) => {
-                    return Err(RCompareError::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to follow symlink {}: {}", path.display(), e),
-                    )));
-                }
-                Ok(_) => {} // Continue
-            }
-        }
-
-        let mut file = std::fs::File::open(path).map_err(|e| {
-            RCompareError::Io(std::io::Error::new(
-                e.kind(),
-                format!("Failed to open file {}: {}", path.display(), e),
-            ))
-        })?;
-        let metadata = file.metadata()?;
-
-        // Safety check: ensure we're not trying to hash a directory
-        if metadata.is_dir() {
-            return Err(RCompareError::Io(std::io::Error::new(
-                std::io::ErrorKind::IsADirectory,
-                format!("Cannot hash directory: {}", path.display()),
-            )));
-        }
-
-        let len = metadata.len();
-
-        let mut hasher = blake3::Hasher::new();
-
-        if len <= (CHUNK_SIZE as u64) * 3 {
-            let mut buffer = Vec::with_capacity(len as usize);
-            #[allow(clippy::verbose_file_reads)] // file is already opened with seek; fs::read would reopen
-            file.read_to_end(&mut buffer)?;
-            hasher.update(&buffer);
-        } else {
-            let mut buffer = vec![0u8; CHUNK_SIZE];
-
-            file.read_exact(&mut buffer)?;
-            hasher.update(&buffer);
-
-            let middle_offset = (len / 2).saturating_sub((CHUNK_SIZE / 2) as u64);
-            file.seek(SeekFrom::Start(middle_offset))?;
-            file.read_exact(&mut buffer)?;
-            hasher.update(&buffer);
-
-            let last_offset = len - CHUNK_SIZE as u64;
-            file.seek(SeekFrom::Start(last_offset))?;
-            file.read_exact(&mut buffer)?;
-            hasher.update(&buffer);
-        }
-
-        Ok(hasher.finalize().into())
     }
 
     /// Verify two files by comparing their hashes
@@ -1187,7 +1073,10 @@ mod tests {
             let entry = |dir: &Path| FileEntry {
                 path: PathBuf::from(&name),
                 size: 5000,
-                modified: std::fs::metadata(dir.join(&name)).unwrap().modified().unwrap(),
+                modified: std::fs::metadata(dir.join(&name))
+                    .unwrap()
+                    .modified()
+                    .unwrap(),
                 is_dir: false,
             };
             left_entries.push(entry(left_dir));
@@ -1237,8 +1126,7 @@ mod tests {
         std::fs::create_dir_all(&left_dir).unwrap();
         std::fs::create_dir_all(&right_dir).unwrap();
 
-        let (left_entries, right_entries) =
-            make_verify_candidates(&left_dir, &right_dir, 8, &[]);
+        let (left_entries, right_entries) = make_verify_candidates(&left_dir, &right_dir, 8, &[]);
 
         let cache = HashCache::new(temp.path().join("cache")).unwrap();
         let engine = ComparisonEngine::new(cache)
@@ -1261,8 +1149,7 @@ mod tests {
         std::fs::create_dir_all(&left_dir).unwrap();
         std::fs::create_dir_all(&right_dir).unwrap();
 
-        let (left_entries, right_entries) =
-            make_verify_candidates(&left_dir, &right_dir, 12, &[]);
+        let (left_entries, right_entries) = make_verify_candidates(&left_dir, &right_dir, 12, &[]);
 
         let cache = HashCache::new(temp.path().join("cache")).unwrap();
         let engine = ComparisonEngine::new(cache).with_hash_verification(true);

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect, QSize, Signal
-from PySide6.QtGui import QColor, QPainter, QTextFormat, QPaintEvent, QResizeEvent, QTextOption, QTextCursor
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
+from PySide6.QtGui import QColor, QPainter, QPaintEvent, QResizeEvent, QTextOption
+from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 # Type alias: list of (start_col, end_col, color) per line
 CharHighlights = list[list[tuple[int, int, QColor]]]

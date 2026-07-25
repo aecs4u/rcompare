@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QImageReader, QPixmap, QWheelEvent
+from PySide6.QtGui import QColor, QImage, QImageReader, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QGraphicsPixmapItem,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from ..workers.function_worker import FunctionWorker
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -37,9 +39,12 @@ _RED = QColor("#c62828")
 _MAX_PREVIEW_DIM = 4096
 
 
-def _load_pixmap_for_display(path: str) -> QPixmap:
-    """Decode *path* into a QPixmap, downscaling during decode (not after)
+def _load_image_for_display(path: str) -> QImage:
+    """Decode *path* into a QImage, downscaling during decode (not after)
     if it exceeds :data:`_MAX_PREVIEW_DIM` on its longest edge.
+
+    QImage is safe to create on a worker thread; QPixmap creation remains on
+    the GUI thread.
     """
     reader = QImageReader(path)
     reader.setAutoTransform(True)
@@ -49,7 +54,80 @@ def _load_pixmap_for_display(path: str) -> QPixmap:
         reader.setScaledSize(
             QSize(max(1, int(size.width() * scale)), max(1, int(size.height() * scale)))
         )
-    return QPixmap.fromImageReader(reader)
+    return reader.read()
+
+
+@dataclass
+class _PreparedImages:
+    left: QImage
+    right: QImage
+    stats: dict[str, float | int]
+    error: str = ""
+
+
+def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
+    """Decode previews and calculate full-resolution stats off the GUI thread."""
+    left = _load_image_for_display(left_path)
+    right = _load_image_for_display(right_path)
+    if left.isNull() or right.isNull():
+        failed = []
+        if left.isNull():
+            failed.append(f"Cannot read left image: {left_path}")
+        if right.isNull():
+            failed.append(f"Cannot read right image: {right_path}")
+        return _PreparedImages(left, right, {}, "; ".join(failed))
+
+    try:
+        from PIL import Image, ImageChops  # type: ignore[import-untyped]
+    except ImportError:
+        return _PreparedImages(
+            left,
+            right,
+            {},
+            "Pillow is not installed; pixel statistics are unavailable.",
+        )
+
+    try:
+        with Image.open(left_path) as source:
+            left_img = source.convert("RGB")
+        with Image.open(right_path) as source:
+            right_img = source.convert("RGB")
+        lw, lh = left_img.size
+        rw, rh = right_img.size
+        width, height = min(lw, rw), min(lh, rh)
+        difference = ImageChops.difference(
+            left_img.crop((0, 0, width, height)),
+            right_img.crop((0, 0, width, height)),
+        )
+        total = int(width * height)
+        threshold = [0] + [255] * 255
+        masks = [channel.point(threshold) for channel in difference.split()]
+        different_mask = ImageChops.lighter(
+            ImageChops.lighter(masks[0], masks[1]), masks[2]
+        )
+        different = total - different_mask.histogram()[0]
+        histogram = difference.histogram()
+        channel_delta = sum(
+            (index % 256) * count for index, count in enumerate(histogram)
+        )
+        difference_pct = (different / total * 100.0) if total else 0.0
+        return _PreparedImages(
+            left,
+            right,
+            {
+                "left_width": lw,
+                "left_height": lh,
+                "right_width": rw,
+                "right_height": rh,
+                "total_pixels": total,
+                "different_pixels": different,
+                "difference_pct": difference_pct,
+                "mean_diff": channel_delta / (total * 3) if total else 0.0,
+                "similarity_pct": 100.0 - difference_pct,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - shown as a non-fatal UI error
+        return _PreparedImages(left, right, {}, f"Failed to compare images: {exc}")
 
 
 def _similarity_color(similarity_pct: float) -> QColor:
@@ -197,6 +275,8 @@ class ImageView(QWidget):
         # Internal state -----------------------------------------------
         self._left_path: str = ""
         self._right_path: str = ""
+        self._image_worker: FunctionWorker | None = None
+        self._load_generation = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -207,21 +287,46 @@ class ImageView(QWidget):
         self._error_label.setVisible(False)
         self._left_path = left_path
         self._right_path = right_path
+        self._left_scene.clear()
+        self._right_scene.clear()
 
-        left_ok = self._load_image(left_path, self._left_scene, self._left_path_label)
-        right_ok = self._load_image(right_path, self._right_scene, self._right_path_label)
-
-        if not left_ok or not right_ok:
-            problems: list[str] = []
-            if not left_ok:
-                problems.append(f"Cannot read left image: {left_path}")
-            if not right_ok:
-                problems.append(f"Cannot read right image: {right_path}")
-            self._show_error("; ".join(problems))
+        if not os.path.isfile(left_path) or not os.path.isfile(right_path):
+            self._show_error("One or both image paths do not exist.")
             self._clear_stats()
             return
 
-        self._compute_stats(left_path, right_path)
+        self._left_path_label.setText("Loading...")
+        self._right_path_label.setText("Loading...")
+        self._load_generation += 1
+        generation = self._load_generation
+        worker = FunctionWorker(_prepare_image_pair, left_path, right_path, parent=self)
+        self._image_worker = worker
+        worker.finished_with_result.connect(
+            lambda result: self._on_images_prepared(result, generation)
+        )
+        worker.error.connect(self._show_error)
+        worker.start()
+
+    def _on_images_prepared(self, result: _PreparedImages, generation: int) -> None:
+        if generation != self._load_generation:
+            return
+        left_ok = self._display_image(
+            result.left, self._left_path, self._left_scene, self._left_path_label
+        )
+        right_ok = self._display_image(
+            result.right, self._right_path, self._right_scene, self._right_path_label
+        )
+        if not left_ok or not right_ok:
+            self._show_error(result.error or "Failed to decode one or both images.")
+            self._clear_stats()
+        elif result.stats:
+            self._apply_stats(result.stats)
+            if result.error:
+                self._show_error(result.error)
+        elif result.error:
+            self._show_error(result.error)
+            self._clear_stats()
+        self._image_worker = None
 
     def load_from_cli_report(self, report_dict: dict[str, Any]) -> None:
         """Populate the view from a CLI JSON report dictionary.
@@ -290,12 +395,23 @@ class ImageView(QWidget):
             label.setToolTip("")
             return False
 
-        pixmap = _load_pixmap_for_display(path)
-        if pixmap.isNull():
+        image = _load_image_for_display(path)
+        return self._display_image(image, path, scene, label)
+
+    def _display_image(
+        self,
+        image: QImage,
+        path: str,
+        scene: QGraphicsScene,
+        label: QLabel,
+    ) -> bool:
+        """Create the GUI-owned pixmap and place it in a scene."""
+        if image.isNull():
             label.setText("(unreadable image)")
             label.setToolTip(path)
             return False
 
+        pixmap = QPixmap.fromImage(image)
         scene.addItem(QGraphicsPixmapItem(pixmap))
         scene.setSceneRect(pixmap.rect().toRectF())
         label.setText(os.path.basename(path))
@@ -356,6 +472,24 @@ class ImageView(QWidget):
         self._lbl_diff_pct.setText(f"Difference: {diff_pct:.2f}%")
         self._lbl_mean_diff.setText(f"Mean diff: {mean_diff:.2f}")
         self._set_similarity(similarity_pct)
+
+    def _apply_stats(self, stats: dict[str, float | int]) -> None:
+        """Render statistics calculated by the background worker."""
+        self._lbl_left_dims.setText(
+            f"Left: {int(stats['left_width'])} x {int(stats['left_height'])}"
+        )
+        self._lbl_right_dims.setText(
+            f"Right: {int(stats['right_width'])} x {int(stats['right_height'])}"
+        )
+        self._lbl_total_pixels.setText(
+            f"Total pixels: {int(stats['total_pixels']):,}"
+        )
+        self._lbl_diff_pixels.setText(
+            f"Different pixels: {int(stats['different_pixels']):,}"
+        )
+        self._lbl_diff_pct.setText(f"Difference: {stats['difference_pct']:.2f}%")
+        self._lbl_mean_diff.setText(f"Mean diff: {stats['mean_diff']:.2f}")
+        self._set_similarity(float(stats["similarity_pct"]))
 
     # ------------------------------------------------------------------
     # Helpers

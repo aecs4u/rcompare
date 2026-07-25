@@ -1,3 +1,11 @@
+#![allow(
+    clippy::uninlined_format_args,
+    clippy::unused_self,
+    clippy::unwrap_used,
+    clippy::use_self
+)]
+// Test fixtures deliberately fail fast at the operation that could not be prepared.
+
 use filetime::{set_file_mtime, FileTime};
 use std::fs;
 #[cfg(unix)]

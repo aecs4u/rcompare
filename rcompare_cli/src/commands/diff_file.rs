@@ -4,11 +4,17 @@ use super::support::{
     DiffModeArg, ResolvedDiffMode, WhitespaceModeArg,
 };
 use rcompare_core::text_diff::DiffChangeType;
-use rcompare_core::{
-    is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
-    CsvDiffEngine, ExcelDiffEngine, ImageDiffEngine, JsonDiffEngine, ParquetDiffEngine,
-    TextDiffEngine,
-};
+use rcompare_core::TextDiffEngine;
+#[cfg(feature = "csv-diff")]
+use rcompare_core::{is_csv_file, CsvDiffEngine};
+#[cfg(feature = "excel-diff")]
+use rcompare_core::{is_excel_file, ExcelDiffEngine};
+#[cfg(feature = "image-diff")]
+use rcompare_core::{is_image_file, ImageDiffEngine};
+#[cfg(feature = "json-diff")]
+use rcompare_core::{is_json_file, is_yaml_file, JsonDiffEngine};
+#[cfg(feature = "parquet-diff")]
+use rcompare_core::{is_parquet_file, ParquetDiffEngine};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,10 +55,12 @@ pub(crate) struct DiffFileBinaryResult {
     pub(crate) truncated_ranges: bool,
 }
 
+#[allow(dead_code)] // Used by specialized engines; absent in minimal builds.
 pub(crate) struct TempFileGuard {
     pub(crate) path: PathBuf,
 }
 
+#[allow(dead_code)] // Used by specialized engines; absent in minimal builds.
 impl TempFileGuard {
     pub(crate) fn create(
         prefix: &str,
@@ -96,6 +104,8 @@ impl Drop for TempFileGuard {
     }
 }
 
+// image_exif / image_tolerance are only read by the `image-diff` arm.
+#[cfg_attr(not(feature = "image-diff"), allow(unused_variables))]
 pub(crate) fn run_diff_file(
     left: PathBuf,
     right: PathBuf,
@@ -153,6 +163,7 @@ pub(crate) fn run_diff_file(
             &right_bytes,
             max_binary_ranges,
         ))?,
+        #[cfg(feature = "image-diff")]
         ResolvedDiffMode::Image => {
             let suffix = rel
                 .extension()
@@ -167,6 +178,7 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+        #[cfg(feature = "csv-diff")]
         ResolvedDiffMode::Csv => {
             let left_tmp = TempFileGuard::create("diff_csv_left", "csv", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_csv_right", "csv", &right_bytes)?;
@@ -174,6 +186,7 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+        #[cfg(feature = "excel-diff")]
         ResolvedDiffMode::Excel => {
             let suffix = rel
                 .extension()
@@ -186,6 +199,7 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+        #[cfg(feature = "json-diff")]
         ResolvedDiffMode::Json => {
             let left_tmp = TempFileGuard::create("diff_json_left", "json", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_json_right", "json", &right_bytes)?;
@@ -193,6 +207,7 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_json_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+        #[cfg(feature = "json-diff")]
         ResolvedDiffMode::Yaml => {
             let suffix = rel
                 .extension()
@@ -205,6 +220,7 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_yaml_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+        #[cfg(feature = "parquet-diff")]
         ResolvedDiffMode::Parquet => {
             let left_tmp = TempFileGuard::create("diff_parquet_left", "parquet", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_parquet_right", "parquet", &right_bytes)?;
@@ -212,6 +228,22 @@ pub(crate) fn run_diff_file(
             let result = engine.compare_parquet_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }
+
+        // Minimal builds: the engine for this mode wasn't compiled in.
+        // Reached only when the user named the mode explicitly — `Auto`
+        // never resolves to a mode this build lacks.
+        #[cfg(not(feature = "image-diff"))]
+        ResolvedDiffMode::Image => return Err(mode_not_compiled_in("image", "image-diff")),
+        #[cfg(not(feature = "csv-diff"))]
+        ResolvedDiffMode::Csv => return Err(mode_not_compiled_in("csv", "csv-diff")),
+        #[cfg(not(feature = "excel-diff"))]
+        ResolvedDiffMode::Excel => return Err(mode_not_compiled_in("excel", "excel-diff")),
+        #[cfg(not(feature = "json-diff"))]
+        ResolvedDiffMode::Json => return Err(mode_not_compiled_in("json", "json-diff")),
+        #[cfg(not(feature = "json-diff"))]
+        ResolvedDiffMode::Yaml => return Err(mode_not_compiled_in("yaml", "json-diff")),
+        #[cfg(not(feature = "parquet-diff"))]
+        ResolvedDiffMode::Parquet => return Err(mode_not_compiled_in("parquet", "parquet-diff")),
     };
 
     let report = DiffFileReport {
@@ -237,25 +269,54 @@ pub(crate) fn run_diff_file(
     Ok(())
 }
 
+/// Error for a mode the user asked for explicitly that this build wasn't
+/// compiled with. Names the Cargo feature so the message is actionable
+/// rather than just "unsupported".
+#[cfg(not(feature = "specialized"))]
+fn mode_not_compiled_in(mode: &str, feature: &str) -> Box<dyn std::error::Error> {
+    format!(
+        "--mode {mode} is unavailable: this build was compiled without the \
+         `{feature}` feature. Rebuild with `--features {feature}` (or the \
+         default `full`) to enable it."
+    )
+    .into()
+}
+
 /// Resolve a requested mode to a concrete comparison mode. `Auto` sniffs the
 /// file extension; every other variant already IS the answer, since clap
 /// only ever hands us one of the `DiffModeArg` values in the first place.
+///
+/// Extension sniffing only considers formats this build actually compiled
+/// in, so a minimal build auto-resolves e.g. a `.csv` to `Text` (still a
+/// useful line diff) rather than to a mode it can't run.
 pub(crate) fn resolve_diff_mode(path: &Path, requested_mode: DiffModeArg) -> ResolvedDiffMode {
     match requested_mode {
         DiffModeArg::Auto => {
+            #[cfg(feature = "image-diff")]
             if is_image_file(path) {
-                ResolvedDiffMode::Image
-            } else if is_csv_file(path) {
-                ResolvedDiffMode::Csv
-            } else if is_excel_file(path) {
-                ResolvedDiffMode::Excel
-            } else if is_json_file(path) {
-                ResolvedDiffMode::Json
-            } else if is_yaml_file(path) {
-                ResolvedDiffMode::Yaml
-            } else if is_parquet_file(path) {
-                ResolvedDiffMode::Parquet
-            } else if is_text_file(path) {
+                return ResolvedDiffMode::Image;
+            }
+            #[cfg(feature = "csv-diff")]
+            if is_csv_file(path) {
+                return ResolvedDiffMode::Csv;
+            }
+            #[cfg(feature = "excel-diff")]
+            if is_excel_file(path) {
+                return ResolvedDiffMode::Excel;
+            }
+            #[cfg(feature = "json-diff")]
+            if is_json_file(path) {
+                return ResolvedDiffMode::Json;
+            }
+            #[cfg(feature = "json-diff")]
+            if is_yaml_file(path) {
+                return ResolvedDiffMode::Yaml;
+            }
+            #[cfg(feature = "parquet-diff")]
+            if is_parquet_file(path) {
+                return ResolvedDiffMode::Parquet;
+            }
+            if is_text_file(path) {
                 ResolvedDiffMode::Text
             } else {
                 ResolvedDiffMode::Binary

@@ -225,7 +225,7 @@ class AboutDialog(QDialog):
         lines = [
             f"Application: {app_name}",
             f"Version: {app_version}",
-            f"Frontend: PySide6",
+            "Frontend: PySide6",
             f"Qt: {qVersion()}",
             f"PySide6: {pyside_version}",
             f"Python: {sys.version.split()[0]}",

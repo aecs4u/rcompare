@@ -71,7 +71,7 @@ impl SftpVfs {
         let tcp = TcpStream::connect(&addr).map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::ConnectionRefused,
-                format!("Failed to connect to {}: {}", addr, e),
+                format!("Failed to connect to {addr}: {e}"),
             ))
         })?;
 
@@ -82,8 +82,7 @@ impl SftpVfs {
 
         let mut session = Session::new().map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to create SSH session: {}",
-                e
+                "Failed to create SSH session: {e}"
             )))
         })?;
 
@@ -91,7 +90,7 @@ impl SftpVfs {
         session.handshake().map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::ConnectionRefused,
-                format!("SSH handshake failed: {}", e),
+                format!("SSH handshake failed: {e}"),
             ))
         })?;
 
@@ -103,7 +102,7 @@ impl SftpVfs {
                     .map_err(|e| {
                         VfsError::Io(std::io::Error::new(
                             std::io::ErrorKind::PermissionDenied,
-                            format!("Password authentication failed: {}", e),
+                            format!("Password authentication failed: {e}"),
                         ))
                     })?;
             }
@@ -121,29 +120,26 @@ impl SftpVfs {
                     .map_err(|e| {
                         VfsError::Io(std::io::Error::new(
                             std::io::ErrorKind::PermissionDenied,
-                            format!("Key file authentication failed: {}", e),
+                            format!("Key file authentication failed: {e}"),
                         ))
                     })?;
             }
             SftpAuth::Agent => {
                 let mut agent = session.agent().map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to connect to SSH agent: {}",
-                        e
+                        "Failed to connect to SSH agent: {e}"
                     )))
                 })?;
 
                 agent.connect().map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to connect to SSH agent: {}",
-                        e
+                        "Failed to connect to SSH agent: {e}"
                     )))
                 })?;
 
                 agent.list_identities().map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
-                        "Failed to list SSH agent identities: {}",
-                        e
+                        "Failed to list SSH agent identities: {e}"
                     )))
                 })?;
 
@@ -182,8 +178,7 @@ impl SftpVfs {
 
         session.sftp().map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to create SFTP channel: {}",
-                e
+                "Failed to create SFTP channel: {e}"
             )))
         })
     }
@@ -211,8 +206,7 @@ impl Vfs for SftpVfs {
 
         let modified = stat
             .mtime
-            .map(|t| UNIX_EPOCH + Duration::from_secs(t))
-            .unwrap_or(UNIX_EPOCH);
+            .map_or(UNIX_EPOCH, |t| UNIX_EPOCH + Duration::from_secs(t));
 
         Ok(FileMetadata {
             size: stat.size.unwrap_or(0),
@@ -250,8 +244,7 @@ impl Vfs for SftpVfs {
 
                 let modified = stat
                     .mtime
-                    .map(|t| UNIX_EPOCH + Duration::from_secs(t))
-                    .unwrap_or(UNIX_EPOCH);
+                    .map_or(UNIX_EPOCH, |t| UNIX_EPOCH + Duration::from_secs(t));
 
                 Some(FileEntry {
                     path: rel_path,

@@ -56,15 +56,14 @@ impl WebDavVfs {
         let base_url = Url::parse(&config.url).map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Invalid WebDAV URL: {}", e),
+                format!("Invalid WebDAV URL: {e}"),
             ))
         })?;
 
         // Create a Tokio runtime for async operations
         let runtime = Runtime::new().map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to create async runtime: {}",
-                e
+                "Failed to create async runtime: {e}"
             )))
         })?;
 
@@ -89,8 +88,7 @@ impl WebDavVfs {
 
         builder.build().map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to create HTTP client: {}",
-                e
+                "Failed to create HTTP client: {e}"
             )))
         })
     }
@@ -104,7 +102,7 @@ impl WebDavVfs {
         self.base_url.join(path_str).map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Failed to construct WebDAV URL: {}", e),
+                format!("Failed to construct WebDAV URL: {e}"),
             ))
         })
     }
@@ -122,7 +120,7 @@ impl WebDavVfs {
                 builder.basic_auth(username, Some(password))
             }
             WebDavAuth::Bearer { token } => {
-                builder.header("Authorization", format!("Bearer {}", token))
+                builder.header("Authorization", format!("Bearer {token}"))
             }
         }
     }
@@ -201,8 +199,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "WebDAV PROPFIND failed: {}",
-                    e
+                    "WebDAV PROPFIND failed: {e}"
                 )))
             })?;
 
@@ -221,8 +218,7 @@ impl Vfs for WebDavVfs {
 
             let xml = response.text().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to read PROPFIND response: {}",
-                    e
+                    "Failed to read PROPFIND response: {e}"
                 )))
             })?;
 
@@ -284,8 +280,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "WebDAV PROPFIND failed: {}",
-                    e
+                    "WebDAV PROPFIND failed: {e}"
                 )))
             })?;
 
@@ -298,8 +293,7 @@ impl Vfs for WebDavVfs {
 
             let xml = response.text().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to read PROPFIND response: {}",
-                    e
+                    "Failed to read PROPFIND response: {e}"
                 )))
             })?;
 
@@ -317,7 +311,7 @@ impl Vfs for WebDavVfs {
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Failed to GET WebDAV file: {}", e),
+                    format!("Failed to GET WebDAV file: {e}"),
                 ))
             })?;
 
@@ -330,8 +324,7 @@ impl Vfs for WebDavVfs {
 
             let bytes = response.bytes().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to read WebDAV file body: {}",
-                    e
+                    "Failed to read WebDAV file body: {e}"
                 )))
             })?;
 
@@ -348,8 +341,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to DELETE WebDAV resource: {}",
-                    e
+                    "Failed to DELETE WebDAV resource: {e}"
                 )))
             })?;
 
@@ -379,8 +371,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to COPY WebDAV resource: {}",
-                    e
+                    "Failed to COPY WebDAV resource: {e}"
                 )))
             })?;
 
@@ -427,8 +418,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to MKCOL WebDAV directory: {}",
-                    e
+                    "Failed to MKCOL WebDAV directory: {e}"
                 )))
             })?;
 
@@ -485,8 +475,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to MOVE WebDAV resource: {}",
-                    e
+                    "Failed to MOVE WebDAV resource: {e}"
                 )))
             })?;
 
@@ -511,8 +500,7 @@ impl Vfs for WebDavVfs {
 
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
-                    "Failed to PUT WebDAV file: {}",
-                    e
+                    "Failed to PUT WebDAV file: {e}"
                 )))
             })?;
 
@@ -560,7 +548,7 @@ impl WebDavWriter {
                 builder.basic_auth(username, Some(password))
             }
             WebDavAuth::Bearer { token } => {
-                builder.header("Authorization", format!("Bearer {}", token))
+                builder.header("Authorization", format!("Bearer {token}"))
             }
         }
     }
@@ -585,7 +573,7 @@ impl std::io::Write for WebDavWriter {
             request
                 .send()
                 .await
-                .map_err(|e| std::io::Error::other(format!("Failed to upload to WebDAV: {}", e)))?;
+                .map_err(|e| std::io::Error::other(format!("Failed to upload to WebDAV: {e}")))?;
 
             Ok(())
         })

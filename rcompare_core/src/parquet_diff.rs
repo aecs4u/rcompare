@@ -118,14 +118,14 @@ impl ParquetDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read left Parquet file: {}", e),
+                    format!("Failed to read left Parquet file: {e}"),
                 ))
             })?
             .collect()
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to collect left DataFrame: {}", e),
+                    format!("Failed to collect left DataFrame: {e}"),
                 ))
             })?;
 
@@ -133,14 +133,14 @@ impl ParquetDiffEngine {
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to read right Parquet file: {}", e),
+                    format!("Failed to read right Parquet file: {e}"),
                 ))
             })?
             .collect()
             .map_err(|e| {
                 RCompareError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Failed to collect right DataFrame: {}", e),
+                    format!("Failed to collect right DataFrame: {e}"),
                 ))
             })?;
 
@@ -189,15 +189,15 @@ impl ParquetDiffEngine {
                     diffs.push(SchemaDiff {
                         diff_type: SchemaDiffType::TypeDifferent,
                         column: name.to_string(),
-                        left_type: Some(format!("{:?}", left_type)),
-                        right_type: Some(format!("{:?}", right_type)),
+                        left_type: Some(format!("{left_type:?}")),
+                        right_type: Some(format!("{right_type:?}")),
                     });
                 }
             } else {
                 diffs.push(SchemaDiff {
                     diff_type: SchemaDiffType::LeftOnly,
                     column: name.to_string(),
-                    left_type: Some(format!("{:?}", left_type)),
+                    left_type: Some(format!("{left_type:?}")),
                     right_type: None,
                 });
             }
@@ -210,7 +210,7 @@ impl ParquetDiffEngine {
                     diff_type: SchemaDiffType::RightOnly,
                     column: name.to_string(),
                     left_type: None,
-                    right_type: Some(format!("{:?}", right_type)),
+                    right_type: Some(format!("{right_type:?}")),
                 });
             }
         }
@@ -435,18 +435,18 @@ impl ParquetDiffEngine {
         let series = df.column(column).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to get column {}: {}", column, e),
+                format!("Failed to get column {column}: {e}"),
             ))
         })?;
 
         let val = series.get(row).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to get value at row {}: {}", row, e),
+                format!("Failed to get value at row {row}: {e}"),
             ))
         })?;
 
-        Ok(format!("{}", val))
+        Ok(format!("{val}"))
     }
 }
 

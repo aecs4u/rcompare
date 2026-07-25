@@ -1,3 +1,6 @@
+#![allow(clippy::unwrap_used)]
+// Test fixtures deliberately fail fast at the operation that could not be prepared.
+
 use filetime::{set_file_mtime, FileTime};
 use rcompare_common::Vfs;
 use rcompare_core::vfs::{Writable7zVfs, WritableTarVfs, WritableZipVfs};
@@ -32,6 +35,54 @@ fn run_cli_json(args: &[&str]) -> Value {
 
     let stdout = String::from_utf8(output.stdout).expect("stdout not utf-8");
     serde_json::from_str(&stdout).expect("invalid json output")
+}
+
+#[test]
+fn scan_jsonl_streams_summary_and_bounded_entries_with_parallel_scans() {
+    let left = TempDir::new().expect("left dir");
+    let right = TempDir::new().expect("right dir");
+    fs::write(left.path().join("a.txt"), "left").unwrap();
+    fs::write(right.path().join("a.txt"), "right").unwrap();
+    fs::write(left.path().join("left-only.txt"), "left").unwrap();
+
+    let stdout = run_cli_stdout(&[
+        "scan",
+        left.path().to_str().unwrap(),
+        right.path().to_str().unwrap(),
+        "--jsonl",
+        "--max-results",
+        "1",
+        "--scan-jobs",
+        "2",
+        "--progress",
+        "never",
+    ]);
+    let lines: Vec<Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("invalid JSONL record"))
+        .collect();
+
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["type"], "summary");
+    assert_eq!(lines[0]["summary"]["total"], 2);
+    assert_eq!(lines[1]["type"], "entry");
+}
+
+fn run_cli_stdout(args: &[&str]) -> String {
+    let exe = env!("CARGO_BIN_EXE_rcompare_cli");
+    let config_dir = TempDir::new().expect("config dir");
+    let cache_dir = TempDir::new().expect("cache dir");
+    let output = Command::new(exe)
+        .args(args)
+        .env("XDG_CONFIG_HOME", config_dir.path())
+        .env("XDG_CACHE_HOME", cache_dir.path())
+        .env("APPDATA", config_dir.path())
+        .env("LOCALAPPDATA", cache_dir.path())
+        .env("HOME", config_dir.path())
+        .output()
+        .expect("failed to run rcompare_cli");
+    assert!(matches!(output.status.code(), Some(0 | 2)));
+    String::from_utf8(output.stdout).expect("stdout not utf-8")
 }
 
 fn write_archive_files(vfs: &dyn Vfs, files: &[(&str, &str)]) {

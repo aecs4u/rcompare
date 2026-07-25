@@ -2,6 +2,7 @@
 use clap::ValueEnum;
 use rcompare_common::{default_cache_dir, load_config, DiffNode, Vfs};
 use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
+#[cfg(feature = "archives")]
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
 use rcompare_core::{CacheMode, ComparisonEngine, FolderScanner, HashCache};
 use std::fs;
@@ -165,12 +166,14 @@ pub(crate) enum WhitespaceModeArg {
     Changes,
 }
 
+#[cfg(feature = "archives")]
 pub(crate) enum ArchiveKind {
     Zip,
     Tar,
     SevenZ,
 }
 
+#[allow(dead_code)] // VFS variant is unavailable in minimal builds.
 pub(crate) enum ScanSource {
     Local { root: PathBuf },
     Vfs { vfs: Box<dyn Vfs>, root: PathBuf },
@@ -455,6 +458,7 @@ pub(crate) fn build_scan_source(
     }
 
     if path.is_file() {
+        #[cfg(feature = "archives")]
         return match detect_archive_kind(path) {
             Some(ArchiveKind::Zip) => Ok(ScanSource::Vfs {
                 vfs: Box::new(ZipVfs::new(path.to_path_buf())?),
@@ -474,11 +478,24 @@ pub(crate) fn build_scan_source(
             )
             .into()),
         };
+
+        // Minimal build: archive backends were not compiled in, so any file
+        // path (archive or not) is unusable as a comparison source. Name the
+        // cause explicitly rather than reporting "unsupported archive", which
+        // would wrongly suggest the format itself is the problem.
+        #[cfg(not(feature = "archives"))]
+        return Err(format!(
+            "Path is not a directory: {} (this build was compiled without the \
+             `archives` feature, so .zip/.tar/.tar.gz/.tgz/.7z sources are unavailable)",
+            path.display()
+        )
+        .into());
     }
 
     Err(format!("Path does not exist: {}", path.display()).into())
 }
 
+#[cfg(feature = "archives")]
 pub(crate) fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind> {
     let name = path.file_name()?.to_string_lossy().to_lowercase();
     if name.ends_with(".zip") {
@@ -557,6 +574,7 @@ pub(crate) struct CoreScanOptions {
     pub(crate) no_cache: bool,
     pub(crate) cache_read_only: bool,
     pub(crate) hash_jobs: Option<usize>,
+    pub(crate) scan_jobs: u8,
 }
 
 /// Result of [`run_core_scan`]: the comparison's diff nodes plus any
@@ -632,20 +650,28 @@ pub(crate) fn run_core_scan(
 
     let mut warnings = Vec::new();
 
-    let left_outcome = match &left_source {
-        ScanSource::Local { root } => left_scanner.scan_with_cancel(root, Some(stop_flag.as_ref())),
+    let scan_one = |scanner: &FolderScanner, source: &ScanSource| match source {
+        ScanSource::Local { root } => scanner.scan_with_cancel(root, Some(stop_flag.as_ref())),
         ScanSource::Vfs { vfs, root } => {
-            left_scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
+            scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
         }
-    }?;
-    let right_outcome = match &right_source {
-        ScanSource::Local { root } => {
-            right_scanner.scan_with_cancel(root, Some(stop_flag.as_ref()))
-        }
-        ScanSource::Vfs { vfs, root } => {
-            right_scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
-        }
-    }?;
+    };
+    let (left_outcome, right_outcome) = if opts.scan_jobs > 1 {
+        std::thread::scope(|scope| {
+            let left_task = scope.spawn(|| scan_one(&left_scanner, &left_source));
+            let right_task = scope.spawn(|| scan_one(&right_scanner, &right_source));
+            let left_result = left_task.join().map_err(|_| "left scan worker panicked")?;
+            let right_result = right_task
+                .join()
+                .map_err(|_| "right scan worker panicked")?;
+            Ok::<_, Box<dyn std::error::Error>>((left_result?, right_result?))
+        })?
+    } else {
+        (
+            scan_one(&left_scanner, &left_source)?,
+            scan_one(&right_scanner, &right_source)?,
+        )
+    };
 
     warnings.extend(
         left_outcome

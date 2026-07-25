@@ -268,7 +268,9 @@ impl FolderScanner {
                     }
                     outcome.warnings.push(ScanWarning {
                         path,
-                        message: format!("metadata error (likely a race, file may have vanished): {e}"),
+                        message: format!(
+                            "metadata error (likely a race, file may have vanished): {e}"
+                        ),
                     });
                     continue;
                 }
@@ -278,7 +280,9 @@ impl FolderScanner {
             // (jwalk's metadata returns false for is_dir on symlinks when follow_links is false)
             let is_dir = if metadata.file_type().is_symlink() {
                 // Use std::fs::metadata to follow the symlink
-                std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
+                std::fs::metadata(&path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
             } else {
                 metadata.is_dir()
             };

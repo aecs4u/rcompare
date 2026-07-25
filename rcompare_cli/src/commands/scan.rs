@@ -6,10 +6,18 @@ use super::support::{
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus};
 use rcompare_core::text_diff::DiffChangeType;
+#[cfg(feature = "csv-diff")]
+use rcompare_core::{is_csv_file, CsvDiffEngine};
+#[cfg(feature = "excel-diff")]
+use rcompare_core::{is_excel_file, ExcelDiffEngine};
+#[cfg(feature = "image-diff")]
+use rcompare_core::{is_image_file, ImageDiffEngine};
+#[cfg(feature = "json-diff")]
+use rcompare_core::{is_json_file, is_yaml_file, JsonDiffEngine};
+#[cfg(feature = "parquet-diff")]
+use rcompare_core::{is_parquet_file, ParquetDiffEngine};
 use rcompare_core::{
-    is_csv_file, is_excel_file, is_image_file, is_json_file, is_parquet_file, is_yaml_file,
-    ComparisonEngine, CsvDiffEngine, ExcelDiffEngine, FolderScanner, HashCache, ImageDiffEngine,
-    JsonDiffEngine, ParquetDiffEngine, ProgressData, ScanStage, TextDiffEngine,
+    ComparisonEngine, FolderScanner, HashCache, ProgressData, ScanStage, TextDiffEngine,
 };
 use serde::Serialize;
 use std::fs;
@@ -56,6 +64,10 @@ impl ScanResult {
     }
 }
 
+// Specialized-format params (image_diff, csv_diff, ... image_tolerance) are
+// only read by the correspondingly feature-gated blocks below, so a build
+// that compiles out some of those formats legitimately leaves them unused.
+#[cfg_attr(not(feature = "full"), allow(unused_variables))]
 pub(crate) fn run_scan(
     left: PathBuf,
     right: PathBuf,
@@ -89,6 +101,7 @@ pub(crate) fn run_scan(
     no_cache: bool,
     cache_read_only: bool,
     hash_jobs: Option<usize>,
+    scan_jobs: u8,
     progress: ProgressPolicy,
     output_opts: OutputOptions,
     stop_flag: &Arc<AtomicBool>,
@@ -215,6 +228,7 @@ pub(crate) fn run_scan(
     };
 
     emit_json_progress(ScanStage::ScanningLeft, 0, 0);
+    emit_json_progress(ScanStage::ScanningRight, 0, 0);
 
     let pb_left = if show_progress {
         let pb = ProgressBar::new_spinner();
@@ -231,25 +245,6 @@ pub(crate) fn run_scan(
         None
     };
 
-    let left_outcome = scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?;
-    let left_entries = left_outcome.entries;
-    let mut scan_warnings: Vec<String> = left_outcome
-        .warnings
-        .into_iter()
-        .map(|w| format!("{}: {}", w.path.display(), w.message))
-        .collect();
-
-    if let Some(pb) = &pb_left {
-        pb.finish_with_message(format!(
-            "Found {} entries in left source",
-            left_entries.len()
-        ));
-    } else {
-        info!("Found {} entries in left source", left_entries.len());
-    }
-
-    emit_json_progress(ScanStage::ScanningRight, left_entries.len(), 0);
-
     let pb_right = if show_progress {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
@@ -265,7 +260,31 @@ pub(crate) fn run_scan(
         None
     };
 
-    let right_outcome = scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?;
+    let (left_outcome, right_outcome) = if scan_jobs > 1 {
+        std::thread::scope(|scope| {
+            let left_task =
+                scope.spawn(|| scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref())));
+            let right_task = scope
+                .spawn(|| scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref())));
+            let left_result = left_task.join().map_err(|_| "left scan worker panicked")?;
+            let right_result = right_task
+                .join()
+                .map_err(|_| "right scan worker panicked")?;
+            Ok::<_, Box<dyn std::error::Error>>((left_result?, right_result?))
+        })?
+    } else {
+        (
+            scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?,
+            scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?,
+        )
+    };
+
+    let left_entries = left_outcome.entries;
+    let mut scan_warnings: Vec<String> = left_outcome
+        .warnings
+        .into_iter()
+        .map(|w| format!("{}: {}", w.path.display(), w.message))
+        .collect();
     let right_entries = right_outcome.entries;
     scan_warnings.extend(
         right_outcome
@@ -277,6 +296,14 @@ pub(crate) fn run_scan(
         tracing::warn!("scan warning: {}", warning);
     }
 
+    if let Some(pb) = &pb_left {
+        pb.finish_with_message(format!(
+            "Found {} entries in left source",
+            left_entries.len()
+        ));
+    } else {
+        info!("Found {} entries in left source", left_entries.len());
+    }
     if let Some(pb) = &pb_right {
         pb.finish_with_message(format!(
             "Found {} entries in right source",
@@ -386,36 +413,95 @@ pub(crate) fn run_scan(
     } else {
         None
     };
+    #[cfg(feature = "image-diff")]
     let mut json_image_diffs = if json && image_diff {
         Some(Vec::new())
     } else {
         None
     };
+    #[cfg(feature = "csv-diff")]
     let mut json_csv_diffs = if json && csv_diff {
         Some(Vec::new())
     } else {
         None
     };
+    #[cfg(feature = "excel-diff")]
     let mut json_excel_diffs = if json && excel_diff {
         Some(Vec::new())
     } else {
         None
     };
+    #[cfg(feature = "json-diff")]
     let mut json_json_diffs = if json && json_diff {
         Some(Vec::new())
     } else {
         None
     };
+    #[cfg(feature = "json-diff")]
     let mut json_yaml_diffs = if json && yaml_diff {
         Some(Vec::new())
     } else {
         None
     };
+    #[cfg(feature = "parquet-diff")]
     let mut json_parquet_diffs = if json && parquet_diff {
         Some(Vec::new())
     } else {
         None
     };
+
+    // Classify specialized-diff candidates in one pass. On very large
+    // comparisons this avoids walking the complete result vector once per
+    // enabled format.
+    let mut text_candidates = Vec::new();
+    #[cfg(feature = "image-diff")]
+    let mut image_candidates = Vec::new();
+    #[cfg(feature = "csv-diff")]
+    let mut csv_candidates = Vec::new();
+    #[cfg(feature = "excel-diff")]
+    let mut excel_candidates = Vec::new();
+    #[cfg(feature = "json-diff")]
+    let mut json_candidates = Vec::new();
+    #[cfg(feature = "json-diff")]
+    let mut yaml_candidates = Vec::new();
+    #[cfg(feature = "parquet-diff")]
+    let mut parquet_candidates = Vec::new();
+    for node in &diff_nodes {
+        if !matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked)
+            || node.left.as_ref().is_none_or(|entry| entry.is_dir)
+            || node.right.as_ref().is_none_or(|entry| entry.is_dir)
+        {
+            continue;
+        }
+        let path = node.relative_path.as_path();
+        if text_diff && is_text_file(path) {
+            text_candidates.push(node);
+        }
+        #[cfg(feature = "image-diff")]
+        if image_diff && is_image_file(path) {
+            image_candidates.push(node);
+        }
+        #[cfg(feature = "csv-diff")]
+        if csv_diff && is_csv_file(path) {
+            csv_candidates.push(node);
+        }
+        #[cfg(feature = "excel-diff")]
+        if excel_diff && is_excel_file(path) {
+            excel_candidates.push(node);
+        }
+        #[cfg(feature = "json-diff")]
+        if json_diff && is_json_file(path) {
+            json_candidates.push(node);
+        }
+        #[cfg(feature = "json-diff")]
+        if yaml_diff && is_yaml_file(path) {
+            yaml_candidates.push(node);
+        }
+        #[cfg(feature = "parquet-diff")]
+        if parquet_diff && is_parquet_file(path) {
+            parquet_candidates.push(node);
+        }
+    }
 
     // Display results (text mode only)
     let use_color = !json && !no_color && std::io::stdout().is_terminal();
@@ -602,25 +688,12 @@ pub(crate) fn run_scan(
     }
 
     // Image-specific analysis if enabled
+    #[cfg(feature = "image-diff")]
     if image_diff {
         let image_engine = ImageDiffEngine::new()
             .with_exif_compare(image_exif)
             .with_tolerance(image_tolerance);
 
-        // Filter to image candidates once; reused for both the progress-bar
-        // count and the processing loop below instead of traversing
-        // `diff_nodes` twice with the same predicate.
-        let image_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_image_file(&left_entry.path) && is_image_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let image_count = image_candidates.len();
 
         let pb_images = if show_progress && image_count > 0 {
@@ -737,22 +810,10 @@ pub(crate) fn run_scan(
     }
 
     // CSV-specific analysis if enabled
+    #[cfg(feature = "csv-diff")]
     if csv_diff {
         let csv_engine = CsvDiffEngine::new();
 
-        // Filter to CSV candidates once; reused for the progress-bar count
-        // and the processing loop below.
-        let csv_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_csv_file(&left_entry.path) && is_csv_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let csv_count = csv_candidates.len();
 
         let pb_csvs = if show_progress && csv_count > 0 {
@@ -933,22 +994,10 @@ pub(crate) fn run_scan(
     }
 
     // Excel-specific analysis if enabled
+    #[cfg(feature = "excel-diff")]
     if excel_diff {
         let excel_engine = ExcelDiffEngine::new();
 
-        // Filter to Excel candidates once; reused for the progress-bar
-        // count and the processing loop below.
-        let excel_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_excel_file(&left_entry.path) && is_excel_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let excel_count = excel_candidates.len();
 
         let pb_excel = if show_progress && excel_count > 0 {
@@ -1147,22 +1196,10 @@ pub(crate) fn run_scan(
     }
 
     // JSON-specific analysis if enabled
+    #[cfg(feature = "json-diff")]
     if json_diff {
         let json_engine = JsonDiffEngine::new();
 
-        // Filter to JSON candidates once; reused for the progress-bar count
-        // and the processing loop below.
-        let json_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_json_file(&left_entry.path) && is_json_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let json_count = json_candidates.len();
 
         let pb_json = if show_progress && json_count > 0 {
@@ -1334,22 +1371,10 @@ pub(crate) fn run_scan(
     }
 
     // YAML-specific analysis if enabled
+    #[cfg(feature = "json-diff")]
     if yaml_diff {
         let yaml_engine = JsonDiffEngine::new();
 
-        // Filter to YAML candidates once; reused for the progress-bar count
-        // and the processing loop below.
-        let yaml_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_yaml_file(&left_entry.path) && is_yaml_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let yaml_count = yaml_candidates.len();
 
         let pb_yaml = if show_progress && yaml_count > 0 {
@@ -1521,23 +1546,11 @@ pub(crate) fn run_scan(
     }
 
     // Parquet-specific analysis if enabled
+    #[cfg(feature = "parquet-diff")]
     if parquet_diff {
         let parquet_engine = ParquetDiffEngine::new();
         let mut parquet_comparisons = 0;
 
-        // Filter to Parquet candidates once; reused for the progress-bar
-        // count and the processing loop below.
-        let parquet_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_parquet_file(&left_entry.path) && is_parquet_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let parquet_count = parquet_candidates.len();
 
         if parquet_count > 0 {
@@ -1736,19 +1749,6 @@ pub(crate) fn run_scan(
     if text_diff {
         let text_engine = TextDiffEngine::with_config(text_config);
 
-        // Filter to text candidates once; reused for the progress-bar count
-        // and the processing loop below.
-        let text_candidates: Vec<&rcompare_common::DiffNode> = diff_nodes
-            .iter()
-            .filter(|node| matches!(node.status, DiffStatus::Different | DiffStatus::Unchecked))
-            .filter(|node| {
-                if let (Some(left_entry), Some(right_entry)) = (&node.left, &node.right) {
-                    is_text_file(&left_entry.path) && is_text_file(&right_entry.path)
-                } else {
-                    false
-                }
-            })
-            .collect();
         let text_count = text_candidates.len();
 
         let pb_texts = if show_progress && text_count > 0 {
@@ -1895,38 +1895,15 @@ pub(crate) fn run_scan(
 
     // JSON output at the end (after all diff processing)
     if json {
-        let mut report = build_json_report(
-            &left,
-            &right,
-            &diff_nodes,
-            scan_warnings.clone(),
-            diff_only,
-            hide_identical,
-            hide_different,
-            hide_left_only,
-            hide_right_only,
-            hide_unchecked,
-            json_text_diffs,
-            json_image_diffs,
-            json_csv_diffs,
-            json_excel_diffs,
-            json_json_diffs,
-            json_yaml_diffs,
-            json_parquet_diffs,
-        );
-
-        if output_opts.summary_only {
-            report.entries.clear();
-        } else if let Some(max) = output_opts.max_results {
-            report.entries.truncate(max);
-        }
-
         let mut writer: Box<dyn Write> = match &output_opts.output {
             Some(path) => Box::new(std::io::BufWriter::new(fs::File::create(path)?)),
             None => Box::new(std::io::BufWriter::new(std::io::stdout().lock())),
         };
 
         if output_opts.jsonl {
+            // JSONL is genuinely incremental: calculate the small summary,
+            // then serialize each DiffNode directly instead of first
+            // allocating a second complete Vec<JsonEntry>/JsonReport.
             #[derive(Serialize)]
             struct JsonlSummaryLine<'a> {
                 #[serde(rename = "type")]
@@ -1946,33 +1923,86 @@ pub(crate) fn run_scan(
                 entry: &'a JsonEntry,
             }
 
+            let summary = summarize_nodes(&diff_nodes);
+            let left_text = left.to_string_lossy();
+            let right_text = right.to_string_lossy();
             serde_json::to_writer(
                 &mut writer,
                 &JsonlSummaryLine {
                     kind: "summary",
-                    schema_version: &report.schema_version,
-                    left: &report.left,
-                    right: &report.right,
-                    summary: &report.summary,
-                    warnings: &report.warnings,
+                    schema_version: "1.1.0",
+                    left: &left_text,
+                    right: &right_text,
+                    summary: &summary,
+                    warnings: &scan_warnings,
                 },
             )?;
             writeln!(writer)?;
-            for entry in &report.entries {
-                serde_json::to_writer(
-                    &mut writer,
-                    &JsonlEntryLine {
-                        kind: "entry",
-                        entry,
-                    },
-                )?;
-                writeln!(writer)?;
+            if !output_opts.summary_only {
+                let mut emitted = 0_usize;
+                for node in &diff_nodes {
+                    if !should_show_entry(
+                        &node.status,
+                        diff_only,
+                        hide_identical,
+                        hide_different,
+                        hide_left_only,
+                        hide_right_only,
+                        hide_unchecked,
+                    ) {
+                        continue;
+                    }
+                    if output_opts.max_results.is_some_and(|max| emitted >= max) {
+                        break;
+                    }
+                    let entry = json_entry(node);
+                    serde_json::to_writer(
+                        &mut writer,
+                        &JsonlEntryLine {
+                            kind: "entry",
+                            entry: &entry,
+                        },
+                    )?;
+                    writeln!(writer)?;
+                    emitted += 1;
+                }
             }
-        } else if output_opts.pretty {
-            serde_json::to_writer_pretty(&mut writer, &report)?;
-            writeln!(writer)?;
         } else {
-            serde_json::to_writer(&mut writer, &report)?;
+            let mut report = build_json_report(
+                &left,
+                &right,
+                &diff_nodes,
+                scan_warnings.clone(),
+                diff_only,
+                hide_identical,
+                hide_different,
+                hide_left_only,
+                hide_right_only,
+                hide_unchecked,
+                json_text_diffs,
+                #[cfg(feature = "image-diff")]
+                json_image_diffs,
+                #[cfg(feature = "csv-diff")]
+                json_csv_diffs,
+                #[cfg(feature = "excel-diff")]
+                json_excel_diffs,
+                #[cfg(feature = "json-diff")]
+                json_json_diffs,
+                #[cfg(feature = "json-diff")]
+                json_yaml_diffs,
+                #[cfg(feature = "parquet-diff")]
+                json_parquet_diffs,
+            );
+            if output_opts.summary_only {
+                report.entries.clear();
+            } else if let Some(max) = output_opts.max_results {
+                report.entries.truncate(max);
+            }
+            if output_opts.pretty {
+                serde_json::to_writer_pretty(&mut writer, &report)?;
+            } else {
+                serde_json::to_writer(&mut writer, &report)?;
+            }
             writeln!(writer)?;
         }
         writer.flush()?;
@@ -2031,16 +2061,22 @@ pub(crate) struct JsonReport {
     pub(crate) entries: Vec<JsonEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) text_diffs: Option<Vec<JsonTextDiffReport>>,
+    #[cfg(feature = "image-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) image_diffs: Option<Vec<JsonImageDiffReport>>,
+    #[cfg(feature = "csv-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) csv_diffs: Option<Vec<JsonCsvDiffReport>>,
+    #[cfg(feature = "excel-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) excel_diffs: Option<Vec<JsonExcelDiffReport>>,
+    #[cfg(feature = "json-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) json_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[cfg(feature = "json-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) yaml_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[cfg(feature = "parquet-diff")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) parquet_diffs: Option<Vec<JsonParquetDiffReport>>,
 }
@@ -2080,34 +2116,69 @@ pub(crate) struct JsonTextDiffReport {
     pub(crate) lines: Vec<rcompare_core::text_diff::DiffLine>,
 }
 
+#[cfg(feature = "image-diff")]
 #[derive(Serialize)]
 pub(crate) struct JsonImageDiffReport {
     pub(crate) path: String,
     pub(crate) result: rcompare_core::ImageDiffResult,
 }
 
+#[cfg(feature = "csv-diff")]
 #[derive(Serialize)]
 pub(crate) struct JsonCsvDiffReport {
     pub(crate) path: String,
     pub(crate) result: rcompare_core::CsvDiffResult,
 }
 
+#[cfg(feature = "excel-diff")]
 #[derive(Serialize)]
 pub(crate) struct JsonExcelDiffReport {
     pub(crate) path: String,
     pub(crate) result: rcompare_core::ExcelDiffResult,
 }
 
+#[cfg(feature = "json-diff")]
 #[derive(Serialize)]
 pub(crate) struct JsonJsonDiffReport {
     pub(crate) path: String,
     pub(crate) result: rcompare_core::JsonDiffResult,
 }
 
+#[cfg(feature = "parquet-diff")]
 #[derive(Serialize)]
 pub(crate) struct JsonParquetDiffReport {
     pub(crate) path: String,
     pub(crate) result: rcompare_core::ParquetDiffResult,
+}
+
+fn summarize_nodes(diff_nodes: &[rcompare_common::DiffNode]) -> JsonSummary {
+    let mut summary = JsonSummary {
+        total: diff_nodes.len(),
+        same: 0,
+        different: 0,
+        orphan_left: 0,
+        orphan_right: 0,
+        unchecked: 0,
+    };
+    for node in diff_nodes {
+        match node.status {
+            DiffStatus::Same => summary.same += 1,
+            DiffStatus::Different => summary.different += 1,
+            DiffStatus::OrphanLeft => summary.orphan_left += 1,
+            DiffStatus::OrphanRight => summary.orphan_right += 1,
+            DiffStatus::Unchecked => summary.unchecked += 1,
+        }
+    }
+    summary
+}
+
+fn json_entry(node: &rcompare_common::DiffNode) -> JsonEntry {
+    JsonEntry {
+        path: node.relative_path.to_string_lossy().to_string(),
+        status: node.status,
+        left: node.left.as_ref().map(json_side),
+        right: node.right.as_ref().map(json_side),
+    }
 }
 
 pub(crate) fn build_json_report(
@@ -2122,33 +2193,18 @@ pub(crate) fn build_json_report(
     hide_right_only: bool,
     hide_unchecked: bool,
     text_diffs: Option<Vec<JsonTextDiffReport>>,
-    image_diffs: Option<Vec<JsonImageDiffReport>>,
-    csv_diffs: Option<Vec<JsonCsvDiffReport>>,
-    excel_diffs: Option<Vec<JsonExcelDiffReport>>,
-    json_diffs: Option<Vec<JsonJsonDiffReport>>,
-    yaml_diffs: Option<Vec<JsonJsonDiffReport>>,
-    parquet_diffs: Option<Vec<JsonParquetDiffReport>>,
+    #[cfg(feature = "image-diff")] image_diffs: Option<Vec<JsonImageDiffReport>>,
+    #[cfg(feature = "csv-diff")] csv_diffs: Option<Vec<JsonCsvDiffReport>>,
+    #[cfg(feature = "excel-diff")] excel_diffs: Option<Vec<JsonExcelDiffReport>>,
+    #[cfg(feature = "json-diff")] json_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[cfg(feature = "json-diff")] yaml_diffs: Option<Vec<JsonJsonDiffReport>>,
+    #[cfg(feature = "parquet-diff")] parquet_diffs: Option<Vec<JsonParquetDiffReport>>,
 ) -> JsonReport {
-    let mut summary = JsonSummary {
-        total: diff_nodes.len(),
-        same: 0,
-        different: 0,
-        orphan_left: 0,
-        orphan_right: 0,
-        unchecked: 0,
-    };
+    let summary = summarize_nodes(diff_nodes);
 
     let mut entries = Vec::new();
 
     for node in diff_nodes {
-        match node.status {
-            DiffStatus::Same => summary.same += 1,
-            DiffStatus::Different => summary.different += 1,
-            DiffStatus::OrphanLeft => summary.orphan_left += 1,
-            DiffStatus::OrphanRight => summary.orphan_right += 1,
-            DiffStatus::Unchecked => summary.unchecked += 1,
-        }
-
         if !should_show_entry(
             &node.status,
             diff_only,
@@ -2161,12 +2217,7 @@ pub(crate) fn build_json_report(
             continue;
         }
 
-        entries.push(JsonEntry {
-            path: node.relative_path.to_string_lossy().to_string(),
-            status: node.status,
-            left: node.left.as_ref().map(json_side),
-            right: node.right.as_ref().map(json_side),
-        });
+        entries.push(json_entry(node));
     }
 
     JsonReport {
@@ -2177,11 +2228,17 @@ pub(crate) fn build_json_report(
         warnings,
         entries,
         text_diffs,
+        #[cfg(feature = "image-diff")]
         image_diffs,
+        #[cfg(feature = "csv-diff")]
         csv_diffs,
+        #[cfg(feature = "excel-diff")]
         excel_diffs,
+        #[cfg(feature = "json-diff")]
         json_diffs,
+        #[cfg(feature = "json-diff")]
         yaml_diffs,
+        #[cfg(feature = "parquet-diff")]
         parquet_diffs,
     }
 }

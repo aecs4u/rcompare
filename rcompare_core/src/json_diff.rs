@@ -73,28 +73,28 @@ impl JsonDiffEngine {
         let left_content = std::fs::read_to_string(left).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to read left JSON file: {}", e),
+                format!("Failed to read left JSON file: {e}"),
             ))
         })?;
 
         let right_content = std::fs::read_to_string(right).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to read right JSON file: {}", e),
+                format!("Failed to read right JSON file: {e}"),
             ))
         })?;
 
         let left_json: JsonValue = serde_json::from_str(&left_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to parse left JSON: {}", e),
+                format!("Failed to parse left JSON: {e}"),
             ))
         })?;
 
         let right_json: JsonValue = serde_json::from_str(&right_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to parse right JSON: {}", e),
+                format!("Failed to parse right JSON: {e}"),
             ))
         })?;
 
@@ -110,28 +110,28 @@ impl JsonDiffEngine {
         let left_content = std::fs::read_to_string(left).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to read left YAML file: {}", e),
+                format!("Failed to read left YAML file: {e}"),
             ))
         })?;
 
         let right_content = std::fs::read_to_string(right).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to read right YAML file: {}", e),
+                format!("Failed to read right YAML file: {e}"),
             ))
         })?;
 
         let left_yaml: YamlValue = serde_yml::from_str(&left_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to parse left YAML: {}", e),
+                format!("Failed to parse left YAML: {e}"),
             ))
         })?;
 
         let right_yaml: YamlValue = serde_yml::from_str(&right_content).map_err(|e| {
             RCompareError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to parse right YAML: {}", e),
+                format!("Failed to parse right YAML: {e}"),
             ))
         })?;
 
@@ -246,13 +246,13 @@ fn flatten_json(prefix: &str, value: &JsonValue, output: &mut HashMap<String, Js
     match value {
         JsonValue::Object(map) => {
             for (key, val) in map {
-                let path = format!("{}.{}", prefix, key);
+                let path = format!("{prefix}.{key}");
                 flatten_json(&path, val, output);
             }
         }
         JsonValue::Array(arr) => {
             for (i, val) in arr.iter().enumerate() {
-                let path = format!("{}[{}]", prefix, i);
+                let path = format!("{prefix}[{i}]");
                 flatten_json(&path, val, output);
             }
         }
@@ -290,7 +290,7 @@ fn format_json_value(value: &JsonValue) -> String {
         JsonValue::Null => String::from("null"),
         JsonValue::Bool(b) => b.to_string(),
         JsonValue::Number(n) => n.to_string(),
-        JsonValue::String(s) => format!("\"{}\"", s),
+        JsonValue::String(s) => format!("\"{s}\""),
         JsonValue::Array(_) => String::from("[array]"),
         JsonValue::Object(_) => String::from("{object}"),
     }
@@ -323,7 +323,7 @@ fn yaml_to_json(yaml: YamlValue) -> JsonValue {
                     obj.insert(key, yaml_to_json(v));
                 } else {
                     // Convert non-string keys to strings
-                    let key = format!("{:?}", k);
+                    let key = format!("{k:?}");
                     obj.insert(key, yaml_to_json(v));
                 }
             }

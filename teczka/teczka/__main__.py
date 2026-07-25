@@ -7,7 +7,6 @@ Falls back to plain argparse if typer is not installed.
 from __future__ import annotations
 
 import argparse
-import sys
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ import difflib
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -473,7 +474,7 @@ class MergeView(QWidget):
 
     @staticmethod
     def _opcodes_to_changes(
-        opcodes: list[tuple[str, int, int, int, int]],
+        opcodes: Sequence[tuple[str, int, int, int, int]],
         base_lines: list[str],
         other_lines: list[str],
     ) -> dict[int, tuple[int, list[str]]]:
@@ -575,7 +576,6 @@ class MergeView(QWidget):
 
         # Update the conflict as resolved
         conflict.resolved = True
-        old_end = conflict.end_line
         conflict.end_line = conflict.start_line + new_len
 
         # Adjust subsequent conflict positions

@@ -10,7 +10,6 @@ from PySide6.QtGui import QColor, QPainter, QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
-    QHBoxLayout,
     QMenu,
     QPlainTextEdit,
     QSplitter,
@@ -38,6 +37,7 @@ from ..workers.function_worker import FunctionWorker
 _PREVIEW_DEBOUNCE_MS = 200
 _PREVIEW_MAX_LINES = 100
 _PREVIEW_MAX_BYTES = 64 * 1024  # 64 KB
+_AUTO_SIZE_NODE_LIMIT = 2_000
 
 
 def _read_preview_side(root: str, rel_path: str) -> str:
@@ -422,6 +422,16 @@ class FolderView(QWidget):
 
     def _resize_visible_columns(self) -> None:
         """Auto-size visible columns for both LH/RH trees after loading data."""
+        if self._source_model.node_count > _AUTO_SIZE_NODE_LIMIT:
+            # resizeColumnToContents walks the complete model for every
+            # column. Stable practical widths keep large comparisons O(1).
+            for tree in (self._left_tree, self._right_tree):
+                tree.setColumnWidth(COL_NAME, 360)
+                tree.setColumnWidth(COL_LEFT_SIZE, 100)
+                tree.setColumnWidth(COL_RIGHT_SIZE, 100)
+                tree.setColumnWidth(COL_LEFT_DATE, 155)
+                tree.setColumnWidth(COL_RIGHT_DATE, 155)
+            return
         self._resize_tree_columns(self._left_tree, (COL_NAME, COL_LEFT_SIZE, COL_LEFT_DATE))
         self._resize_tree_columns(self._right_tree, (COL_NAME, COL_RIGHT_SIZE, COL_RIGHT_DATE))
 

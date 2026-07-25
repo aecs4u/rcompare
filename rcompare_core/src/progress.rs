@@ -118,7 +118,13 @@ pub struct ProgressHandler {
     /// Set to `true` to stop the background thread.
     stop_flag: Arc<AtomicBool>,
     /// Join handle for the progress thread.
-    _handle: Option<thread::JoinHandle<()>>,
+    join_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Default for ProgressHandler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ProgressHandler {
@@ -139,8 +145,8 @@ impl ProgressHandler {
             .name("rcompare-progress".into())
             .spawn(move || {
                 // Start at ScanningLeft; the caller updates via set_stage().
-                let mut current_stage = ScanStage::ScanningLeft;
-                let mut stage_index: u8 = 0;
+                let current_stage = ScanStage::ScanningLeft;
+                let stage_index: u8 = 0;
 
                 while !stop_clone.load(Ordering::Relaxed) {
                     let data = ProgressData {
@@ -174,7 +180,7 @@ impl ProgressHandler {
             receiver: rx,
             counters,
             stop_flag,
-            _handle: Some(handle),
+            join_handle: Some(handle),
         }
     }
 
@@ -187,7 +193,7 @@ impl ProgressHandler {
 impl Drop for ProgressHandler {
     fn drop(&mut self) {
         self.stop();
-        if let Some(handle) = self._handle.take() {
+        if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
         }
     }

@@ -10,13 +10,11 @@ pub(crate) struct CommandCapability {
     pub(crate) flags: Vec<String>,
 }
 
-
 #[derive(Serialize)]
 pub(crate) struct ExitCodeCapability {
     pub(crate) code: i32,
     pub(crate) meaning: String,
 }
-
 
 #[derive(Serialize)]
 pub(crate) struct CapabilitiesReport {
@@ -27,7 +25,6 @@ pub(crate) struct CapabilitiesReport {
     pub(crate) exit_codes: Vec<ExitCodeCapability>,
     pub(crate) notes: Vec<String>,
 }
-
 
 pub(crate) fn build_capabilities_report() -> CapabilitiesReport {
     CapabilitiesReport {
@@ -42,10 +39,18 @@ pub(crate) fn build_capabilities_report() -> CapabilitiesReport {
                 supports_progress: true,
                 flags: vec![
                     "--json".to_string(),
+                    "--jsonl".to_string(),
+                    "--summary-only".to_string(),
+                    "--max-results".to_string(),
+                    "--output".to_string(),
+                    "--progress".to_string(),
                     "--diff-only".to_string(),
                     "--ignore".to_string(),
                     "--follow-symlinks".to_string(),
                     "--verify-hashes/--no-verify-hashes".to_string(),
+                    "--hash-jobs".to_string(),
+                    "--scan-jobs".to_string(),
+                    "--no-cache/--cache-read-only".to_string(),
                     "--columns".to_string(),
                     "--text-diff".to_string(),
                     "--image-diff".to_string(),
@@ -69,6 +74,8 @@ pub(crate) fn build_capabilities_report() -> CapabilitiesReport {
                     "--ignore".to_string(),
                     "--follow-symlinks".to_string(),
                     "--verify-hashes/--no-verify-hashes".to_string(),
+                    "--hash-jobs".to_string(),
+                    "--scan-jobs".to_string(),
                     "--json".to_string(),
                 ],
             },
@@ -106,8 +113,7 @@ pub(crate) fn build_capabilities_report() -> CapabilitiesReport {
             },
             CommandCapability {
                 name: "read".to_string(),
-                description: "Read one file from a side and export to stdout or --out"
-                    .to_string(),
+                description: "Read one file from a side and export to stdout or --out".to_string(),
                 supports_json: false,
                 supports_progress: false,
                 flags: vec![
@@ -146,7 +152,6 @@ pub(crate) fn build_capabilities_report() -> CapabilitiesReport {
     }
 }
 
-
 pub(crate) fn run_capabilities(json: bool) -> Result<(), Box<dyn std::error::Error>> {
     let report = build_capabilities_report();
 
@@ -164,11 +169,7 @@ pub(crate) fn run_capabilities(json: bool) -> Result<(), Box<dyn std::error::Err
     );
     println!("\nCommands:");
     for cmd in &report.commands {
-        println!(
-            "  - {}: {}",
-            cmd.name,
-            cmd.description
-        );
+        println!("  - {}: {}", cmd.name, cmd.description);
         println!(
             "    supports_json={}, supports_progress={}",
             cmd.supports_json, cmd.supports_progress

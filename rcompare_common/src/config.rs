@@ -55,10 +55,10 @@ pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), RCompareError>
 
 pub fn default_cache_dir(portable: bool, config_path: &Path) -> Result<PathBuf, RCompareError> {
     if portable {
-        let base = config_path
-            .parent()
-            .map(|path| path.to_path_buf())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let base = config_path.parent().map_or_else(
+            || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            |path| path.to_path_buf(),
+        );
         return Ok(base.join("rcompare_cache"));
     }
 

@@ -1,3 +1,10 @@
+#![allow(
+    clippy::explicit_iter_loop,
+    clippy::uninlined_format_args,
+    clippy::unwrap_used
+)]
+// Benchmark setup should fail fast; formatting style does not affect measurements.
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rcompare_common::{AppConfig, FileEntry};
 use rcompare_core::{ComparisonEngine, FolderScanner, HashCache};
@@ -390,7 +397,12 @@ fn bench_cold_vs_warm_hash_cache(c: &mut Criterion) {
             let cache = HashCache::new(cache_dir.clone()).unwrap();
             let engine = ComparisonEngine::new(cache).with_hash_verification(true);
             engine
-                .compare(&left_dir, &right_dir, left_entries.clone(), right_entries.clone())
+                .compare(
+                    &left_dir,
+                    &right_dir,
+                    left_entries.clone(),
+                    right_entries.clone(),
+                )
                 .unwrap();
             engine.persist_cache().unwrap();
         }
@@ -457,7 +469,11 @@ criterion_group!(
     bench_scanner_deep_directory_tree
 );
 
-criterion_group!(cache_benches, bench_hash_cache_operations, bench_cold_vs_warm_hash_cache);
+criterion_group!(
+    cache_benches,
+    bench_hash_cache_operations,
+    bench_cold_vs_warm_hash_cache
+);
 
 criterion_group!(
     comparison_benches,

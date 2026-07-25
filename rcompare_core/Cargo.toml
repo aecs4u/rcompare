@@ -109,6 +109,9 @@ async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 criterion.workspace = true
 tempfile.workspace = true

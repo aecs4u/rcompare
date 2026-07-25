@@ -1,5 +1,7 @@
 """PathBar widget for left/right (and optional base) path selection."""
 
+from typing import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPalette
 from PySide6.QtWidgets import (
@@ -142,30 +144,42 @@ class PathBar(QWidget):
 
         # Left
         self._left_edit.editingFinished.connect(
-            lambda: self._on_edit_finished(self._left_edit, self._left_breadcrumb, self.left_path_changed)
+            lambda: self._on_edit_finished(
+                self._left_edit, self._left_breadcrumb, self.left_path_changed.emit
+            )
         )
         self._left_breadcrumb.path_changed.connect(
-            lambda p: self._on_breadcrumb_changed(p, self._left_edit, self.left_path_changed)
+            lambda p: self._on_breadcrumb_changed(
+                p, self._left_edit, self.left_path_changed.emit
+            )
         )
         self._left_browse_folder.clicked.connect(self._browse_left_folder)
         self._left_browse_archive.clicked.connect(self._browse_left_archive)
 
         # Right
         self._right_edit.editingFinished.connect(
-            lambda: self._on_edit_finished(self._right_edit, self._right_breadcrumb, self.right_path_changed)
+            lambda: self._on_edit_finished(
+                self._right_edit, self._right_breadcrumb, self.right_path_changed.emit
+            )
         )
         self._right_breadcrumb.path_changed.connect(
-            lambda p: self._on_breadcrumb_changed(p, self._right_edit, self.right_path_changed)
+            lambda p: self._on_breadcrumb_changed(
+                p, self._right_edit, self.right_path_changed.emit
+            )
         )
         self._right_browse_folder.clicked.connect(self._browse_right_folder)
         self._right_browse_archive.clicked.connect(self._browse_right_archive)
 
         # Base
         self._base_edit.editingFinished.connect(
-            lambda: self._on_edit_finished(self._base_edit, self._base_breadcrumb, self.base_path_changed)
+            lambda: self._on_edit_finished(
+                self._base_edit, self._base_breadcrumb, self.base_path_changed.emit
+            )
         )
         self._base_breadcrumb.path_changed.connect(
-            lambda p: self._on_breadcrumb_changed(p, self._base_edit, self.base_path_changed)
+            lambda p: self._on_breadcrumb_changed(
+                p, self._base_edit, self.base_path_changed.emit
+            )
         )
         self._base_browse_folder.clicked.connect(self._browse_base_folder)
         self._base_browse_archive.clicked.connect(self._browse_base_archive)
@@ -223,52 +237,81 @@ class PathBar(QWidget):
     # Browse helpers
     # ------------------------------------------------------------------
 
-    def _on_edit_finished(self, edit: QLineEdit, breadcrumb: BreadcrumbBar, signal: Signal) -> None:
+    def _on_edit_finished(
+        self,
+        edit: QLineEdit,
+        breadcrumb: BreadcrumbBar,
+        emit: Callable[[str], None],
+    ) -> None:
         """Sync breadcrumb when line edit is committed."""
         text = edit.text()
         breadcrumb.path = text
-        signal.emit(text)
+        emit(text)
 
-    def _on_breadcrumb_changed(self, path: str, edit: QLineEdit, signal: Signal) -> None:
+    def _on_breadcrumb_changed(
+        self, path: str, edit: QLineEdit, emit: Callable[[str], None]
+    ) -> None:
         """Sync line edit when breadcrumb is clicked."""
         edit.setText(path)
-        signal.emit(path)
+        emit(path)
 
-    def _browse_folder(self, line_edit: QLineEdit, breadcrumb: BreadcrumbBar, signal: Signal) -> None:
+    def _browse_folder(
+        self,
+        line_edit: QLineEdit,
+        breadcrumb: BreadcrumbBar,
+        emit: Callable[[str], None],
+    ) -> None:
         path = QFileDialog.getExistingDirectory(
             self, "Select Folder", line_edit.text()
         )
         if path:
             line_edit.setText(path)
             breadcrumb.path = path
-            signal.emit(path)
+            emit(path)
 
-    def _browse_archive(self, line_edit: QLineEdit, breadcrumb: BreadcrumbBar, signal: Signal) -> None:
+    def _browse_archive(
+        self,
+        line_edit: QLineEdit,
+        breadcrumb: BreadcrumbBar,
+        emit: Callable[[str], None],
+    ) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Archive", line_edit.text(), ARCHIVE_FILTER
         )
         if path:
             line_edit.setText(path)
             breadcrumb.path = path
-            signal.emit(path)
+            emit(path)
 
     # Left
     def _browse_left_folder(self) -> None:
-        self._browse_folder(self._left_edit, self._left_breadcrumb, self.left_path_changed)
+        self._browse_folder(
+            self._left_edit, self._left_breadcrumb, self.left_path_changed.emit
+        )
 
     def _browse_left_archive(self) -> None:
-        self._browse_archive(self._left_edit, self._left_breadcrumb, self.left_path_changed)
+        self._browse_archive(
+            self._left_edit, self._left_breadcrumb, self.left_path_changed.emit
+        )
 
     # Right
     def _browse_right_folder(self) -> None:
-        self._browse_folder(self._right_edit, self._right_breadcrumb, self.right_path_changed)
+        self._browse_folder(
+            self._right_edit, self._right_breadcrumb, self.right_path_changed.emit
+        )
 
     def _browse_right_archive(self) -> None:
-        self._browse_archive(self._right_edit, self._right_breadcrumb, self.right_path_changed)
+        self._browse_archive(
+            self._right_edit, self._right_breadcrumb, self.right_path_changed.emit
+        )
 
     # Base
     def _browse_base_folder(self) -> None:
-        self._browse_folder(self._base_edit, self._base_breadcrumb, self.base_path_changed)
+        self._browse_folder(
+            self._base_edit, self._base_breadcrumb, self.base_path_changed.emit
+        )
 
     def _browse_base_archive(self) -> None:
-        self._browse_archive(self._base_edit, self._base_breadcrumb, self.base_path_changed)
+        self._browse_archive(
+            self._base_edit, self._base_breadcrumb, self.base_path_changed.emit
+        )

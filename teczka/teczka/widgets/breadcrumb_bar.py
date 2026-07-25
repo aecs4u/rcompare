@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -123,6 +122,8 @@ class BreadcrumbBar(QWidget):
         # Remove existing widgets from layout.
         while self._breadcrumb_layout.count():
             item = self._breadcrumb_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()

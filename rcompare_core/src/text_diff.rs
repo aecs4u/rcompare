@@ -351,19 +351,16 @@ impl TextDiffEngine {
         line: &str,
         syntax: Option<&syntect::parsing::SyntaxReference>,
     ) -> Vec<HighlightedSegment> {
-        let syntax = match syntax {
-            Some(s) => s,
-            None => {
-                return vec![HighlightedSegment {
-                    text: line.to_string(),
-                    style: HighlightStyle {
-                        foreground: (200, 200, 200),
-                        background: None,
-                        bold: false,
-                        italic: false,
-                    },
-                }]
-            }
+        let Some(syntax) = syntax else {
+            return vec![HighlightedSegment {
+                text: line.to_string(),
+                style: HighlightStyle {
+                    foreground: (200, 200, 200),
+                    background: None,
+                    bold: false,
+                    italic: false,
+                },
+            }];
         };
 
         let theme = &self.theme_set.themes["base16-ocean.dark"];

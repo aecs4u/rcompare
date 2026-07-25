@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QSortFilterProxyModel
 from PySide6.QtWidgets import QApplication, QStyle
@@ -92,6 +92,11 @@ class ComparisonTreeModel(QAbstractItemModel):
             return self._root
         node_id = index.internalId()
         return self._node_map.get(node_id)
+
+    @property
+    def node_count(self) -> int:
+        """Number of indexed nodes, excluding no special model rows."""
+        return len(self._node_map)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -196,7 +201,7 @@ class ComparisonTreeModel(QAbstractItemModel):
                 return _COLUMN_HEADERS[section]
         return None
 
-    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.NoItemFlags
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable

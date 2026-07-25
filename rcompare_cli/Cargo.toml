@@ -6,9 +6,30 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# `full` is the default and matches the previously hardcoded feature set, so
+# a plain `cargo build`/`cargo install` is unchanged. Build a smaller binary
+# with fewer transitive deps via:
+#   cargo build -p rcompare_cli --no-default-features                 # minimal
+#   cargo build -p rcompare_cli --no-default-features -F archives     # + archives
+#   cargo build -p rcompare_cli --no-default-features -F csv-diff     # one format
+# A minimal build keeps directory/text/binary comparison, hashing, sync and
+# copy; it drops archive sources and the specialized format engines.
+default = ["full"]
+full = ["archives", "specialized"]
+
+archives = ["rcompare_core/archives"]
+
+specialized = ["csv-diff", "excel-diff", "json-diff", "parquet-diff", "image-diff"]
+csv-diff = ["rcompare_core/csv-diff"]
+excel-diff = ["rcompare_core/excel-diff"]
+json-diff = ["rcompare_core/json-diff"]
+parquet-diff = ["rcompare_core/parquet-diff"]
+image-diff = ["rcompare_core/image-diff"]
+
 [dependencies]
 rcompare_common = { path = "../rcompare_common" }
-rcompare_core = { path = "../rcompare_core", default-features = false, features = ["archives", "specialized"] }
+rcompare_core = { path = "../rcompare_core", default-features = false }
 
 clap.workspace = true
 anyhow.workspace = true
