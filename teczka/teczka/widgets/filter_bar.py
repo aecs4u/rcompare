@@ -1,6 +1,6 @@
 """FilterBar widget providing toggle buttons and a search field for result filtering."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
+
+_SEARCH_DEBOUNCE_MS = 200
 
 # Indicator colors for diff status (semantic colors, kept for clarity)
 # These could be themed in the future via a color scheme system
@@ -130,13 +132,19 @@ class FilterBar(QWidget):
         self._search_edit.setClearButtonEnabled(True)
         layout.addWidget(self._search_edit, 1)  # stretch factor 1
 
+        # --- Search debounce: coalesce rapid keystrokes into one filter pass ---
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(self._emit_filters_changed)
+
         # --- Connections ---
         self._btn_identical.toggled.connect(self._emit_filters_changed)
         self._btn_different.toggled.connect(self._emit_filters_changed)
         self._btn_left_only.toggled.connect(self._emit_filters_changed)
         self._btn_right_only.toggled.connect(self._emit_filters_changed)
         self._btn_files_only.toggled.connect(self._emit_filters_changed)
-        self._search_edit.textChanged.connect(self._emit_filters_changed)
+        self._search_edit.textChanged.connect(self._search_debounce.start)
         self._diff_options.currentIndexChanged.connect(self._on_diff_option_changed)
 
     # ------------------------------------------------------------------

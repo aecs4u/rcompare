@@ -70,6 +70,8 @@ class ComparisonTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self._root: Optional[TreeNode] = None
         self._node_map: dict[int, TreeNode] = {}
+        self._dir_icon: Optional[QIcon] = None
+        self._file_icon: Optional[QIcon] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -178,12 +180,7 @@ class ComparisonTreeModel(QAbstractItemModel):
 
         elif role == Qt.DecorationRole:
             if col == COL_NAME:
-                style = QApplication.style()
-                if style is None:
-                    return None
-                if node.is_dir:
-                    return style.standardIcon(QStyle.SP_DirIcon)
-                return style.standardIcon(QStyle.SP_FileIcon)
+                return self._dir_icon_cached() if node.is_dir else self._file_icon_cached()
 
         elif role == Qt.UserRole:
             return node.status
@@ -204,6 +201,22 @@ class ComparisonTreeModel(QAbstractItemModel):
             return Qt.NoItemFlags
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable
 
+    def _dir_icon_cached(self) -> Optional[QIcon]:
+        if self._dir_icon is None:
+            style = QApplication.style()
+            if style is None:
+                return None
+            self._dir_icon = style.standardIcon(QStyle.SP_DirIcon)
+        return self._dir_icon
+
+    def _file_icon_cached(self) -> Optional[QIcon]:
+        if self._file_icon is None:
+            style = QApplication.style()
+            if style is None:
+                return None
+            self._file_icon = style.standardIcon(QStyle.SP_FileIcon)
+        return self._file_icon
+
 
 class ComparisonFilterProxy(QSortFilterProxyModel):
     """Filter proxy that hides rows based on DiffStatus visibility and search text.
@@ -221,10 +234,37 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         self._show_files_only: bool = False
         self._search_text: str = ""
         self._diff_option_mode: str = "show_differences"
+        # Cleared on every invalidateFilter() call (results depend on the
+        # current filter criteria); avoids re-walking the same subtree
+        # repeatedly across the many filterAcceptsRow() calls Qt issues
+        # for a single filter change.
+        self._descendant_match_cache: dict[int, bool] = {}
+        # Persists across filter changes (a node's name never changes);
+        # only cleared when the source model gets a new tree.
+        self._name_lower_cache: dict[int, str] = {}
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def setSourceModel(self, source_model) -> None:  # noqa: N802 - Qt override
+        old = self.sourceModel()
+        if old is not None:
+            try:
+                old.modelAboutToBeReset.disconnect(self._on_source_about_to_reset)
+            except (RuntimeError, TypeError):
+                pass
+        super().setSourceModel(source_model)
+        if source_model is not None:
+            source_model.modelAboutToBeReset.connect(self._on_source_about_to_reset)
+
+    def _on_source_about_to_reset(self) -> None:
+        self._descendant_match_cache.clear()
+        self._name_lower_cache.clear()
+
+    def invalidateFilter(self) -> None:  # noqa: N802 - Qt override
+        self._descendant_match_cache.clear()
+        super().invalidateFilter()
 
     def set_filter_flags(
         self,
@@ -250,6 +290,32 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
     def set_diff_option_mode(self, mode: str) -> None:
         """Update the high-level diff option mode."""
         self._diff_option_mode = (mode or "show_differences").strip().lower()
+        self.invalidateFilter()
+
+    def apply_filters(
+        self,
+        show_identical: bool,
+        show_different: bool,
+        show_left_only: bool,
+        show_right_only: bool,
+        show_files_only: bool,
+        search_text: str,
+        diff_option_mode: Optional[str] = None,
+    ) -> None:
+        """Set all filter/search state and invalidate the proxy exactly once.
+
+        Prefer this over calling set_filter_flags()/set_search_text()/
+        set_diff_option_mode() individually, which each trigger their own
+        (expensive, recursive) invalidateFilter() pass.
+        """
+        self._show_identical = show_identical
+        self._show_different = show_different
+        self._show_left_only = show_left_only
+        self._show_right_only = show_right_only
+        self._show_files_only = show_files_only
+        self._search_text = search_text.strip().lower()
+        if diff_option_mode is not None:
+            self._diff_option_mode = (diff_option_mode or "show_differences").strip().lower()
         self.invalidateFilter()
 
     # ------------------------------------------------------------------
@@ -300,10 +366,19 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
             return False
 
         # Search text filter
-        if self._search_text and self._search_text not in node.name.lower():
+        if self._search_text and self._search_text not in self._name_lower(node):
             return False
 
         return True
+
+    def _name_lower(self, node: TreeNode) -> str:
+        """Return (and cache) the lowercased node name for search matching."""
+        key = id(node)
+        cached = self._name_lower_cache.get(key)
+        if cached is None:
+            cached = node.name.lower()
+            self._name_lower_cache[key] = cached
+        return cached
 
     def _accepts_diff_option_mode(self, node: TreeNode) -> bool:
         mode = self._diff_option_mode
@@ -351,11 +426,26 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         return True
 
     def _any_descendant_accepted(self, node: TreeNode) -> bool:
-        """Recursively check if any descendant of *node* passes the filter."""
+        """Recursively check if any descendant of *node* passes the filter.
+
+        Cached per node for the lifetime of the current filter criteria
+        (cleared in invalidateFilter()) since the same directory is asked
+        about repeatedly across the many filterAcceptsRow() calls Qt
+        issues for a single filter change.
+        """
+        key = id(node)
+        cached = self._descendant_match_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = False
         for child in node.children:
             if self._accepts_node(child):
-                return True
-            if child.is_dir and child.children:
-                if self._any_descendant_accepted(child):
-                    return True
-        return False
+                result = True
+                break
+            if child.is_dir and child.children and self._any_descendant_accepted(child):
+                result = True
+                break
+
+        self._descendant_match_cache[key] = result
+        return result

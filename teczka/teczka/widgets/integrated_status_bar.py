@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
+
+_SEARCH_DEBOUNCE_MS = 200
 
 # Semantic colors for filter pill checked states
 _PILL_COLORS: dict[str, str] = {
@@ -167,7 +169,13 @@ class IntegratedStatusBar(QWidget):
         ):
             pill.toggled.connect(self._emit_filters_changed)
 
-        self._search_edit.textChanged.connect(self.search_changed)
+        self._search_debounce = QTimer(self)
+        self._search_debounce.setSingleShot(True)
+        self._search_debounce.setInterval(_SEARCH_DEBOUNCE_MS)
+        self._search_debounce.timeout.connect(
+            lambda: self.search_changed.emit(self._search_edit.text())
+        )
+        self._search_edit.textChanged.connect(self._search_debounce.start)
         self._btn_prev.clicked.connect(self.navigate_prev)
         self._btn_next.clicked.connect(self.navigate_next)
 

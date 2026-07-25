@@ -217,13 +217,16 @@ class FolderView(QWidget):
         search_text: str = "",
         diff_option_mode: Optional[str] = None,
     ) -> None:
-        """Apply visibility and search filters."""
-        self._proxy_model.set_filter_flags(
-            show_identical, show_different, show_left_only, show_right_only, show_files_only,
+        """Apply visibility and search filters in a single proxy invalidation."""
+        self._proxy_model.apply_filters(
+            show_identical,
+            show_different,
+            show_left_only,
+            show_right_only,
+            show_files_only,
+            search_text,
+            diff_option_mode,
         )
-        if diff_option_mode is not None:
-            self._proxy_model.set_diff_option_mode(diff_option_mode)
-        self._proxy_model.set_search_text(search_text)
 
     def set_diff_option_mode(self, mode: str) -> None:
         self._proxy_model.set_diff_option_mode(mode)
