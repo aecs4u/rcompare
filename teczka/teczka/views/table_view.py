@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..workers.function_worker import FunctionWorker
+
 # ---------------------------------------------------------------------------
 # Cell status constants and background colours
 # ---------------------------------------------------------------------------
@@ -37,6 +39,65 @@ _STATUS_COLORS: dict[str, QColor] = {
     STATUS_RIGHT_ONLY: QColor("#fff9c4"),  # yellow
     STATUS_MISSING: QColor("#f5f5f5"),     # gray
 }
+
+
+def _read_csv_rows(path: str) -> list[list[str]]:
+    """Read a CSV file and return a list of rows (each a list of strings).
+
+    Pure I/O + parsing (no Qt access) so it can run on a worker thread.
+    """
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r", newline="", errors="replace") as fh:
+            # Sniff dialect for up to 8 KB
+            sample = fh.read(8192)
+            fh.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample)
+            except csv.Error:
+                dialect = csv.excel  # type: ignore[assignment]
+            reader = csv.reader(fh, dialect)
+            return [row for row in reader]
+    except (OSError, csv.Error):
+        return []
+
+
+def _read_excel_sheets(path: str) -> dict[str, list[list[str]]]:
+    """Read an Excel file and return {sheet_name: rows}.
+
+    Pure I/O + parsing (no Qt access) so it can run on a worker thread.
+    Requires openpyxl; raises ImportError if it's not installed.
+    """
+    import openpyxl
+
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return {}
+    sheets: dict[str, list[list[str]]] = {}
+    try:
+        for name in wb.sheetnames:
+            ws = wb[name]
+            rows: list[list[str]] = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append([str(cell) if cell is not None else "" for cell in row])
+            sheets[name] = rows
+    finally:
+        wb.close()
+    return sheets
+
+
+def _load_csv_pair(left_path: str, right_path: str) -> tuple[list[list[str]], list[list[str]]]:
+    return _read_csv_rows(left_path), _read_csv_rows(right_path)
+
+
+def _load_excel_pair(
+    left_path: str, right_path: str
+) -> tuple[dict[str, list[list[str]]], dict[str, list[list[str]]]]:
+    return _read_excel_sheets(left_path), _read_excel_sheets(right_path)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +150,9 @@ class TableView(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
 
+        self._pending_table_paths: tuple[str, str] | None = None
+        self._table_worker: Optional[FunctionWorker] = None
+
         # Header -----------------------------------------------------------
         self._left_path_label = QLabel("(no file loaded)")
         self._right_path_label = QLabel("(no file loaded)")
@@ -121,34 +185,77 @@ class TableView(QWidget):
     # ------------------------------------------------------------------
 
     def compare_csv(self, left_path: str, right_path: str) -> None:
-        """Read two CSV files and display a side-by-side diff."""
+        """Read two CSV files and display a side-by-side diff.
+
+        File reads/parsing run on a background :class:`FunctionWorker`
+        thread so large spreadsheets don't block the GUI.
+        """
         self._set_path_labels(left_path, right_path)
         self._tab_widget.clear()
+        self._summary_label.setText("Loading...")
+        self._pending_table_paths = (left_path, right_path)
 
-        left_rows = self._read_csv(left_path)
-        right_rows = self._read_csv(right_path)
+        worker = FunctionWorker(_load_csv_pair, left_path, right_path, parent=self)
+        worker.finished_with_result.connect(
+            lambda result, paths=(left_path, right_path): self._on_csv_loaded(paths, result)
+        )
+        worker.error.connect(
+            lambda msg, paths=(left_path, right_path): self._on_table_load_error(paths, msg)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._table_worker = worker
+        worker.start()
 
+    def _on_csv_loaded(
+        self, paths: tuple[str, str], result: tuple[list[list[str]], list[list[str]]]
+    ) -> None:
+        if self._pending_table_paths != paths:
+            return  # a newer compare_csv()/compare_excel() call superseded this one
+        left_rows, right_rows = result
         left_model, right_model, stats = self._build_models(left_rows, right_rows)
-
         splitter = self._create_table_pair(left_model, right_model)
         self._tab_widget.addTab(splitter, "CSV")
         self._update_summary(stats)
 
     def compare_excel(self, left_path: str, right_path: str) -> None:
-        """Read two Excel files and display a tab-per-sheet diff."""
+        """Read two Excel files and display a tab-per-sheet diff.
+
+        File reads/parsing run on a background :class:`FunctionWorker`
+        thread so large workbooks don't block the GUI.
+        """
         self._set_path_labels(left_path, right_path)
         self._tab_widget.clear()
 
         try:
-            import openpyxl
+            import openpyxl  # noqa: F401
         except ImportError:
             self._summary_label.setText(
                 "openpyxl is not installed. Install it with: pip install openpyxl"
             )
             return
 
-        left_sheets = self._read_excel(left_path, openpyxl)
-        right_sheets = self._read_excel(right_path, openpyxl)
+        self._summary_label.setText("Loading...")
+        self._pending_table_paths = (left_path, right_path)
+
+        worker = FunctionWorker(_load_excel_pair, left_path, right_path, parent=self)
+        worker.finished_with_result.connect(
+            lambda result, paths=(left_path, right_path): self._on_excel_loaded(paths, result)
+        )
+        worker.error.connect(
+            lambda msg, paths=(left_path, right_path): self._on_table_load_error(paths, msg)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._table_worker = worker
+        worker.start()
+
+    def _on_excel_loaded(
+        self,
+        paths: tuple[str, str],
+        result: tuple[dict[str, list[list[str]]], dict[str, list[list[str]]]],
+    ) -> None:
+        if self._pending_table_paths != paths:
+            return  # a newer compare_csv()/compare_excel() call superseded this one
+        left_sheets, right_sheets = result
 
         all_sheet_names: list[str] = []
         for name in left_sheets:
@@ -175,6 +282,11 @@ class TableView(QWidget):
                 total_stats[key] += stats.get(key, 0)
 
         self._update_summary(total_stats)
+
+    def _on_table_load_error(self, paths: tuple[str, str], message: str) -> None:
+        if self._pending_table_paths != paths:
+            return
+        self._summary_label.setText(f"Error loading file: {message}")
 
     def load_from_cli_data(self, diff_data: dict) -> None:
         """Populate the view from pre-computed CLI bridge diff data.
@@ -244,50 +356,6 @@ class TableView(QWidget):
                     total_stats[key] += stats.get(key, 0)
 
         self._update_summary(total_stats)
-
-    # ------------------------------------------------------------------
-    # File reading helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _read_csv(path: str) -> list[list[str]]:
-        """Read a CSV file and return a list of rows (each a list of strings)."""
-        if not path or not os.path.isfile(path):
-            return []
-        try:
-            with open(path, "r", newline="", errors="replace") as fh:
-                # Sniff dialect for up to 8 KB
-                sample = fh.read(8192)
-                fh.seek(0)
-                try:
-                    dialect = csv.Sniffer().sniff(sample)
-                except csv.Error:
-                    dialect = csv.excel  # type: ignore[assignment]
-                reader = csv.reader(fh, dialect)
-                return [row for row in reader]
-        except (OSError, csv.Error):
-            return []
-
-    @staticmethod
-    def _read_excel(path: str, openpyxl_mod) -> dict[str, list[list[str]]]:
-        """Read an Excel file and return {sheet_name: rows}."""
-        if not path or not os.path.isfile(path):
-            return {}
-        try:
-            wb = openpyxl_mod.load_workbook(path, read_only=True, data_only=True)
-        except Exception:
-            return {}
-        sheets: dict[str, list[list[str]]] = {}
-        try:
-            for name in wb.sheetnames:
-                ws = wb[name]
-                rows: list[list[str]] = []
-                for row in ws.iter_rows(values_only=True):
-                    rows.append([str(cell) if cell is not None else "" for cell in row])
-                sheets[name] = rows
-        finally:
-            wb.close()
-        return sheets
 
     # ------------------------------------------------------------------
     # Model building
