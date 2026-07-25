@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..widgets.diff_text_edit import DiffTextEdit
+from ..workers.function_worker import FunctionWorker
 
 
 # Highlight colors for merge regions
@@ -21,6 +23,43 @@ COLOR_LEFT = QColor("#bbdefb")       # blue tint - lines from left
 COLOR_RIGHT = QColor("#c8e6c9")      # green tint - lines from right
 COLOR_CONFLICT = QColor("#ffcdd2")   # red tint - unresolved conflict
 COLOR_RESOLVED = QColor("#e0e0e0")   # light gray - resolved
+
+
+COLOR_WHITE = QColor(Qt.GlobalColor.white)
+
+
+@dataclass
+class _MergeComputation:
+    """Result of a background file-load + 3-way merge computation."""
+
+    left_lines: list[str] = field(default_factory=list)
+    base_lines: list[str] = field(default_factory=list)
+    right_lines: list[str] = field(default_factory=list)
+    conflicts: list["ConflictRegion"] = field(default_factory=list)
+    output_lines: list[str] = field(default_factory=list)
+    output_colors: list[QColor] = field(default_factory=list)
+
+
+def _compute_merge(left_path: str, base_path: str, right_path: str) -> _MergeComputation:
+    """Read three files and perform the 3-way merge (runs off the GUI thread).
+
+    Raises ``OSError`` if any file can't be read.
+    """
+    left_lines = Path(left_path).read_text(errors="replace").splitlines()
+    base_lines = Path(base_path).read_text(errors="replace").splitlines()
+    right_lines = Path(right_path).read_text(errors="replace").splitlines()
+
+    conflicts, output_lines, output_colors = MergeView._merge_lines(
+        left_lines, base_lines, right_lines
+    )
+    return _MergeComputation(
+        left_lines=left_lines,
+        base_lines=base_lines,
+        right_lines=right_lines,
+        conflicts=conflicts,
+        output_lines=output_lines,
+        output_colors=output_colors,
+    )
 
 
 class ConflictType(Enum):
@@ -73,6 +112,8 @@ class MergeView(QWidget):
         self._left_path = ""
         self._base_path = ""
         self._right_path = ""
+        self._pending_merge_paths: tuple[str, str, str] | None = None
+        self._merge_worker: FunctionWorker | None = None
 
         self._conflicts: list[ConflictRegion] = []
         self._current_conflict = -1
@@ -227,7 +268,12 @@ class MergeView(QWidget):
     # ------------------------------------------------------------------
 
     def load_merge(self, left_path: str, base_path: str, right_path: str) -> None:
-        """Read three files and perform a simple 3-way merge."""
+        """Read three files and perform a simple 3-way merge.
+
+        File reads and the difflib-based merge computation run on a
+        background thread (:class:`FunctionWorker`) so large files don't
+        block the GUI.
+        """
         self._left_path = left_path
         self._base_path = base_path
         self._right_path = right_path
@@ -236,21 +282,40 @@ class MergeView(QWidget):
         self._base_label.setText(f"Base (Ancestor) - {base_path}")
         self._right_label.setText(f"Right (Theirs) - {right_path}")
 
-        try:
-            left_lines = Path(left_path).read_text(errors="replace").splitlines()
-            base_lines = Path(base_path).read_text(errors="replace").splitlines()
-            right_lines = Path(right_path).read_text(errors="replace").splitlines()
-        except OSError as e:
-            self._output_editor.setPlainText(f"Error reading files: {e}")
-            return
+        self._pending_merge_paths = (left_path, base_path, right_path)
 
-        self._populate_source_panes(left_lines, base_lines, right_lines)
-        self._perform_merge(left_lines, base_lines, right_lines)
+        worker = FunctionWorker(_compute_merge, left_path, base_path, right_path, parent=self)
+        worker.finished_with_result.connect(
+            lambda result, paths=(left_path, base_path, right_path): self._on_merge_computed(paths, result)
+        )
+        worker.error.connect(
+            lambda msg, paths=(left_path, base_path, right_path): self._on_merge_error(paths, msg)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._merge_worker = worker
+        worker.start()
+
+    def _on_merge_computed(
+        self, paths: tuple[str, str, str], result: _MergeComputation
+    ) -> None:
+        """Apply a background merge computation, if it's still the active request."""
+        if self._pending_merge_paths != paths:
+            return  # a newer load_merge() call superseded this one
+
+        self._populate_source_panes(result.left_lines, result.base_lines, result.right_lines)
+        self._conflicts = result.conflicts
+        nums = [str(i + 1) for i in range(len(result.output_lines))]
+        self._output_editor.set_content(result.output_lines, result.output_colors, nums)
         self._update_conflict_label()
 
         if self._conflicts:
             self._current_conflict = 0
             self._scroll_to_conflict(0)
+
+    def _on_merge_error(self, paths: tuple[str, str, str], message: str) -> None:
+        if self._pending_merge_paths != paths:
+            return
+        self._output_editor.setPlainText(f"Error reading files: {message}")
 
     def _populate_source_panes(
         self,
@@ -277,13 +342,14 @@ class MergeView(QWidget):
             right_lines, _make_colors(len(right_lines)), _make_nums(len(right_lines)),
         )
 
-    def _perform_merge(
-        self,
+    @staticmethod
+    def _merge_lines(
         left_lines: list[str],
         base_lines: list[str],
         right_lines: list[str],
-    ) -> None:
-        """Simple 3-way merge using difflib.
+    ) -> tuple[list["ConflictRegion"], list[str], list[QColor]]:
+        """Simple 3-way merge using difflib. Pure function (no Qt widget
+        access) so it can run on a worker thread.
 
         Algorithm:
         1. Diff left vs base and right vs base.
@@ -300,11 +366,11 @@ class MergeView(QWidget):
 
         output_lines: list[str] = []
         output_colors: list[QColor] = []
-        self._conflicts = []
+        conflicts: list[ConflictRegion] = []
 
         # Convert opcodes into a base-indexed structure
-        left_changes = self._opcodes_to_changes(left_ops, base_lines, left_lines)
-        right_changes = self._opcodes_to_changes(right_ops, base_lines, right_lines)
+        left_changes = MergeView._opcodes_to_changes(left_ops, base_lines, left_lines)
+        right_changes = MergeView._opcodes_to_changes(right_ops, base_lines, right_lines)
 
         # Merge the two change lists against the base
         all_base_regions = sorted(
@@ -323,7 +389,7 @@ class MergeView(QWidget):
                 for i in range(next_base, region_start):
                     if i < base_len:
                         output_lines.append(base_lines[i])
-                        output_colors.append(QColor(Qt.GlobalColor.white))
+                        output_colors.append(COLOR_WHITE)
 
             l_end = l_change[0] if l_change else region_start
             l_new = l_change[1] if l_change else []
@@ -342,11 +408,11 @@ class MergeView(QWidget):
                     output_colors.append(COLOR_LEFT)
                 end = len(output_lines)
                 if start < end:
-                    self._conflicts.append(ConflictRegion(
+                    conflicts.append(ConflictRegion(
                         start, end, ConflictType.LEFT_ONLY,
                         l_new, base_slice, base_slice,
                     ))
-                    self._conflicts[-1].resolved = True
+                    conflicts[-1].resolved = True
             elif r_change and not l_change:
                 # Only right changed
                 start = len(output_lines)
@@ -355,11 +421,11 @@ class MergeView(QWidget):
                     output_colors.append(COLOR_RIGHT)
                 end = len(output_lines)
                 if start < end:
-                    self._conflicts.append(ConflictRegion(
+                    conflicts.append(ConflictRegion(
                         start, end, ConflictType.RIGHT_ONLY,
                         base_slice, base_slice, r_new,
                     ))
-                    self._conflicts[-1].resolved = True
+                    conflicts[-1].resolved = True
             elif l_change and r_change:
                 # Both sides changed
                 if l_new == r_new:
@@ -370,11 +436,11 @@ class MergeView(QWidget):
                         output_colors.append(COLOR_RESOLVED)
                     end = len(output_lines)
                     if start < end:
-                        self._conflicts.append(ConflictRegion(
+                        conflicts.append(ConflictRegion(
                             start, end, ConflictType.BOTH_DIFFER,
                             l_new, base_slice, r_new,
                         ))
-                        self._conflicts[-1].resolved = True
+                        conflicts[-1].resolved = True
                 else:
                     # Real conflict
                     start = len(output_lines)
@@ -391,7 +457,7 @@ class MergeView(QWidget):
                     output_lines.append("<<<< END >>>>")
                     output_colors.append(COLOR_CONFLICT)
                     end = len(output_lines)
-                    self._conflicts.append(ConflictRegion(
+                    conflicts.append(ConflictRegion(
                         start, end, ConflictType.BOTH_DIFFER,
                         l_new, base_slice, r_new,
                     ))
@@ -401,10 +467,9 @@ class MergeView(QWidget):
         # Emit remaining base lines
         for i in range(next_base, base_len):
             output_lines.append(base_lines[i])
-            output_colors.append(QColor(Qt.GlobalColor.white))
+            output_colors.append(COLOR_WHITE)
 
-        nums = [str(i + 1) for i in range(len(output_lines))]
-        self._output_editor.set_content(output_lines, output_colors, nums)
+        return conflicts, output_lines, output_colors
 
     @staticmethod
     def _opcodes_to_changes(

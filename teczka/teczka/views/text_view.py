@@ -161,6 +161,8 @@ class TextView(QWidget):
         self._left_path = ""
         self._right_path = ""
         self._edit_mode = False
+        self._pending_diff_paths: tuple[str, str] | None = None
+        self._diff_worker: FunctionWorker | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
