@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal, QModelIndex, QTimer
@@ -32,6 +33,43 @@ from ..models.tree_model import (
     ComparisonTreeModel,
 )
 from ..utils.cli_bridge import DiffStatus
+from ..workers.function_worker import FunctionWorker
+
+_PREVIEW_DEBOUNCE_MS = 200
+_PREVIEW_MAX_LINES = 100
+_PREVIEW_MAX_BYTES = 64 * 1024  # 64 KB
+
+
+def _read_preview_side(root: str, rel_path: str) -> str:
+    """Read a bounded preview of one side's file. Runs off the GUI thread
+    so slow/network storage doesn't stall the UI.
+    """
+    if not root:
+        return ""
+
+    full_path = os.path.join(root, rel_path)
+    if not os.path.isfile(full_path):
+        return "(not present on this side)"
+
+    try:
+        size = os.path.getsize(full_path)
+        if size > _PREVIEW_MAX_BYTES:
+            with open(full_path, "r", errors="replace") as f:
+                lines = []
+                for i, line in enumerate(f):
+                    if i >= _PREVIEW_MAX_LINES:
+                        break
+                    lines.append(line.rstrip("\n"))
+            lines.append(f"\n... (truncated, {size:,} bytes total)")
+            return "\n".join(lines)
+        with open(full_path, "r", errors="replace") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return "(binary or unreadable file)"
+
+
+def _read_preview_pair(left_root: str, right_root: str, rel_path: str) -> tuple[str, str]:
+    return _read_preview_side(left_root, rel_path), _read_preview_side(right_root, rel_path)
 
 
 # Row background colours keyed by DiffStatus
@@ -136,6 +174,13 @@ class FolderView(QWidget):
         self._syncing_expand = False
         self._preview_left_root = ""
         self._preview_right_root = ""
+        self._preview_pending_path: Optional[str] = None
+        self._preview_request_path: Optional[str] = None
+        self._preview_worker: Optional[FunctionWorker] = None
+        self._preview_debounce_timer = QTimer(self)
+        self._preview_debounce_timer.setSingleShot(True)
+        self._preview_debounce_timer.setInterval(_PREVIEW_DEBOUNCE_MS)
+        self._preview_debounce_timer.timeout.connect(self._trigger_preview_load)
 
         # Connect synchronisation signals ------------------------------
         self._connect_sync()
@@ -602,7 +647,11 @@ class FolderView(QWidget):
         self._preview_right_root = right_root
 
     def _on_selection_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
-        """Update the preview panels when a new row is selected."""
+        """Update the preview panels when a new row is selected.
+
+        Debounced: rapid arrow-key navigation restarts the timer instead of
+        firing a read per row.
+        """
         if not self._preview_visible:
             return
         if not current.isValid():
@@ -613,49 +662,39 @@ class FolderView(QWidget):
         if node is None or not hasattr(node, "path") or not hasattr(node, "is_dir"):
             return
         if node.is_dir:
+            self._preview_pending_path = None
+            self._preview_debounce_timer.stop()
             self._left_preview.setPlainText("")
             self._right_preview.setPlainText("")
             return
 
-        self._load_preview(node.path)
+        self._preview_pending_path = node.path
+        self._preview_debounce_timer.start()
 
-    def _load_preview(self, rel_path: str) -> None:
-        """Load file content previews for both sides."""
-        import os
+    def _trigger_preview_load(self) -> None:
+        """Start the background read for the debounced pending selection."""
+        rel_path = self._preview_pending_path
+        if rel_path is None:
+            return
+        self._preview_request_path = rel_path
 
-        max_preview_lines = 100
-        max_preview_bytes = 64 * 1024  # 64 KB
+        worker = FunctionWorker(
+            _read_preview_pair, self._preview_left_root, self._preview_right_root, rel_path,
+            parent=self,
+        )
+        worker.finished_with_result.connect(
+            lambda result, p=rel_path: self._on_preview_loaded(p, result)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._preview_worker = worker
+        worker.start()
 
-        for root, preview_widget in (
-            (self._preview_left_root, self._left_preview),
-            (self._preview_right_root, self._right_preview),
-        ):
-            if not root:
-                preview_widget.setPlainText("")
-                continue
-
-            full_path = os.path.join(root, rel_path)
-            if not os.path.isfile(full_path):
-                preview_widget.setPlainText(f"(not present on this side)")
-                continue
-
-            try:
-                size = os.path.getsize(full_path)
-                if size > max_preview_bytes:
-                    with open(full_path, "r", errors="replace") as f:
-                        lines = []
-                        for i, line in enumerate(f):
-                            if i >= max_preview_lines:
-                                break
-                            lines.append(line.rstrip("\n"))
-                    lines.append(f"\n... (truncated, {size:,} bytes total)")
-                    preview_widget.setPlainText("\n".join(lines))
-                else:
-                    with open(full_path, "r", errors="replace") as f:
-                        content = f.read()
-                    preview_widget.setPlainText(content)
-            except (OSError, UnicodeDecodeError):
-                preview_widget.setPlainText("(binary or unreadable file)")
+    def _on_preview_loaded(self, rel_path: str, result: tuple[str, str]) -> None:
+        if self._preview_request_path != rel_path:
+            return  # a newer selection superseded this preview request
+        left_text, right_text = result
+        self._left_preview.setPlainText(left_text)
+        self._right_preview.setPlainText(right_text)
 
     def _collapse_subfolders(self, tree: QTreeView, root_index: QModelIndex) -> None:
         """Recursively collapse all descendants and then the root index."""
