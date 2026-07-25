@@ -120,6 +120,8 @@ class MainWindow(QMainWindow):
         self._copy_worker: Optional[CliJsonWorker] = None
         self._sync_worker: Optional[CliJsonWorker] = None
         self._current_report: Optional[ScanReport] = None
+        self._diff_entries_cache: Optional[tuple] = None
+        self._all_file_entries_cache: Optional[tuple] = None
         self._settings: ComparisonSettings = ComparisonSettings()
         self._profile_manager: ProfileManager = ProfileManager()
         self._undo_history: OperationHistory = OperationHistory()
@@ -2577,18 +2579,55 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _get_diff_entries(self) -> list:
-        """Return entries from current report that are not identical."""
+        """Return entries from current report that are not identical.
+
+        Cached against the current report object so repeated Next/Previous
+        navigation doesn't re-filter the full entry list every time.
+        """
         report = self._current_report
         if report is None:
+            self._diff_entries_cache = None
             return []
-        return [e for e in report.entries if e.status != DiffStatus.SAME and not (e.left and e.left.is_dir)]
+        cached = self._diff_entries_cache
+        if cached is not None and cached[0] is report:
+            return cached[1]
+        entries = [
+            e for e in report.entries
+            if e.status != DiffStatus.SAME and not (e.left and e.left.is_dir)
+        ]
+        self._diff_entries_cache = (report, entries, {e.path: i for i, e in enumerate(entries)})
+        return entries
 
     def _get_all_file_entries(self) -> list:
-        """Return all file entries from current report."""
+        """Return all file entries from current report.
+
+        Cached against the current report object; see _get_diff_entries().
+        """
         report = self._current_report
         if report is None:
+            self._all_file_entries_cache = None
             return []
-        return [e for e in report.entries if not (e.left and e.left.is_dir) or not (e.right and e.right.is_dir)]
+        cached = self._all_file_entries_cache
+        if cached is not None and cached[0] is report:
+            return cached[1]
+        entries = [
+            e for e in report.entries
+            if not (e.left and e.left.is_dir) or not (e.right and e.right.is_dir)
+        ]
+        self._all_file_entries_cache = (report, entries, {e.path: i for i, e in enumerate(entries)})
+        return entries
+
+    def _path_index(self, entries: list, cache: Optional[tuple], path: str) -> Optional[int]:
+        """O(1) lookup of *path*'s index within *entries* using the cache
+        populated by _get_diff_entries()/_get_all_file_entries(), falling
+        back to a linear scan if the cache doesn't (yet) match.
+        """
+        if cache is not None and cache[1] is entries:
+            return cache[2].get(path)
+        try:
+            return [e.path for e in entries].index(path)
+        except ValueError:
+            return None
 
     def _navigate_entry(self, entries: list, direction: int) -> None:
         """Navigate to next/prev entry in the given list."""
@@ -2601,12 +2640,13 @@ class MainWindow(QMainWindow):
         current_path = selected[0] if selected else ""
 
         # Find current index
-        paths = [e.path for e in entries]
-        try:
-            current_idx = paths.index(current_path)
-            new_idx = current_idx + direction
-        except ValueError:
+        current_idx = self._path_index(entries, self._diff_entries_cache, current_path)
+        if current_idx is None:
+            current_idx = self._path_index(entries, self._all_file_entries_cache, current_path)
+        if current_idx is None:
             new_idx = 0 if direction > 0 else len(entries) - 1
+        else:
+            new_idx = current_idx + direction
 
         # Wrap around
         if new_idx >= len(entries):
@@ -2627,11 +2667,9 @@ class MainWindow(QMainWindow):
         if report:
             all_files = self._get_all_file_entries()
             if entry and entry.path:
-                try:
-                    file_idx = [e.path for e in all_files].index(entry.path)
+                file_idx = self._path_index(all_files, self._all_file_entries_cache, entry.path)
+                if file_idx is not None:
                     self._status_files.setText(f"File {file_idx + 1} of {len(all_files)}")
-                except ValueError:
-                    pass
 
     @Slot()
     def _on_prev_diff(self) -> None:
