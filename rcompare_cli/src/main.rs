@@ -129,6 +129,12 @@ enum Commands {
         #[arg(long)]
         text_diff: bool,
 
+        /// Limit embedded text-diff JSON output to N lines of context around
+        /// each change instead of every equal line (unified-diff style).
+        /// Only affects --text-diff --json output.
+        #[arg(long, value_name = "N")]
+        context: Option<usize>,
+
         /// Ignore whitespace when comparing text files
         /// Options: all, leading, trailing, changes
         #[arg(long, value_name = "MODE")]
@@ -441,6 +447,7 @@ fn main() {
             yaml_diff,
             parquet_diff,
             text_diff,
+            context,
             ignore_whitespace,
             ignore_case,
             regex_rule,
@@ -462,6 +469,7 @@ fn main() {
                 summary_only,
                 max_results,
                 output,
+                context,
             };
             match run_scan(
                 left,
@@ -949,6 +957,67 @@ mod tests {
         assert!(is_safe_relative_path(Path::new("./a/b.txt")));
         assert!(!is_safe_relative_path(Path::new("../secret")));
         assert!(!is_safe_relative_path(Path::new("/etc/passwd")));
+    }
+
+    fn diff_line(change_type: rcompare_core::text_diff::DiffChangeType) -> rcompare_core::text_diff::DiffLine {
+        rcompare_core::text_diff::DiffLine {
+            line_number_left: Some(1),
+            line_number_right: Some(1),
+            content: String::new(),
+            change_type,
+            highlighted_segments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_trim_diff_context_none_returns_all_lines() {
+        use rcompare_core::text_diff::DiffChangeType;
+        let lines = vec![diff_line(DiffChangeType::Equal), diff_line(DiffChangeType::Insert)];
+        let trimmed = trim_diff_context(lines.clone(), None);
+        assert_eq!(trimmed.len(), lines.len());
+    }
+
+    #[test]
+    fn test_trim_diff_context_keeps_only_lines_near_changes() {
+        use rcompare_core::text_diff::DiffChangeType;
+        // 7 lines: Equal Equal Equal Insert Equal Equal Equal
+        // context=1 should keep indices 2,3,4 (one before/after the change)
+        let lines = vec![
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Insert),
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Equal),
+        ];
+        let trimmed = trim_diff_context(lines, Some(1));
+        assert_eq!(trimmed.len(), 3);
+        assert_eq!(trimmed[0].change_type, DiffChangeType::Equal);
+        assert_eq!(trimmed[1].change_type, DiffChangeType::Insert);
+        assert_eq!(trimmed[2].change_type, DiffChangeType::Equal);
+    }
+
+    #[test]
+    fn test_trim_diff_context_merges_overlapping_windows() {
+        use rcompare_core::text_diff::DiffChangeType;
+        // Two changes close together: their context windows overlap and
+        // should merge into one contiguous kept region, not duplicate lines.
+        let lines = vec![
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Delete),
+            diff_line(DiffChangeType::Equal),
+            diff_line(DiffChangeType::Insert),
+            diff_line(DiffChangeType::Equal),
+        ];
+        let trimmed = trim_diff_context(lines, Some(1));
+        assert_eq!(trimmed.len(), 5); // context=1 around both changes covers everything
+    }
+
+    #[test]
+    fn test_trim_diff_context_empty_input() {
+        let trimmed = trim_diff_context(Vec::new(), Some(2));
+        assert!(trimmed.is_empty());
     }
 
     #[test]

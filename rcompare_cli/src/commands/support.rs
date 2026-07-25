@@ -351,6 +351,43 @@ pub(crate) struct OutputOptions {
     pub(crate) summary_only: bool,
     pub(crate) max_results: Option<usize>,
     pub(crate) output: Option<PathBuf>,
+    /// Trim embedded text-diff JSON output to N lines of context around each
+    /// change (unified-diff style) instead of embedding every equal line.
+    pub(crate) context: Option<usize>,
+}
+
+/// Trim a text diff's lines to `context` lines of surrounding equal-content
+/// around each change (unified-diff style), dropping everything else.
+/// `None` returns `lines` unchanged. Only affects the embedded JSON output --
+/// the human-readable path only ever printed summary counts, never the lines
+/// themselves.
+pub(crate) fn trim_diff_context(
+    lines: Vec<rcompare_core::text_diff::DiffLine>,
+    context: Option<usize>,
+) -> Vec<rcompare_core::text_diff::DiffLine> {
+    use rcompare_core::text_diff::DiffChangeType;
+
+    let Some(context) = context else {
+        return lines;
+    };
+    if lines.is_empty() {
+        return lines;
+    }
+
+    let mut keep = vec![false; lines.len()];
+    for (i, line) in lines.iter().enumerate() {
+        if line.change_type != DiffChangeType::Equal {
+            let start = i.saturating_sub(context);
+            let end = (i + context + 1).min(lines.len());
+            keep[start..end].fill(true);
+        }
+    }
+
+    lines
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(line, k)| k.then_some(line))
+        .collect()
 }
 
 /// Options for [`run_core_scan`], the in-process scan+compare service shared

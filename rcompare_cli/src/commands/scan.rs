@@ -1802,16 +1802,21 @@ pub(crate) fn run_scan(
 
                                         if json {
                                             if let Some(ref mut diffs) = json_text_diffs {
+                                                let total_lines = diff_lines.len();
+                                                let lines = super::support::trim_diff_context(
+                                                    diff_lines,
+                                                    output_opts.context,
+                                                );
                                                 diffs.push(JsonTextDiffReport {
                                                     path: node
                                                         .relative_path
                                                         .to_string_lossy()
                                                         .to_string(),
-                                                    total_lines: diff_lines.len(),
+                                                    total_lines,
                                                     equal_lines: equal,
                                                     inserted_lines: inserted,
                                                     deleted_lines: deleted,
-                                                    lines: diff_lines,
+                                                    lines,
                                                 });
                                             }
                                         } else {
