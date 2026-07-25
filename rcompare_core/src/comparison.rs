@@ -122,6 +122,10 @@ pub struct ComparisonEngine {
     /// Threshold in bytes for using streaming comparison (default: 100MB)
     /// Files larger than this will be compared in chunks to avoid loading entirely into memory
     streaming_threshold: u64,
+    /// Bounded rayon thread pool for parallel hash verification, if configured
+    /// via [`with_hash_concurrency`](Self::with_hash_concurrency). `None` uses
+    /// rayon's global default pool (one thread per core).
+    hash_concurrency: Option<usize>,
 }
 
 impl ComparisonEngine {
@@ -133,6 +137,7 @@ impl ComparisonEngine {
             cache,
             verify_hashes: false,
             streaming_threshold: Self::DEFAULT_STREAMING_THRESHOLD,
+            hash_concurrency: None,
         }
     }
 
@@ -146,6 +151,15 @@ impl ComparisonEngine {
     /// to avoid loading them entirely into memory. Default is 100MB.
     pub fn with_streaming_threshold(mut self, threshold: u64) -> Self {
         self.streaming_threshold = threshold;
+        self
+    }
+
+    /// Bound the number of threads used for parallel hash verification.
+    /// `None` (the default) uses rayon's global pool, i.e. one thread per
+    /// CPU core. Lower this for network mounts or spinning disks where
+    /// concurrent reads don't help (or hurt) throughput.
+    pub fn with_hash_concurrency(mut self, jobs: Option<usize>) -> Self {
+        self.hash_concurrency = jobs;
         self
     }
 
@@ -216,6 +230,13 @@ impl ComparisonEngine {
 
     /// Compare directory entries with VFS support, cancellation, and progress callback
     ///
+    /// Same-size local file pairs that need hash verification are batched and
+    /// hashed concurrently across a rayon thread pool (see
+    /// [`with_hash_concurrency`](Self::with_hash_concurrency) to bound it)
+    /// instead of one at a time, since they're otherwise embarrassingly
+    /// parallel and hashing is usually the dominant cost of a `--verify-hashes`
+    /// scan.
+    ///
     /// # Arguments
     ///
     /// * `progress_fn` - Optional callback function that receives (current, total) progress updates
@@ -231,7 +252,7 @@ impl ComparisonEngine {
         progress_fn: Option<F>,
     ) -> Result<Vec<DiffNode>, RCompareError>
     where
-        F: Fn(usize, usize),
+        F: Fn(usize, usize) + Sync,
     {
         info!(
             "Comparing {} left entries with {} right entries",
@@ -249,8 +270,6 @@ impl ComparisonEngine {
             .map(|e| (e.path.clone(), e))
             .collect();
 
-        let mut diff_nodes = Vec::new();
-
         // Find all unique paths
         let mut all_paths: Vec<PathBuf> =
             left_map.keys().chain(right_map.keys()).cloned().collect();
@@ -258,47 +277,214 @@ impl ComparisonEngine {
         all_paths.dedup();
 
         let total = all_paths.len();
+        let mut slots: Vec<Option<DiffNode>> = (0..total).map(|_| None).collect();
+        // (slot index, absolute left path, absolute right path, left entry, right entry)
+        let mut pending: Vec<(usize, PathBuf, PathBuf, FileEntry, FileEntry)> = Vec::new();
 
-        for (idx, path) in all_paths.into_iter().enumerate() {
+        // First pass: resolve everything that's cheap (dirs, orphans, size
+        // mismatches, non-verify same/unchecked, VFS pairs) immediately;
+        // defer same-size local file pairs that need hash verification.
+        for (idx, path) in all_paths.iter().enumerate() {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison(
                     "Comparison cancelled".to_string(),
                 ));
             }
 
-            // Report progress
-            if let Some(ref progress) = progress_fn {
-                progress(idx + 1, total);
-            }
+            let left = left_map.remove(path);
+            let right = right_map.remove(path);
 
-            let left = left_map.remove(&path);
-            let right = right_map.remove(&path);
-
-            let status = match (&left, &right) {
+            match (left, right) {
                 (Some(l), Some(r)) => {
-                    if l.is_dir && r.is_dir {
-                        DiffStatus::Same
-                    } else if l.is_dir || r.is_dir {
-                        DiffStatus::Different
+                    if l.is_dir || r.is_dir || l.size != r.size || !self.verify_hashes {
+                        let status = self.classify_cheap(&l, &r);
+                        slots[idx] = Some(DiffNode {
+                            relative_path: path.clone(),
+                            left: Some(l),
+                            right: Some(r),
+                            status,
+                        });
+                    } else if left_vfs.is_none() && right_vfs.is_none() {
+                        let left_path = left_root.join(&l.path);
+                        let right_path = right_root.join(&r.path);
+                        pending.push((idx, left_path, right_path, l, r));
                     } else {
-                        self.compare_files(left_root, right_root, left_vfs, right_vfs, l, r)?
+                        let status = self.compare_files(
+                            left_root, right_root, left_vfs, right_vfs, &l, &r,
+                        )?;
+                        slots[idx] = Some(DiffNode {
+                            relative_path: path.clone(),
+                            left: Some(l),
+                            right: Some(r),
+                            status,
+                        });
                     }
                 }
-                (Some(_), None) => DiffStatus::OrphanLeft,
-                (None, Some(_)) => DiffStatus::OrphanRight,
-                (None, None) => continue,
-            };
-
-            diff_nodes.push(DiffNode {
-                relative_path: path,
-                left,
-                right,
-                status,
-            });
+                (Some(l), None) => {
+                    slots[idx] = Some(DiffNode {
+                        relative_path: path.clone(),
+                        left: Some(l),
+                        right: None,
+                        status: DiffStatus::OrphanLeft,
+                    });
+                }
+                (None, Some(r)) => {
+                    slots[idx] = Some(DiffNode {
+                        relative_path: path.clone(),
+                        left: None,
+                        right: Some(r),
+                        status: DiffStatus::OrphanRight,
+                    });
+                }
+                (None, None) => {}
+            }
         }
 
+        if let Some(ref progress) = progress_fn {
+            progress(total - pending.len(), total);
+        }
+
+        if !pending.is_empty() {
+            use rayon::prelude::*;
+
+            let done = std::sync::atomic::AtomicUsize::new(total - pending.len());
+            let run = || -> Result<Vec<(usize, DiffNode)>, RCompareError> {
+                pending
+                    .par_iter()
+                    .map(|(idx, left_path, right_path, l, r)| {
+                        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                            return Err(RCompareError::Comparison(
+                                "Comparison cancelled".to_string(),
+                            ));
+                        }
+                        let status = self.verify_local_pair(left_path, right_path, l.size)?;
+                        if let Some(ref progress) = progress_fn {
+                            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                            progress(n, total);
+                        }
+                        Ok((
+                            *idx,
+                            DiffNode {
+                                relative_path: PathBuf::new(), // filled in below
+                                left: Some(l.clone()),
+                                right: Some(r.clone()),
+                                status,
+                            },
+                        ))
+                    })
+                    .collect()
+            };
+
+            let results = if let Some(jobs) = self.hash_concurrency {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(jobs)
+                    .build()
+                    .map_err(|e| {
+                        RCompareError::Comparison(format!("failed to build hash thread pool: {e}"))
+                    })?;
+                pool.install(run)
+            } else {
+                run()
+            }?;
+
+            for (idx, mut node) in results {
+                node.relative_path = all_paths[idx].clone();
+                slots[idx] = Some(node);
+            }
+        }
+
+        let diff_nodes: Vec<DiffNode> = slots.into_iter().flatten().collect();
         debug!("Generated {} diff nodes", diff_nodes.len());
         Ok(diff_nodes)
+    }
+
+    /// Resolve the status of a same-path pair that doesn't need hash
+    /// verification: directories, size mismatches, or (when hash
+    /// verification is off) a same/unchecked call based on timestamps.
+    /// Caller guarantees this is only invoked for such cases.
+    fn classify_cheap(&self, left: &FileEntry, right: &FileEntry) -> DiffStatus {
+        if left.is_dir && right.is_dir {
+            return DiffStatus::Same;
+        }
+        if left.is_dir || right.is_dir {
+            return DiffStatus::Different;
+        }
+        if left.size != right.size {
+            return DiffStatus::Different;
+        }
+        // Sizes match, hash verification is off (otherwise this path
+        // wouldn't have been classified as "cheap"): fall back to timestamps.
+        if left.modified == right.modified {
+            DiffStatus::Same
+        } else {
+            DiffStatus::Unchecked
+        }
+    }
+
+    /// Verify a same-size local (non-VFS) file pair by hash, using the same
+    /// partial-hash-first / streaming-for-large-files strategy as
+    /// [`compare_files`](Self::compare_files)'s local branch. Extracted so it
+    /// can be called from within a rayon parallel iterator.
+    fn verify_local_pair(
+        &self,
+        left_path: &Path,
+        right_path: &Path,
+        size: u64,
+    ) -> Result<DiffStatus, RCompareError> {
+        let left_partial = match self.partial_hash_file(left_path) {
+            Ok(hash) => hash,
+            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Skipping broken symlink: {}", left_path.display());
+                return Ok(DiffStatus::Different);
+            }
+            Err(e) => return Err(e),
+        };
+
+        let right_partial = match self.partial_hash_file(right_path) {
+            Ok(hash) => hash,
+            Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Skipping broken symlink: {}", right_path.display());
+                return Ok(DiffStatus::Different);
+            }
+            Err(e) => return Err(e),
+        };
+
+        if left_partial != right_partial {
+            return Ok(DiffStatus::Different);
+        }
+
+        let use_streaming = size >= self.streaming_threshold;
+
+        let same = if use_streaming {
+            debug!(
+                "Using streaming comparison for large files ({} bytes): {}",
+                size,
+                left_path.display()
+            );
+            match self.compare_files_streaming(left_path, right_path) {
+                Ok(result) => result,
+                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("Skipping broken symlink during streaming comparison");
+                    return Ok(DiffStatus::Different);
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            match self.verify_files(left_path, right_path) {
+                Ok(result) => result,
+                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("Skipping broken symlink during verification");
+                    return Ok(DiffStatus::Different);
+                }
+                Err(e) => return Err(e),
+            }
+        };
+
+        Ok(if same {
+            DiffStatus::Same
+        } else {
+            DiffStatus::Different
+        })
     }
 
     /// Compare two individual files
@@ -336,62 +522,7 @@ impl ComparisonEngine {
         let right_path = right_root.join(&right.path);
 
         if left_vfs.is_none() && right_vfs.is_none() {
-            // Try to hash files, but handle broken symlinks gracefully
-            let left_partial = match self.partial_hash_file(&left_path) {
-                Ok(hash) => hash,
-                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    debug!("Skipping broken symlink: {}", left_path.display());
-                    return Ok(DiffStatus::Different);
-                }
-                Err(e) => return Err(e),
-            };
-
-            let right_partial = match self.partial_hash_file(&right_path) {
-                Ok(hash) => hash,
-                Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    debug!("Skipping broken symlink: {}", right_path.display());
-                    return Ok(DiffStatus::Different);
-                }
-                Err(e) => return Err(e),
-            };
-
-            if left_partial != right_partial {
-                return Ok(DiffStatus::Different);
-            }
-
-            // For large files, use streaming comparison to avoid loading into memory
-            let use_streaming = left.size >= self.streaming_threshold;
-
-            let same = if use_streaming {
-                debug!(
-                    "Using streaming comparison for large files ({} bytes): {}",
-                    left.size,
-                    left_path.display()
-                );
-                match self.compare_files_streaming(&left_path, &right_path) {
-                    Ok(result) => result,
-                    Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                        debug!("Skipping broken symlink during streaming comparison");
-                        return Ok(DiffStatus::Different);
-                    }
-                    Err(e) => return Err(e),
-                }
-            } else {
-                match self.verify_files(&left_path, &right_path) {
-                    Ok(result) => result,
-                    Err(RCompareError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                        debug!("Skipping broken symlink during verification");
-                        return Ok(DiffStatus::Different);
-                    }
-                    Err(e) => return Err(e),
-                }
-            };
-
-            return Ok(if same {
-                DiffStatus::Same
-            } else {
-                DiffStatus::Different
-            });
+            return self.verify_local_pair(&left_path, &right_path, left.size);
         }
 
         let left_reader = match self.open_reader(&left_path, left_vfs) {
@@ -668,6 +799,7 @@ impl ComparisonEngine {
 
         if len <= (CHUNK_SIZE as u64) * 3 {
             let mut buffer = Vec::with_capacity(len as usize);
+            #[allow(clippy::verbose_file_reads)] // file is already opened with seek; fs::read would reopen
             file.read_to_end(&mut buffer)?;
             hasher.update(&buffer);
         } else {
@@ -1006,6 +1138,136 @@ mod tests {
             .compare(Path::new("left"), Path::new("right"), left, right)
             .unwrap();
         assert_eq!(diff.len(), 2);
+    }
+
+    /// Builds `count` same-size file pairs across `left_dir`/`right_dir`, with
+    /// `differ_at` (if any) written with different content on the two sides
+    /// so verification must fall through to hashing (not just size checks)
+    /// and correctly distinguish same vs. different among many parallel pairs.
+    fn make_verify_candidates(
+        left_dir: &Path,
+        right_dir: &Path,
+        count: usize,
+        differ_at: &[usize],
+    ) -> (Vec<FileEntry>, Vec<FileEntry>) {
+        let mut left_entries = Vec::new();
+        let mut right_entries = Vec::new();
+        for i in 0..count {
+            let name = format!("file{i:02}.bin");
+            let left_content = vec![i as u8; 5000];
+            let mut right_content = left_content.clone();
+            if differ_at.contains(&i) {
+                right_content[4999] ^= 0xFF;
+            }
+            std::fs::write(left_dir.join(&name), &left_content).unwrap();
+            std::fs::write(right_dir.join(&name), &right_content).unwrap();
+
+            // Same modified time on both sides so `!verify_hashes` would
+            // report "Same" -- the tests below force verify_hashes=true so
+            // only actual content is authoritative.
+            let entry = |dir: &Path| FileEntry {
+                path: PathBuf::from(&name),
+                size: 5000,
+                modified: std::fs::metadata(dir.join(&name)).unwrap().modified().unwrap(),
+                is_dir: false,
+            };
+            left_entries.push(entry(left_dir));
+            right_entries.push(entry(right_dir));
+        }
+        (left_entries, right_entries)
+    }
+
+    #[test]
+    fn test_parallel_verify_hashes_many_pairs_correct_and_ordered() {
+        let temp = TempDir::new().unwrap();
+        let left_dir = temp.path().join("left");
+        let right_dir = temp.path().join("right");
+        std::fs::create_dir_all(&left_dir).unwrap();
+        std::fs::create_dir_all(&right_dir).unwrap();
+
+        let differ_at = [3, 7, 15];
+        let (left_entries, right_entries) =
+            make_verify_candidates(&left_dir, &right_dir, 20, &differ_at);
+
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+
+        let diffs = engine
+            .compare(&left_dir, &right_dir, left_entries, right_entries)
+            .unwrap();
+
+        assert_eq!(diffs.len(), 20);
+        // Results must come back in sorted relative-path order despite the
+        // hashing phase running out-of-order across threads.
+        for (i, diff) in diffs.iter().enumerate() {
+            assert_eq!(diff.relative_path, PathBuf::from(format!("file{i:02}.bin")));
+            let expected = if differ_at.contains(&i) {
+                DiffStatus::Different
+            } else {
+                DiffStatus::Same
+            };
+            assert_eq!(diff.status, expected, "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_parallel_verify_hashes_respects_hash_concurrency_bound() {
+        let temp = TempDir::new().unwrap();
+        let left_dir = temp.path().join("left");
+        let right_dir = temp.path().join("right");
+        std::fs::create_dir_all(&left_dir).unwrap();
+        std::fs::create_dir_all(&right_dir).unwrap();
+
+        let (left_entries, right_entries) =
+            make_verify_candidates(&left_dir, &right_dir, 8, &[]);
+
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache)
+            .with_hash_verification(true)
+            .with_hash_concurrency(Some(1));
+
+        let diffs = engine
+            .compare(&left_dir, &right_dir, left_entries, right_entries)
+            .unwrap();
+
+        assert_eq!(diffs.len(), 8);
+        assert!(diffs.iter().all(|d| d.status == DiffStatus::Same));
+    }
+
+    #[test]
+    fn test_parallel_verify_hashes_progress_reaches_total() {
+        let temp = TempDir::new().unwrap();
+        let left_dir = temp.path().join("left");
+        let right_dir = temp.path().join("right");
+        std::fs::create_dir_all(&left_dir).unwrap();
+        std::fs::create_dir_all(&right_dir).unwrap();
+
+        let (left_entries, right_entries) =
+            make_verify_candidates(&left_dir, &right_dir, 12, &[]);
+
+        let cache = HashCache::new(temp.path().join("cache")).unwrap();
+        let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+
+        let last_reported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let last_reported_clone = last_reported.clone();
+
+        let diffs = engine
+            .compare_with_vfs_and_progress(
+                &left_dir,
+                &right_dir,
+                left_entries,
+                right_entries,
+                None,
+                None,
+                None,
+                Some(move |current: usize, _total: usize| {
+                    last_reported_clone.store(current, Ordering::Relaxed);
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(diffs.len(), 12);
+        assert_eq!(last_reported.load(Ordering::Relaxed), 12);
     }
 
     #[test]

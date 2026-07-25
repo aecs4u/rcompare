@@ -6,11 +6,15 @@
 //! # Features
 //!
 //! - **Parallel scanning**: Uses jwalk for fast multi-threaded directory traversal
-//! - **Gitignore support**: Respects .gitignore files (including nested ones)
+//! - **Gitignore support**: Respects .gitignore files (including nested ones), discovered
+//!   incrementally in the same pass as the scan itself
+//! - **Traversal pruning**: Ignored directories are never descended into
 //! - **Custom ignore patterns**: Supports user-defined gitignore-style patterns
 //! - **VFS abstraction**: Can scan both filesystem and virtual file systems (archives, cloud storage)
 //! - **Cancellation**: Supports cancelling long-running scans
 //! - **Symlink handling**: Configurable symlink following behavior
+//! - **Race tolerance**: Filesystem races (a file vanishing mid-scan, a permission error)
+//!   are collected as warnings and skipped by default; pass `strict: true` to fail fast instead
 //!
 //! # Examples
 //!
@@ -43,11 +47,55 @@
 //! ```
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use jwalk::WalkDir;
+use jwalk::{ClientState, DirEntry, WalkDirGeneric};
 use rcompare_common::{AppConfig, FileEntry, RCompareError, Vfs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tracing::debug;
+
+/// A single non-fatal problem encountered while scanning, e.g. a file that
+/// vanished between being listed and being stat'd, or a permission error.
+///
+/// These are collected instead of aborting the whole scan unless `strict`
+/// mode is requested, since transient filesystem races are common in active
+/// directories (build output, logs, mail spools) and shouldn't fail an
+/// otherwise-successful comparison.
+#[derive(Debug, Clone)]
+pub struct ScanWarning {
+    pub path: PathBuf,
+    pub message: String,
+}
+
+/// Result of a scan: the entries found, plus any non-fatal warnings collected
+/// along the way (empty unless races/permission errors were encountered).
+#[derive(Debug, Default)]
+pub struct ScanOutcome {
+    pub entries: Vec<FileEntry>,
+    pub warnings: Vec<ScanWarning>,
+}
+
+/// Per-directory state threaded through jwalk's `process_read_dir` callback.
+///
+/// Carries the accumulated list of `.gitignore` files discovered from the
+/// scan root down to the current directory, plus the merged matcher built
+/// from them. Rebuilt only when a *new* `.gitignore` file is discovered
+/// (i.e. once per directory that has one), not per-entry.
+#[derive(Clone, Debug, Default)]
+struct GitignoreReadDirState {
+    gitignore_paths: Arc<Vec<PathBuf>>,
+    matcher: Option<Arc<Gitignore>>,
+}
+
+#[derive(Debug, Default)]
+struct ScanClientState;
+
+impl ClientState for ScanClientState {
+    type ReadDirState = GitignoreReadDirState;
+    type DirEntryState = ();
+}
+
+type ScanDirEntry = DirEntry<ScanClientState>;
 
 /// Parallel folder scanner using jwalk with gitignore and custom pattern support.
 ///
@@ -63,28 +111,34 @@ use tracing::debug;
 /// use std::path::Path;
 ///
 /// let config = AppConfig::default();
-/// let mut scanner = FolderScanner::new(config);
+/// let scanner = FolderScanner::new(config);
 ///
-/// // Optionally load .gitignore files
-/// scanner.load_gitignore(Path::new("/project")).unwrap();
-///
-/// // Scan the directory
+/// // Scan the directory (nested .gitignore files are discovered automatically)
 /// let entries = scanner.scan(Path::new("/project")).unwrap();
 /// ```
 pub struct FolderScanner {
     config: AppConfig,
-    gitignore: Option<Gitignore>,
-    custom_ignore: Option<Gitignore>,
+    custom_ignore: Option<Arc<Gitignore>>,
+    /// If true, any per-entry error (race, permission denied, etc.) aborts
+    /// the scan immediately instead of being collected as a warning.
+    strict: bool,
 }
 
 impl FolderScanner {
     pub fn new(config: AppConfig) -> Self {
-        let custom_ignore = Self::build_custom_ignore(&config);
+        let custom_ignore = Self::build_custom_ignore(&config).map(Arc::new);
         Self {
             config,
-            gitignore: None,
             custom_ignore,
+            strict: false,
         }
+    }
+
+    /// Fail fast on filesystem races/permission errors instead of collecting
+    /// them as warnings and continuing. Off by default.
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
     }
 
     /// Build a Gitignore from custom ignore patterns in config
@@ -117,99 +171,119 @@ impl FolderScanner {
         }
     }
 
-    /// Load .gitignore patterns from a directory (including nested .gitignore files)
-    pub fn load_gitignore(&mut self, root: &Path) -> Result<(), RCompareError> {
-        let mut builder = GitignoreBuilder::new(root);
-        let mut found_any = false;
-
-        // Recursively find all .gitignore files in the directory tree.
-        // jwalk skips hidden files by default, which would hide .gitignore itself.
-        for entry in WalkDir::new(root).skip_hidden(false).into_iter().flatten() {
-            let path = entry.path();
-            if path.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
-                if let Some(e) = builder.add(&path) {
-                    debug!("Failed to add .gitignore from {:?}: {}", path, e);
-                } else {
-                    debug!("Added .gitignore from {:?}", path);
-                    found_any = true;
-                }
-            }
-        }
-
-        if found_any {
-            self.gitignore =
-                Some(builder.build().map_err(|e| {
-                    RCompareError::Config(format!("Failed to build gitignore: {e}"))
-                })?);
-            debug!("Built gitignore with nested .gitignore files");
-        }
-
+    /// Retained for API compatibility: nested `.gitignore` discovery now
+    /// happens incrementally during [`scan_with_cancel`] itself (one pass
+    /// instead of a separate upfront walk), so this is a no-op.
+    #[deprecated(
+        note = "gitignore files are now discovered incrementally during scan_with_cancel; this method is a no-op"
+    )]
+    pub fn load_gitignore(&mut self, _root: &Path) -> Result<(), RCompareError> {
         Ok(())
     }
 
     /// Scan a directory and return all files and subdirectories
     pub fn scan(&self, root: &Path) -> Result<Vec<FileEntry>, RCompareError> {
-        self.scan_with_cancel(root, None)
+        Ok(self.scan_with_cancel(root, None)?.entries)
     }
 
-    /// Scan a directory and return all files and subdirectories, with cancellation
+    /// Scan a directory, returning entries plus any non-fatal warnings.
+    ///
+    /// Traverses the tree exactly once: `.gitignore` files are discovered as
+    /// their directory is visited (rather than in a separate upfront walk),
+    /// and directories matched by custom ignore patterns or an applicable
+    /// `.gitignore` are pruned before jwalk descends into them, so ignored
+    /// subtrees are never read from disk.
     pub fn scan_with_cancel(
         &self,
         root: &Path,
         cancel: Option<&AtomicBool>,
-    ) -> Result<Vec<FileEntry>, RCompareError> {
-        let mut entries = Vec::new();
+    ) -> Result<ScanOutcome, RCompareError> {
+        let mut outcome = ScanOutcome::default();
 
-        let walker = WalkDir::new(root)
-            .follow_links(self.config.follow_symlinks)
-            .skip_hidden(false);
+        let root_buf = root.to_path_buf();
+        let custom_ignore = self.custom_ignore.clone();
+        let follow_symlinks = self.config.follow_symlinks;
+
+        let walker = WalkDirGeneric::<ScanClientState>::new(root)
+            .follow_links(follow_symlinks)
+            .skip_hidden(false)
+            .process_read_dir(move |_depth, dir_path, read_dir_state, children| {
+                Self::process_read_dir_prune(
+                    &root_buf,
+                    dir_path,
+                    read_dir_state,
+                    children,
+                    custom_ignore.as_deref(),
+                );
+            });
 
         for entry in walker {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison("Scan cancelled".to_string()));
             }
 
-            let entry = entry.map_err(|e| {
-                RCompareError::Io(std::io::Error::other(format!("Walk error: {e}")))
-            })?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    if self.strict {
+                        return Err(RCompareError::Io(std::io::Error::other(format!(
+                            "Walk error: {e}"
+                        ))));
+                    }
+                    outcome.warnings.push(ScanWarning {
+                        path: e.path().map(Path::to_path_buf).unwrap_or_default(),
+                        message: format!("walk error: {e}"),
+                    });
+                    continue;
+                }
+            };
 
             let path = entry.path();
-            let relative_path = path
-                .strip_prefix(root)
-                .map_err(|e| RCompareError::Path(e.to_string()))?
-                .to_path_buf();
+            let relative_path = match path.strip_prefix(root) {
+                Ok(p) => p.to_path_buf(),
+                Err(e) => {
+                    if self.strict {
+                        return Err(RCompareError::Path(e.to_string()));
+                    }
+                    outcome.warnings.push(ScanWarning {
+                        path: path.clone(),
+                        message: format!("path error: {e}"),
+                    });
+                    continue;
+                }
+            };
 
             // Skip the synthetic root entry (empty path)
             if relative_path.as_os_str().is_empty() {
                 continue;
             }
 
-            let metadata = entry.metadata().map_err(|e| {
-                RCompareError::Io(std::io::Error::other(format!("Metadata error: {e}")))
-            })?;
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    if self.strict {
+                        return Err(RCompareError::Io(std::io::Error::other(format!(
+                            "Metadata error: {e}"
+                        ))));
+                    }
+                    outcome.warnings.push(ScanWarning {
+                        path,
+                        message: format!("metadata error (likely a race, file may have vanished): {e}"),
+                    });
+                    continue;
+                }
+            };
 
             // For symlinks, follow them to determine if they point to a directory
             // (jwalk's metadata returns false for is_dir on symlinks when follow_links is false)
             let is_dir = if metadata.file_type().is_symlink() {
                 // Use std::fs::metadata to follow the symlink
-                std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+                std::fs::metadata(&path).map(|m| m.is_dir()).unwrap_or(false)
             } else {
                 metadata.is_dir()
             };
 
-            // Skip if matches ignore patterns (check full path and all parent directories)
-            if self.should_ignore_with_parents(&relative_path, is_dir) {
-                continue;
-            }
-
-            // Skip if matches gitignore (check full path and all parent directories)
-            if let Some(ref gitignore) = self.gitignore {
-                if self.gitignore_matches_with_parents(gitignore, &relative_path, is_dir) {
-                    continue;
-                }
-            }
-
-            entries.push(FileEntry {
+            outcome.entries.push(FileEntry {
                 path: relative_path,
                 size: metadata.len(),
                 modified: metadata
@@ -219,13 +293,93 @@ impl FolderScanner {
             });
         }
 
-        debug!("Scanned {} entries from {:?}", entries.len(), root);
-        Ok(entries)
+        debug!(
+            "Scanned {} entries from {:?} ({} warnings)",
+            outcome.entries.len(),
+            root,
+            outcome.warnings.len()
+        );
+        Ok(outcome)
+    }
+
+    /// `process_read_dir` callback: discovers `.gitignore` in the directory being
+    /// read, extends/rebuilds the accumulated matcher if one is found, then
+    /// filters `children` in place so ignored entries (and, critically, ignored
+    /// *directories*) are dropped before jwalk ever descends into them.
+    fn process_read_dir_prune(
+        root: &Path,
+        dir_path: &Path,
+        read_dir_state: &mut GitignoreReadDirState,
+        children: &mut Vec<jwalk::Result<ScanDirEntry>>,
+        custom_ignore: Option<&Gitignore>,
+    ) {
+        let has_gitignore_file = children.iter().any(|c| {
+            c.as_ref()
+                .map(|e| e.file_name == std::ffi::OsStr::new(".gitignore"))
+                .unwrap_or(false)
+        });
+
+        if has_gitignore_file {
+            let gitignore_path = dir_path.join(".gitignore");
+            let mut paths = (*read_dir_state.gitignore_paths).clone();
+            paths.push(gitignore_path);
+
+            let mut builder = GitignoreBuilder::new(root);
+            for p in &paths {
+                if let Some(err) = builder.add(p) {
+                    debug!("Failed to add .gitignore from {:?}: {}", p, err);
+                }
+            }
+            match builder.build() {
+                Ok(matcher) => {
+                    read_dir_state.matcher = Some(Arc::new(matcher));
+                    read_dir_state.gitignore_paths = Arc::new(paths);
+                }
+                Err(e) => {
+                    debug!("Failed to build gitignore for {:?}: {}", dir_path, e);
+                }
+            }
+        }
+
+        let gitignore = read_dir_state.matcher.clone();
+
+        children.retain(|result| {
+            let Ok(entry) = result else {
+                return true; // keep errors; surfaced (or skipped) by the main loop
+            };
+
+            let child_path = dir_path.join(&entry.file_name);
+            let Ok(rel) = child_path.strip_prefix(root) else {
+                return true;
+            };
+            let is_dir = entry.file_type.is_dir();
+
+            !Self::is_ignored(rel, is_dir, gitignore.as_deref(), custom_ignore)
+        });
+    }
+
+    fn is_ignored(
+        rel: &Path,
+        is_dir: bool,
+        gitignore: Option<&Gitignore>,
+        custom_ignore: Option<&Gitignore>,
+    ) -> bool {
+        if let Some(g) = custom_ignore {
+            if g.matched(rel, is_dir).is_ignore() {
+                return true;
+            }
+        }
+        if let Some(g) = gitignore {
+            if g.matched(rel, is_dir).is_ignore() {
+                return true;
+            }
+        }
+        false
     }
 
     /// Scan a VFS and return all files and subdirectories
     pub fn scan_vfs(&self, vfs: &dyn Vfs, root: &Path) -> Result<Vec<FileEntry>, RCompareError> {
-        self.scan_vfs_with_cancel(vfs, root, None)
+        Ok(self.scan_vfs_with_cancel(vfs, root, None)?.entries)
     }
 
     /// Scan a VFS and return all files and subdirectories, with cancellation
@@ -234,10 +388,10 @@ impl FolderScanner {
         vfs: &dyn Vfs,
         root: &Path,
         cancel: Option<&AtomicBool>,
-    ) -> Result<Vec<FileEntry>, RCompareError> {
-        let mut entries = Vec::new();
-        self.scan_vfs_recursive(vfs, root, root, &mut entries, cancel)?;
-        Ok(entries)
+    ) -> Result<ScanOutcome, RCompareError> {
+        let mut outcome = ScanOutcome::default();
+        self.scan_vfs_recursive(vfs, root, root, &mut outcome, cancel)?;
+        Ok(outcome)
     }
 
     fn scan_vfs_recursive(
@@ -245,16 +399,26 @@ impl FolderScanner {
         vfs: &dyn Vfs,
         root: &Path,
         current: &Path,
-        entries: &mut Vec<FileEntry>,
+        outcome: &mut ScanOutcome,
         cancel: Option<&AtomicBool>,
     ) -> Result<(), RCompareError> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err(RCompareError::Comparison("Scan cancelled".to_string()));
         }
 
-        let dir_entries = vfs
-            .read_dir(current)
-            .map_err(|e| RCompareError::Vfs(e.to_string()))?;
+        let dir_entries = match vfs.read_dir(current) {
+            Ok(entries) => entries,
+            Err(e) => {
+                if self.strict {
+                    return Err(RCompareError::Vfs(e.to_string()));
+                }
+                outcome.warnings.push(ScanWarning {
+                    path: current.to_path_buf(),
+                    message: format!("vfs read_dir error: {e}"),
+                });
+                return Ok(());
+            }
+        };
 
         for entry in dir_entries {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
@@ -272,17 +436,11 @@ impl FolderScanner {
                 continue;
             }
 
-            if self.should_ignore_with_parents(&relative_path, entry.is_dir) {
+            if self.should_ignore(&relative_path, entry.is_dir) {
                 continue;
             }
 
-            if let Some(ref gitignore) = self.gitignore {
-                if self.gitignore_matches_with_parents(gitignore, &relative_path, entry.is_dir) {
-                    continue;
-                }
-            }
-
-            entries.push(FileEntry {
+            outcome.entries.push(FileEntry {
                 path: relative_path,
                 size: entry.size,
                 modified: entry.modified,
@@ -290,53 +448,21 @@ impl FolderScanner {
             });
 
             if entry.is_dir {
-                self.scan_vfs_recursive(vfs, root, &vfs_path, entries, cancel)?;
+                self.scan_vfs_recursive(vfs, root, &vfs_path, outcome, cancel)?;
             }
         }
 
         Ok(())
     }
 
-    /// Check if a path or any of its parent directories should be ignored
-    fn should_ignore_with_parents(&self, path: &Path, is_dir: bool) -> bool {
+    /// Check if a path should be ignored via custom ignore patterns (VFS path;
+    /// no nested `.gitignore` discovery since VFS entries aren't backed by a
+    /// real filesystem to read `.gitignore` files from).
+    fn should_ignore(&self, path: &Path, is_dir: bool) -> bool {
         if let Some(ref custom_ignore) = self.custom_ignore {
-            // Check the path itself
             if custom_ignore.matched(path, is_dir).is_ignore() {
                 return true;
             }
-
-            // Check all parent directories
-            let mut current = path;
-            while let Some(parent) = current.parent() {
-                if !parent.as_os_str().is_empty() && custom_ignore.matched(parent, true).is_ignore()
-                {
-                    return true;
-                }
-                current = parent;
-            }
-        }
-        false
-    }
-
-    /// Check if a path or any of its parent directories match gitignore
-    fn gitignore_matches_with_parents(
-        &self,
-        gitignore: &Gitignore,
-        path: &Path,
-        is_dir: bool,
-    ) -> bool {
-        // Check the path itself
-        if gitignore.matched(path, is_dir).is_ignore() {
-            return true;
-        }
-
-        // Check all parent directories
-        let mut current = path;
-        while let Some(parent) = current.parent() {
-            if !parent.as_os_str().is_empty() && gitignore.matched(parent, true).is_ignore() {
-                return true;
-            }
-            current = parent;
         }
         false
     }
@@ -552,5 +678,68 @@ mod tests {
             "Expected 2 entries (excluding root), got {}",
             entries.len()
         );
+    }
+
+    #[test]
+    fn test_scanner_nested_gitignore_discovered_incrementally() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("sub")).unwrap();
+        fs::write(temp.path().join("sub/.gitignore"), b"*.tmp\n").unwrap();
+        fs::write(temp.path().join("sub/keep.txt"), b"test").unwrap();
+        fs::write(temp.path().join("sub/skip.tmp"), b"test").unwrap();
+        fs::write(temp.path().join("root.tmp"), b"test").unwrap(); // not ignored (root has no .gitignore)
+
+        let config = AppConfig::default();
+        let scanner = FolderScanner::new(config);
+        let entries = scanner.scan(temp.path()).unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.path.to_str() == Some("root.tmp")),
+            "root.tmp should not be ignored (no .gitignore at root)"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().ends_with("skip.tmp")),
+            "sub/skip.tmp should be ignored by sub/.gitignore"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().ends_with("keep.txt")),
+            "sub/keep.txt should not be ignored"
+        );
+    }
+
+    #[test]
+    fn test_scanner_prunes_ignored_directory_contents_not_traversed() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("node_modules")).unwrap();
+        fs::create_dir(temp.path().join("node_modules/pkg")).unwrap();
+        fs::write(temp.path().join("node_modules/pkg/index.js"), b"x").unwrap();
+        fs::write(temp.path().join("keep.txt"), b"test").unwrap();
+
+        let config = AppConfig {
+            ignore_patterns: vec!["node_modules/".to_string()],
+            ..Default::default()
+        };
+        let scanner = FolderScanner::new(config);
+        let entries = scanner.scan(temp.path()).unwrap();
+
+        assert!(entries.iter().all(|e| !e.path.starts_with("node_modules")));
+        assert!(entries.iter().any(|e| e.path.to_str() == Some("keep.txt")));
+    }
+
+    #[test]
+    fn test_scanner_strict_mode_propagates_errors() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("test.txt"), b"content").unwrap();
+
+        let config = AppConfig::default();
+        let scanner = FolderScanner::new(config).with_strict(true);
+        // A normal, race-free scan should still succeed under strict mode.
+        let outcome = scanner.scan_with_cancel(temp.path(), None).unwrap();
+        assert!(outcome.warnings.is_empty());
+        assert_eq!(outcome.entries.len(), 1);
     }
 }

@@ -1,3 +1,11 @@
+#![allow(clippy::unused_self)] // VFS trait implementations require &self for interface uniformity
+#![allow(clippy::unwrap_used)] // Core library uses unwrap in well-understood contexts; migrate incrementally
+#![allow(clippy::needless_pass_by_value)] // Many functions take owned values for API consistency
+#![allow(clippy::trivially_copy_pass_by_ref)] // Trait signatures require &self uniformity
+#![allow(clippy::branches_sharing_code)] // Often clearer to keep branches explicit
+#![allow(clippy::unnecessary_wraps)] // Result wrapping maintained for API consistency and future error paths
+#![allow(clippy::match_same_arms)] // Explicit matching per variant aids readability
+
 //! Core business logic for RCompare file and directory comparison.
 //!
 //! This crate provides the foundational comparison engine, specialized file diff
@@ -175,14 +183,14 @@ pub mod parquet_diff;
 pub use binary_diff::BinaryDiffEngine;
 pub use comparison::ComparisonEngine;
 pub use file_operations::FileOperations;
-pub use hash_cache::HashCache;
+pub use hash_cache::{CacheMode, HashCache};
 pub use merge_engine::MergeEngine;
 pub use patch_engine::PatchEngine;
 pub use patch_parser::PatchParser;
 pub use patch_serializer::PatchSerializer;
 pub use resumable_copy::{CopyCheckpoint, ResumableCopy, ResumableResult};
 pub use progress::{ProgressCounters, ProgressData, ProgressHandler, ScanStage};
-pub use scanner::FolderScanner;
+pub use scanner::{FolderScanner, ScanOutcome, ScanWarning};
 pub use text_diff::TextDiffEngine;
 pub use vfs::LocalVfs;
 

@@ -1,31 +1,10 @@
 //! `sync` command: synchronize two directories using comparison results.
-use super::support::{apply_copy, apply_delete};
-use serde::{Deserialize, Serialize};
+use super::support::{apply_copy, apply_delete, run_core_scan, CoreScanOptions};
+use rcompare_common::{DiffNode, DiffStatus};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
-
-#[derive(Deserialize)]
-pub(crate) struct SyncScanSide {
-    pub(crate) modified_unix: Option<u64>,
-    #[allow(dead_code)]
-    pub(crate) is_dir: bool,
-}
-
-
-#[derive(Deserialize)]
-pub(crate) struct SyncScanEntry {
-    pub(crate) path: String,
-    pub(crate) status: String,
-    pub(crate) left: Option<SyncScanSide>,
-    pub(crate) right: Option<SyncScanSide>,
-}
-
-
-#[derive(Deserialize)]
-pub(crate) struct SyncScanReport {
-    pub(crate) entries: Vec<SyncScanEntry>,
-}
-
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[derive(Serialize, Clone)]
 pub(crate) struct SyncActionReport {
@@ -55,6 +34,8 @@ pub(crate) struct SyncReport {
     pub(crate) dry_run: bool,
     pub(crate) delete_mode: String,
     pub(crate) conflict_policy: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) warnings: Vec<String>,
     pub(crate) summary: SyncSummaryReport,
     pub(crate) actions: Vec<SyncActionReport>,
 }
@@ -71,7 +52,13 @@ pub(crate) fn run_sync(
     follow_symlinks: bool,
     verify_hashes: bool,
     no_verify_hashes: bool,
+    cache_dir: Option<PathBuf>,
+    strict: bool,
+    no_cache: bool,
+    cache_read_only: bool,
+    hash_jobs: Option<usize>,
     json: bool,
+    stop_flag: &Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !left.is_dir() || !right.is_dir() {
         return Err("sync currently supports local directory paths only".into());
@@ -98,16 +85,23 @@ pub(crate) fn run_sync(
         return Err("invalid --conflict. Use: newest, left, right, skip, error".into());
     }
 
-    let scan_report = run_scan_for_sync(
-        &left,
-        &right,
-        &ignore,
+    // Scan and compare in-process (no subprocess re-exec, no JSON round-trip).
+    let scan_opts = CoreScanOptions {
+        left: left.clone(),
+        right: right.clone(),
+        ignore_patterns: ignore,
         follow_symlinks,
         verify_hashes,
         no_verify_hashes,
-    )?;
+        cache_dir,
+        strict,
+        no_cache,
+        cache_read_only,
+        hash_jobs,
+    };
+    let scan_result = run_core_scan(&scan_opts, stop_flag)?;
 
-    let actions = plan_sync_actions(&scan_report.entries, &direction, &conflict_policy)?;
+    let actions = plan_sync_actions(&scan_result.diff_nodes, &direction, &conflict_policy)?;
     let mut summary = SyncSummaryReport {
         total_actions: actions.len(),
         ..SyncSummaryReport::default()
@@ -134,6 +128,7 @@ pub(crate) fn run_sync(
         dry_run,
         delete_mode,
         conflict_policy,
+        warnings: scan_result.warnings,
         summary,
         actions,
     };
@@ -160,70 +155,41 @@ pub(crate) fn run_sync(
                 println!("  [{}] {} -- {}", action.code, action.path, action.detail);
             }
         }
+        if !report.warnings.is_empty() {
+            println!(
+                "\n{} warning{} during scan (pass --strict to fail instead):",
+                report.warnings.len(),
+                if report.warnings.len() == 1 { "" } else { "s" }
+            );
+            for warning in report.warnings.iter().take(20) {
+                println!("  {warning}");
+            }
+        }
     }
 
     Ok(())
 }
 
-
-pub(crate) fn run_scan_for_sync(
-    left: &Path,
-    right: &Path,
-    ignore: &[String],
-    follow_symlinks: bool,
-    verify_hashes: bool,
-    no_verify_hashes: bool,
-) -> Result<SyncScanReport, Box<dyn std::error::Error>> {
-    let exe = std::env::current_exe()?;
-    let mut cmd = ProcessCommand::new(exe);
-    cmd.arg("scan")
-        .arg(left)
-        .arg(right)
-        .arg("--json");
-
-    if follow_symlinks {
-        cmd.arg("--follow-symlinks");
-    }
-    if verify_hashes {
-        cmd.arg("--verify-hashes");
-    }
-    if no_verify_hashes {
-        cmd.arg("--no-verify-hashes");
-    }
-    for pat in ignore {
-        cmd.arg("--ignore").arg(pat);
-    }
-
-    let output = cmd.output()?;
-    let exit = output.status.code().unwrap_or(1);
-    if !matches!(exit, 0 | 2) {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("scan failed (exit {}): {}", exit, stderr.trim()).into());
-    }
-
-    let report: SyncScanReport = serde_json::from_slice(&output.stdout)?;
-    Ok(report)
-}
-
-
 pub(crate) fn plan_sync_actions(
-    entries: &[SyncScanEntry],
+    entries: &[DiffNode],
     direction: &str,
     conflict_policy: &str,
 ) -> Result<Vec<SyncActionReport>, Box<dyn std::error::Error>> {
-    let mut refs: Vec<&SyncScanEntry> = entries.iter().collect();
-    refs.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut refs: Vec<&DiffNode> = entries.iter().collect();
+    refs.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
     let mut actions = Vec::new();
     for entry in refs {
-        let status = entry.status.as_str();
-        if status == "Same" {
+        let status = entry.status;
+        let path = entry.relative_path.to_string_lossy().to_string();
+
+        if status == DiffStatus::Same {
             continue;
         }
-        if status == "Unchecked" {
+        if status == DiffStatus::Unchecked {
             actions.push(SyncActionReport {
                 code: "SKIP".to_string(),
-                path: entry.path.clone(),
+                path,
                 detail: "Unchecked item; manual review required".to_string(),
             });
             continue;
@@ -231,19 +197,19 @@ pub(crate) fn plan_sync_actions(
 
         if direction == "left_to_right" {
             match status {
-                "OrphanLeft" => actions.push(SyncActionReport {
+                DiffStatus::OrphanLeft => actions.push(SyncActionReport {
                     code: "COPY_LR".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Create on right".to_string(),
                 }),
-                "OrphanRight" => actions.push(SyncActionReport {
+                DiffStatus::OrphanRight => actions.push(SyncActionReport {
                     code: "DELETE_R".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Delete from right".to_string(),
                 }),
-                "Different" => actions.push(SyncActionReport {
+                DiffStatus::Different => actions.push(SyncActionReport {
                     code: "UPDATE_R".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Overwrite right from left".to_string(),
                 }),
                 _ => {}
@@ -253,19 +219,19 @@ pub(crate) fn plan_sync_actions(
 
         if direction == "right_to_left" {
             match status {
-                "OrphanRight" => actions.push(SyncActionReport {
+                DiffStatus::OrphanRight => actions.push(SyncActionReport {
                     code: "COPY_RL".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Create on left".to_string(),
                 }),
-                "OrphanLeft" => actions.push(SyncActionReport {
+                DiffStatus::OrphanLeft => actions.push(SyncActionReport {
                     code: "DELETE_L".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Delete from left".to_string(),
                 }),
-                "Different" => actions.push(SyncActionReport {
+                DiffStatus::Different => actions.push(SyncActionReport {
                     code: "UPDATE_L".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Overwrite left from right".to_string(),
                 }),
                 _ => {}
@@ -275,54 +241,52 @@ pub(crate) fn plan_sync_actions(
 
         // bidirectional
         match status {
-            "OrphanLeft" => actions.push(SyncActionReport {
+            DiffStatus::OrphanLeft => actions.push(SyncActionReport {
                 code: "COPY_LR".to_string(),
-                path: entry.path.clone(),
+                path,
                 detail: "Missing on right".to_string(),
             }),
-            "OrphanRight" => actions.push(SyncActionReport {
+            DiffStatus::OrphanRight => actions.push(SyncActionReport {
                 code: "COPY_RL".to_string(),
-                path: entry.path.clone(),
+                path,
                 detail: "Missing on left".to_string(),
             }),
-            "Different" => match conflict_policy {
+            DiffStatus::Different => match conflict_policy {
                 "left" => actions.push(SyncActionReport {
                     code: "COPY_LR".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Conflict policy=left".to_string(),
                 }),
                 "right" => actions.push(SyncActionReport {
                     code: "COPY_RL".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Conflict policy=right".to_string(),
                 }),
                 "skip" => actions.push(SyncActionReport {
                     code: "SKIP".to_string(),
-                    path: entry.path.clone(),
+                    path,
                     detail: "Conflict policy=skip".to_string(),
                 }),
                 "error" => {
-                    return Err(
-                        format!("conflict encountered for {} and policy=error", entry.path).into(),
-                    );
+                    return Err(format!("conflict encountered for {path} and policy=error").into());
                 }
                 "newest" => {
-                    let left_m = entry.left.as_ref().and_then(|s| s.modified_unix);
-                    let right_m = entry.right.as_ref().and_then(|s| s.modified_unix);
+                    let left_m = entry.left.as_ref().map(|e| e.modified);
+                    let right_m = entry.right.as_ref().map(|e| e.modified);
                     match (left_m, right_m) {
                         (Some(l), Some(r)) if l > r => actions.push(SyncActionReport {
                             code: "COPY_LR".to_string(),
-                            path: entry.path.clone(),
+                            path,
                             detail: "Left newer".to_string(),
                         }),
                         (Some(l), Some(r)) if r > l => actions.push(SyncActionReport {
                             code: "COPY_RL".to_string(),
-                            path: entry.path.clone(),
+                            path,
                             detail: "Right newer".to_string(),
                         }),
                         _ => actions.push(SyncActionReport {
                             code: "SKIP".to_string(),
-                            path: entry.path.clone(),
+                            path,
                             detail: "Cannot determine newer side".to_string(),
                         }),
                     }

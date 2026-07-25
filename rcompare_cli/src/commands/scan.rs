@@ -1,5 +1,7 @@
 //! `scan` command: scan and compare two directories or supported archives.
-use super::support::{build_scan_source, build_text_diff_config, is_text_file, ScanSource};
+use super::support::{
+    build_scan_source, build_text_diff_config, is_text_file, OutputOptions, ScanSource,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus};
 use rcompare_core::text_diff::DiffChangeType;
@@ -9,6 +11,7 @@ use rcompare_core::{
     JsonDiffEngine, ParquetDiffEngine, ProgressData, ScanStage, TextDiffEngine,
 };
 use serde::Serialize;
+use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -83,8 +86,18 @@ pub(crate) fn run_scan(
     regex_rules: Vec<String>,
     image_exif: bool,
     image_tolerance: u8,
+    strict: bool,
+    no_cache: bool,
+    cache_read_only: bool,
+    hash_jobs: Option<usize>,
+    output_opts: OutputOptions,
     stop_flag: &Arc<AtomicBool>,
 ) -> Result<ScanResult, Box<dyn std::error::Error>> {
+    // --jsonl implies structured (non-human) output for every `if json`
+    // branch below, same as --json; the two differ only in the final
+    // document-vs-newline-delimited encoding chosen at the very end.
+    let json = json || output_opts.jsonl;
+
     // Validate paths
     if !left.exists() {
         return Err(format!("Left path does not exist: {}", left.display()).into());
@@ -124,25 +137,28 @@ pub(crate) fn run_scan(
         None => default_cache_dir(loaded.portable, &loaded.path)?,
     };
 
-    info!("Using cache directory: {}", cache_path.display());
-
-    // Initialize hash cache
-    let hash_cache = HashCache::new(cache_path)?;
+    // Initialize hash cache, respecting --no-cache / --cache-mode
+    let hash_cache = if no_cache {
+        info!("Hash cache disabled (--no-cache)");
+        HashCache::disabled()
+    } else {
+        info!("Using cache directory: {}", cache_path.display());
+        let mode = if cache_read_only {
+            rcompare_core::CacheMode::ReadOnly
+        } else {
+            rcompare_core::CacheMode::ReadWrite
+        };
+        HashCache::with_mode(cache_path, mode)?
+    };
 
     // Build text diff configuration from CLI flags
     let text_config = build_text_diff_config(ignore_whitespace, ignore_case, regex_rules)?;
 
-    // Create scanner
-    let mut left_scanner = FolderScanner::new(config.clone());
-    let mut right_scanner = FolderScanner::new(config);
-
-    // Load .gitignore if present (left side only)
-    if left.is_dir() {
-        let _ = left_scanner.load_gitignore(&left);
-    }
-    if right.is_dir() {
-        let _ = right_scanner.load_gitignore(&right);
-    }
+    // Create scanner. Nested .gitignore files are discovered incrementally
+    // during the scan itself (see FolderScanner::scan_with_cancel), not in a
+    // separate upfront pass.
+    let left_scanner = FolderScanner::new(config.clone()).with_strict(strict);
+    let right_scanner = FolderScanner::new(config).with_strict(strict);
 
     // Scan both directories
     let left_source = build_scan_source(&left)?;
@@ -205,7 +221,13 @@ pub(crate) fn run_scan(
         None
     };
 
-    let left_entries = scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?;
+    let left_outcome = scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?;
+    let left_entries = left_outcome.entries;
+    let mut scan_warnings: Vec<String> = left_outcome
+        .warnings
+        .into_iter()
+        .map(|w| format!("{}: {}", w.path.display(), w.message))
+        .collect();
 
     if let Some(pb) = &pb_left {
         pb.finish_with_message(format!(
@@ -233,7 +255,17 @@ pub(crate) fn run_scan(
         None
     };
 
-    let right_entries = scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?;
+    let right_outcome = scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?;
+    let right_entries = right_outcome.entries;
+    scan_warnings.extend(
+        right_outcome
+            .warnings
+            .into_iter()
+            .map(|w| format!("{}: {}", w.path.display(), w.message)),
+    );
+    for warning in &scan_warnings {
+        tracing::warn!("scan warning: {}", warning);
+    }
 
     if let Some(pb) = &pb_right {
         pb.finish_with_message(format!(
@@ -276,7 +308,9 @@ pub(crate) fn run_scan(
         None
     };
 
-    let comparison_engine = ComparisonEngine::new(hash_cache).with_hash_verification(verify_hashes);
+    let comparison_engine = ComparisonEngine::new(hash_cache)
+        .with_hash_verification(verify_hashes)
+        .with_hash_concurrency(hash_jobs);
 
     emit_json_progress(ScanStage::Comparing, 0, total_items as usize);
 
@@ -1856,10 +1890,11 @@ pub(crate) fn run_scan(
 
     // JSON output at the end (after all diff processing)
     if json {
-        let report = build_json_report(
+        let mut report = build_json_report(
             &left,
             &right,
             &diff_nodes,
+            scan_warnings.clone(),
             diff_only,
             hide_identical,
             hide_different,
@@ -1874,8 +1909,74 @@ pub(crate) fn run_scan(
             json_yaml_diffs,
             json_parquet_diffs,
         );
-        let output = serde_json::to_string_pretty(&report)?;
-        println!("{output}");
+
+        if output_opts.summary_only {
+            report.entries.clear();
+        } else if let Some(max) = output_opts.max_results {
+            report.entries.truncate(max);
+        }
+
+        let mut writer: Box<dyn Write> = match &output_opts.output {
+            Some(path) => Box::new(std::io::BufWriter::new(fs::File::create(path)?)),
+            None => Box::new(std::io::BufWriter::new(std::io::stdout().lock())),
+        };
+
+        if output_opts.jsonl {
+            #[derive(Serialize)]
+            struct JsonlSummaryLine<'a> {
+                #[serde(rename = "type")]
+                kind: &'static str,
+                schema_version: &'a str,
+                left: &'a str,
+                right: &'a str,
+                summary: &'a JsonSummary,
+                #[serde(skip_serializing_if = "Vec::is_empty")]
+                warnings: &'a Vec<String>,
+            }
+            #[derive(Serialize)]
+            struct JsonlEntryLine<'a> {
+                #[serde(rename = "type")]
+                kind: &'static str,
+                #[serde(flatten)]
+                entry: &'a JsonEntry,
+            }
+
+            serde_json::to_writer(
+                &mut writer,
+                &JsonlSummaryLine {
+                    kind: "summary",
+                    schema_version: &report.schema_version,
+                    left: &report.left,
+                    right: &report.right,
+                    summary: &report.summary,
+                    warnings: &report.warnings,
+                },
+            )?;
+            writeln!(writer)?;
+            for entry in &report.entries {
+                serde_json::to_writer(&mut writer, &JsonlEntryLine { kind: "entry", entry })?;
+                writeln!(writer)?;
+            }
+        } else if output_opts.pretty {
+            serde_json::to_writer_pretty(&mut writer, &report)?;
+            writeln!(writer)?;
+        } else {
+            serde_json::to_writer(&mut writer, &report)?;
+            writeln!(writer)?;
+        }
+        writer.flush()?;
+    } else if !scan_warnings.is_empty() {
+        println!(
+            "\n{} warning{} during scan (pass --strict to fail instead):",
+            scan_warnings.len(),
+            if scan_warnings.len() == 1 { "" } else { "s" }
+        );
+        for warning in scan_warnings.iter().take(20) {
+            println!("  {warning}");
+        }
+        if scan_warnings.len() > 20 {
+            println!("  ... and {} more", scan_warnings.len() - 20);
+        }
     }
 
     // Calculate final statistics for exit code
@@ -1911,6 +2012,12 @@ pub(crate) struct JsonReport {
     pub(crate) left: String,
     pub(crate) right: String,
     pub(crate) summary: JsonSummary,
+    /// Non-fatal issues encountered while scanning (filesystem races,
+    /// permission errors) -- see `FolderScanner`'s race tolerance. Empty
+    /// unless something odd happened; always present so consumers don't
+    /// need an `Option` check.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) warnings: Vec<String>,
     pub(crate) entries: Vec<JsonEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) text_diffs: Option<Vec<JsonTextDiffReport>>,
@@ -2007,6 +2114,7 @@ pub(crate) fn build_json_report(
     left: &Path,
     right: &Path,
     diff_nodes: &[rcompare_common::DiffNode],
+    warnings: Vec<String>,
     diff_only: bool,
     hide_identical: bool,
     hide_different: bool,
@@ -2066,6 +2174,7 @@ pub(crate) fn build_json_report(
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
         summary,
+        warnings,
         entries,
         text_diffs,
         image_diffs,
@@ -2139,7 +2248,7 @@ pub(crate) fn scan_source(
     scanner: &FolderScanner,
     source: &ScanSource,
     cancel: Option<&AtomicBool>,
-) -> Result<Vec<rcompare_common::FileEntry>, rcompare_common::RCompareError> {
+) -> Result<rcompare_core::ScanOutcome, rcompare_common::RCompareError> {
     match source {
         ScanSource::Local { root } => scanner.scan_with_cancel(root, cancel),
         ScanSource::Vfs { vfs, root } => scanner.scan_vfs_with_cancel(vfs.as_ref(), root, cancel),

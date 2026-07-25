@@ -1,10 +1,13 @@
 //! Shared helpers used by more than one CLI command.
-use rcompare_common::Vfs;
+use rcompare_common::{default_cache_dir, load_config, DiffNode, Vfs};
 use rcompare_core::text_diff::{RegexRule, TextDiffConfig, WhitespaceMode};
 use rcompare_core::vfs::{SevenZVfs, TarVfs, ZipVfs};
+use rcompare_core::{CacheMode, ComparisonEngine, FolderScanner, HashCache};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 pub(crate) enum ArchiveKind {
     Zip,
@@ -335,4 +338,155 @@ pub(crate) fn detect_archive_kind(path: &std::path::Path) -> Option<ArchiveKind>
     } else {
         None
     }
+}
+
+/// Output-shaping flags for the `scan` command: how to format JSON, whether
+/// to cap/omit entries, and where to write the result. Bundled into one
+/// struct instead of four more positional params on an already-long
+/// `run_scan` signature.
+#[derive(Default)]
+pub(crate) struct OutputOptions {
+    pub(crate) pretty: bool,
+    pub(crate) jsonl: bool,
+    pub(crate) summary_only: bool,
+    pub(crate) max_results: Option<usize>,
+    pub(crate) output: Option<PathBuf>,
+}
+
+/// Options for [`run_core_scan`], the in-process scan+compare service shared
+/// by `scan` and `sync` (the latter used to shell out to a second copy of
+/// this binary and parse its JSON output; it now calls this directly).
+pub(crate) struct CoreScanOptions {
+    pub(crate) left: PathBuf,
+    pub(crate) right: PathBuf,
+    pub(crate) ignore_patterns: Vec<String>,
+    pub(crate) follow_symlinks: bool,
+    pub(crate) verify_hashes: bool,
+    pub(crate) no_verify_hashes: bool,
+    pub(crate) cache_dir: Option<PathBuf>,
+    pub(crate) strict: bool,
+    pub(crate) no_cache: bool,
+    pub(crate) cache_read_only: bool,
+    pub(crate) hash_jobs: Option<usize>,
+}
+
+/// Result of [`run_core_scan`]: the comparison's diff nodes plus any
+/// non-fatal scan warnings (races, permission errors -- see
+/// `FolderScanner`'s race tolerance), with the hash cache already persisted.
+pub(crate) struct CoreScanResult {
+    pub(crate) diff_nodes: Vec<DiffNode>,
+    pub(crate) warnings: Vec<String>,
+}
+
+/// Scan both sides and compare them in-process: no subprocess, no JSON
+/// round-trip. Used directly by `sync` (which has no need for `scan`'s
+/// progress bars / specialized-diff output) and could equally back `scan`
+/// itself for the common case.
+pub(crate) fn run_core_scan(
+    opts: &CoreScanOptions,
+    stop_flag: &Arc<AtomicBool>,
+) -> Result<CoreScanResult, Box<dyn std::error::Error>> {
+    if !opts.left.exists() {
+        return Err(format!("Left path does not exist: {}", opts.left.display()).into());
+    }
+    if !opts.right.exists() {
+        return Err(format!("Right path does not exist: {}", opts.right.display()).into());
+    }
+
+    let loaded = load_config(false)?;
+    let mut config = loaded.config;
+
+    if !opts.ignore_patterns.is_empty() {
+        config.ignore_patterns.extend(opts.ignore_patterns.clone());
+    }
+    if opts.follow_symlinks {
+        config.follow_symlinks = true;
+    }
+    let mut verify_hashes = if opts.verify_hashes {
+        true
+    } else if opts.no_verify_hashes {
+        false
+    } else {
+        config.use_hash_verification
+    };
+    config.use_hash_verification = verify_hashes;
+    if let Some(cache_dir) = opts.cache_dir.clone() {
+        config.cache_dir = Some(cache_dir);
+    }
+
+    let hash_cache = if opts.no_cache {
+        HashCache::disabled()
+    } else {
+        let cache_path = match config.cache_dir.clone() {
+            Some(path) => path,
+            None => default_cache_dir(loaded.portable, &loaded.path)?,
+        };
+        let mode = if opts.cache_read_only {
+            CacheMode::ReadOnly
+        } else {
+            CacheMode::ReadWrite
+        };
+        HashCache::with_mode(cache_path, mode)?
+    };
+
+    let left_scanner = FolderScanner::new(config.clone()).with_strict(opts.strict);
+    let right_scanner = FolderScanner::new(config).with_strict(opts.strict);
+
+    let left_source = build_scan_source(&opts.left)?;
+    let right_source = build_scan_source(&opts.right)?;
+
+    let has_archive =
+        matches!(left_source, ScanSource::Vfs { .. }) || matches!(right_source, ScanSource::Vfs { .. });
+    if has_archive && !opts.no_verify_hashes {
+        verify_hashes = true;
+    }
+
+    let mut warnings = Vec::new();
+
+    let left_outcome = match &left_source {
+        ScanSource::Local { root } => left_scanner.scan_with_cancel(root, Some(stop_flag.as_ref())),
+        ScanSource::Vfs { vfs, root } => {
+            left_scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
+        }
+    }?;
+    let right_outcome = match &right_source {
+        ScanSource::Local { root } => right_scanner.scan_with_cancel(root, Some(stop_flag.as_ref())),
+        ScanSource::Vfs { vfs, root } => {
+            right_scanner.scan_vfs_with_cancel(vfs.as_ref(), root, Some(stop_flag.as_ref()))
+        }
+    }?;
+
+    warnings.extend(
+        left_outcome
+            .warnings
+            .into_iter()
+            .map(|w| format!("{}: {}", w.path.display(), w.message)),
+    );
+    warnings.extend(
+        right_outcome
+            .warnings
+            .into_iter()
+            .map(|w| format!("{}: {}", w.path.display(), w.message)),
+    );
+
+    let comparison_engine = ComparisonEngine::new(hash_cache)
+        .with_hash_verification(verify_hashes)
+        .with_hash_concurrency(opts.hash_jobs);
+
+    let diff_nodes = comparison_engine.compare_with_vfs_and_cancel(
+        left_source.root(),
+        right_source.root(),
+        left_outcome.entries,
+        right_outcome.entries,
+        left_source.vfs(),
+        right_source.vfs(),
+        Some(stop_flag.as_ref()),
+    )?;
+
+    comparison_engine.persist_cache()?;
+
+    Ok(CoreScanResult {
+        diff_nodes,
+        warnings,
+    })
 }

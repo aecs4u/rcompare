@@ -72,12 +72,82 @@ fn bench_scanner_with_gitignore(c: &mut Criterion) {
         let temp = TempDir::new().unwrap();
         create_test_tree(temp.path(), 2, 10, 1024);
 
-        // Add .gitignore
+        // Add .gitignore -- discovered incrementally during scan() itself,
+        // no separate load_gitignore() pass needed.
         let gitignore_content = "*.tmp\n*.log\ntarget/\n";
         fs::write(temp.path().join(".gitignore"), gitignore_content).unwrap();
 
-        let mut scanner = FolderScanner::new(AppConfig::default());
-        scanner.load_gitignore(temp.path()).unwrap();
+        let scanner = FolderScanner::new(AppConfig::default());
+
+        b.iter(|| {
+            let entries = scanner.scan(black_box(temp.path())).unwrap();
+            black_box(entries);
+        });
+    });
+}
+
+/// Demonstrates the traversal-pruning win: a large ignored subtree should
+/// cost roughly the same as an empty directory, since `process_read_dir`
+/// drops matched directories before jwalk ever descends into them, rather
+/// than reading every file underneath and filtering afterward.
+fn bench_scanner_ignored_subtree_pruning(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scanner_ignored_subtree_pruning");
+
+    group.bench_function("large_ignored_subtree", |b| {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("keep.txt"), b"x").unwrap();
+        let ignored_dir = temp.path().join("node_modules");
+        fs::create_dir(&ignored_dir).unwrap();
+        create_test_tree(&ignored_dir, 3, 20, 512); // a sizable ignored subtree
+
+        let config = AppConfig {
+            ignore_patterns: vec!["node_modules/".to_string()],
+            ..Default::default()
+        };
+        let scanner = FolderScanner::new(config);
+
+        b.iter(|| {
+            let entries = scanner.scan(black_box(temp.path())).unwrap();
+            black_box(entries);
+        });
+    });
+
+    group.bench_function("equivalent_tree_not_ignored", |b| {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("keep.txt"), b"x").unwrap();
+        let dir = temp.path().join("node_modules");
+        fs::create_dir(&dir).unwrap();
+        create_test_tree(&dir, 3, 20, 512);
+
+        let scanner = FolderScanner::new(AppConfig::default());
+
+        b.iter(|| {
+            let entries = scanner.scan(black_box(temp.path())).unwrap();
+            black_box(entries);
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_scanner_large_flat_directory(c: &mut Criterion) {
+    c.bench_function("scanner_large_flat_directory_2000_files", |b| {
+        let temp = TempDir::new().unwrap();
+        create_test_tree(temp.path(), 1, 2000, 256);
+        let scanner = FolderScanner::new(AppConfig::default());
+
+        b.iter(|| {
+            let entries = scanner.scan(black_box(temp.path())).unwrap();
+            black_box(entries);
+        });
+    });
+}
+
+fn bench_scanner_deep_directory_tree(c: &mut Criterion) {
+    c.bench_function("scanner_deep_directory_tree_depth_8", |b| {
+        let temp = TempDir::new().unwrap();
+        create_test_tree(temp.path(), 8, 3, 256); // 3^8 ~ 6.5k dirs, few files each
+        let scanner = FolderScanner::new(AppConfig::default());
 
         b.iter(|| {
             let entries = scanner.scan(black_box(temp.path())).unwrap();
@@ -194,6 +264,155 @@ fn bench_comparison_all_different(c: &mut Criterion) {
     group.finish();
 }
 
+/// Writes `count` same-size file pairs (some identical, some differing only
+/// in their last byte) so comparison must fall through to hashing rather
+/// than short-circuiting on size.
+fn write_verify_candidates(left_dir: &Path, right_dir: &Path, count: usize, file_size: usize) {
+    fs::create_dir_all(left_dir).unwrap();
+    fs::create_dir_all(right_dir).unwrap();
+    for i in 0..count {
+        let name = format!("file_{i:05}.bin");
+        let left_content = vec![(i % 256) as u8; file_size];
+        let mut right_content = left_content.clone();
+        if i % 5 == 0 {
+            right_content[file_size - 1] ^= 0xFF; // ~20% differ
+        }
+        fs::write(left_dir.join(&name), &left_content).unwrap();
+        fs::write(right_dir.join(&name), &right_content).unwrap();
+    }
+}
+
+fn make_verify_entries(dir: &Path, count: usize, file_size: usize) -> Vec<FileEntry> {
+    (0..count)
+        .map(|i| {
+            let name = format!("file_{i:05}.bin");
+            FileEntry {
+                path: PathBuf::from(&name),
+                size: file_size as u64,
+                modified: fs::metadata(dir.join(&name)).unwrap().modified().unwrap(),
+                is_dir: false,
+            }
+        })
+        .collect()
+}
+
+/// Compares single-threaded (`with_hash_concurrency(Some(1))`) vs the
+/// default rayon pool for a batch of same-size file pairs that all need hash
+/// verification -- this is the parallel-verification path added to
+/// `compare_with_vfs_and_progress`.
+fn bench_parallel_hash_verification(c: &mut Criterion) {
+    let mut group = c.benchmark_group("parallel_hash_verification");
+    const COUNT: usize = 200;
+    const FILE_SIZE: usize = 64 * 1024; // 64KB: big enough that hashing dominates
+
+    let temp = TempDir::new().unwrap();
+    let left_dir = temp.path().join("left");
+    let right_dir = temp.path().join("right");
+    write_verify_candidates(&left_dir, &right_dir, COUNT, FILE_SIZE);
+    let left_entries = make_verify_entries(&left_dir, COUNT, FILE_SIZE);
+    let right_entries = make_verify_entries(&right_dir, COUNT, FILE_SIZE);
+
+    group.bench_function("single_threaded", |b| {
+        let cache = HashCache::disabled(); // force rehashing every iteration
+        let engine = ComparisonEngine::new(cache)
+            .with_hash_verification(true)
+            .with_hash_concurrency(Some(1));
+
+        b.iter(|| {
+            let result = engine
+                .compare(
+                    black_box(&left_dir),
+                    black_box(&right_dir),
+                    black_box(left_entries.clone()),
+                    black_box(right_entries.clone()),
+                )
+                .unwrap();
+            black_box(result);
+        });
+    });
+
+    group.bench_function("default_thread_pool", |b| {
+        let cache = HashCache::disabled();
+        let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+
+        b.iter(|| {
+            let result = engine
+                .compare(
+                    black_box(&left_dir),
+                    black_box(&right_dir),
+                    black_box(left_entries.clone()),
+                    black_box(right_entries.clone()),
+                )
+                .unwrap();
+            black_box(result);
+        });
+    });
+
+    group.finish();
+}
+
+/// Cold cache (every file rehashed) vs warm cache (all hashes already
+/// recorded from a prior run) for the same verify-hashes workload.
+fn bench_cold_vs_warm_hash_cache(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cold_vs_warm_hash_cache");
+    const COUNT: usize = 100;
+    const FILE_SIZE: usize = 32 * 1024;
+
+    let temp = TempDir::new().unwrap();
+    let left_dir = temp.path().join("left");
+    let right_dir = temp.path().join("right");
+    write_verify_candidates(&left_dir, &right_dir, COUNT, FILE_SIZE);
+    let left_entries = make_verify_entries(&left_dir, COUNT, FILE_SIZE);
+    let right_entries = make_verify_entries(&right_dir, COUNT, FILE_SIZE);
+
+    group.bench_function("cold_cache", |b| {
+        b.iter(|| {
+            // Fresh disabled cache each iteration: nothing to hit, every
+            // file gets hashed from scratch.
+            let cache = HashCache::disabled();
+            let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+            let result = engine
+                .compare(
+                    black_box(&left_dir),
+                    black_box(&right_dir),
+                    black_box(left_entries.clone()),
+                    black_box(right_entries.clone()),
+                )
+                .unwrap();
+            black_box(result);
+        });
+    });
+
+    group.bench_function("warm_cache", |b| {
+        let cache_dir = temp.path().join("warm_cache");
+        // Prime the cache once, outside the timed loop.
+        {
+            let cache = HashCache::new(cache_dir.clone()).unwrap();
+            let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+            engine
+                .compare(&left_dir, &right_dir, left_entries.clone(), right_entries.clone())
+                .unwrap();
+            engine.persist_cache().unwrap();
+        }
+
+        b.iter(|| {
+            let cache = HashCache::new(cache_dir.clone()).unwrap();
+            let engine = ComparisonEngine::new(cache).with_hash_verification(true);
+            let result = engine
+                .compare(
+                    black_box(&left_dir),
+                    black_box(&right_dir),
+                    black_box(left_entries.clone()),
+                    black_box(right_entries.clone()),
+                )
+                .unwrap();
+            black_box(result);
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_full_scan_and_compare(c: &mut Criterion) {
     c.bench_function("full_workflow_scan_and_compare", |b| {
         let temp_root = TempDir::new().unwrap();
@@ -232,15 +451,19 @@ criterion_group!(
     bench_scanner_small,
     bench_scanner_medium,
     bench_scanner_with_gitignore,
-    bench_scanner_with_custom_ignore
+    bench_scanner_with_custom_ignore,
+    bench_scanner_ignored_subtree_pruning,
+    bench_scanner_large_flat_directory,
+    bench_scanner_deep_directory_tree
 );
 
-criterion_group!(cache_benches, bench_hash_cache_operations);
+criterion_group!(cache_benches, bench_hash_cache_operations, bench_cold_vs_warm_hash_cache);
 
 criterion_group!(
     comparison_benches,
     bench_comparison_identical_files,
-    bench_comparison_all_different
+    bench_comparison_all_different,
+    bench_parallel_hash_verification
 );
 
 criterion_group!(workflow_benches, bench_full_scan_and_compare);

@@ -150,6 +150,46 @@ enum Commands {
         /// Set pixel difference tolerance for image comparison (0-255)
         #[arg(long, value_name = "TOLERANCE", default_value = "1")]
         image_tolerance: u8,
+
+        /// Fail immediately on filesystem races/permission errors instead of
+        /// collecting them as warnings and continuing
+        #[arg(long)]
+        strict: bool,
+
+        /// Disable the hash cache entirely (no reads or writes)
+        #[arg(long, conflicts_with = "cache_read_only")]
+        no_cache: bool,
+
+        /// Read existing cache entries but never write new ones
+        #[arg(long)]
+        cache_read_only: bool,
+
+        /// Bound the number of threads used for parallel hash verification
+        /// (default: one per CPU core)
+        #[arg(long, value_name = "N")]
+        hash_jobs: Option<usize>,
+
+        /// Pretty-print JSON output (default is compact, one document)
+        #[arg(long)]
+        pretty: bool,
+
+        /// Emit newline-delimited JSON instead of a single document: one
+        /// summary line followed by one line per entry. Useful for streaming
+        /// large result sets incrementally (e.g. into the Qt GUI).
+        #[arg(long, conflicts_with = "json")]
+        jsonl: bool,
+
+        /// Omit the entries list from output; print only summary counts
+        #[arg(long)]
+        summary_only: bool,
+
+        /// Cap the number of entries included in output
+        #[arg(long, value_name = "N")]
+        max_results: Option<usize>,
+
+        /// Write output to this file instead of stdout
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// Synchronize two directories using comparison results
@@ -191,6 +231,28 @@ enum Commands {
         /// Disable file hash verification
         #[arg(long, conflicts_with = "verify_hashes")]
         no_verify_hashes: bool,
+
+        /// Cache directory for hash storage
+        #[arg(short, long)]
+        cache_dir: Option<PathBuf>,
+
+        /// Fail immediately on filesystem races/permission errors instead of
+        /// collecting them as warnings and continuing
+        #[arg(long)]
+        strict: bool,
+
+        /// Disable the hash cache entirely (no reads or writes)
+        #[arg(long, conflicts_with = "cache_read_only")]
+        no_cache: bool,
+
+        /// Read existing cache entries but never write new ones
+        #[arg(long)]
+        cache_read_only: bool,
+
+        /// Bound the number of threads used for parallel hash verification
+        /// (default: one per CPU core)
+        #[arg(long, value_name = "N")]
+        hash_jobs: Option<usize>,
 
         /// Output results as JSON
         #[arg(long)]
@@ -384,7 +446,23 @@ fn main() {
             regex_rule,
             image_exif,
             image_tolerance,
+            strict,
+            no_cache,
+            cache_read_only,
+            hash_jobs,
+            pretty,
+            jsonl,
+            summary_only,
+            max_results,
+            output,
         } => {
+            let output_opts = OutputOptions {
+                pretty,
+                jsonl,
+                summary_only,
+                max_results,
+                output,
+            };
             match run_scan(
                 left,
                 right,
@@ -414,6 +492,11 @@ fn main() {
                 regex_rule,
                 image_exif,
                 image_tolerance,
+                strict,
+                no_cache,
+                cache_read_only,
+                hash_jobs,
+                output_opts,
                 &stop_flag,
             ) {
                 Ok(scan_result) => {
@@ -445,6 +528,11 @@ fn main() {
             follow_symlinks,
             verify_hashes,
             no_verify_hashes,
+            cache_dir,
+            strict,
+            no_cache,
+            cache_read_only,
+            hash_jobs,
             json,
         } => {
             if let Err(e) = run_sync(
@@ -458,7 +546,13 @@ fn main() {
                 follow_symlinks,
                 verify_hashes,
                 no_verify_hashes,
+                cache_dir,
+                strict,
+                no_cache,
+                cache_read_only,
+                hash_jobs,
                 json,
+                &stop_flag,
             ) {
                 error!("Sync failed: {}", e);
                 std::process::exit(1);
@@ -668,6 +762,7 @@ mod tests {
             &left,
             &right,
             &diff_nodes,
+            Vec::new(),
             false,
             false,
             false,
@@ -730,6 +825,7 @@ mod tests {
             &left,
             &right,
             &diff_nodes,
+            Vec::new(),
             true,
             false,
             false,
@@ -796,30 +892,35 @@ mod tests {
         assert!(scan.supports_json);
     }
 
+    fn sync_test_entry(
+        path: &str,
+        status: DiffStatus,
+        left_modified_secs: Option<u64>,
+        right_modified_secs: Option<u64>,
+    ) -> rcompare_common::DiffNode {
+        rcompare_common::DiffNode {
+            relative_path: PathBuf::from(path),
+            status,
+            left: left_modified_secs.map(|secs| rcompare_common::FileEntry {
+                path: PathBuf::from(path),
+                size: 0,
+                modified: UNIX_EPOCH + std::time::Duration::from_secs(secs),
+                is_dir: false,
+            }),
+            right: right_modified_secs.map(|secs| rcompare_common::FileEntry {
+                path: PathBuf::from(path),
+                size: 0,
+                modified: UNIX_EPOCH + std::time::Duration::from_secs(secs),
+                is_dir: false,
+            }),
+        }
+    }
+
     #[test]
     fn test_plan_sync_actions_left_to_right() {
         let entries = vec![
-            SyncScanEntry {
-                path: "a.txt".to_string(),
-                status: "OrphanLeft".to_string(),
-                left: Some(SyncScanSide {
-                    modified_unix: Some(10),
-                    is_dir: false,
-                }),
-                right: None,
-            },
-            SyncScanEntry {
-                path: "b.txt".to_string(),
-                status: "Different".to_string(),
-                left: Some(SyncScanSide {
-                    modified_unix: Some(20),
-                    is_dir: false,
-                }),
-                right: Some(SyncScanSide {
-                    modified_unix: Some(15),
-                    is_dir: false,
-                }),
-            },
+            sync_test_entry("a.txt", DiffStatus::OrphanLeft, Some(10), None),
+            sync_test_entry("b.txt", DiffStatus::Different, Some(20), Some(15)),
         ];
 
         let actions = plan_sync_actions(&entries, "left_to_right", "newest").unwrap();
@@ -830,18 +931,12 @@ mod tests {
 
     #[test]
     fn test_plan_sync_actions_bidirectional_newest() {
-        let entries = vec![SyncScanEntry {
-            path: "c.txt".to_string(),
-            status: "Different".to_string(),
-            left: Some(SyncScanSide {
-                modified_unix: Some(30),
-                is_dir: false,
-            }),
-            right: Some(SyncScanSide {
-                modified_unix: Some(10),
-                is_dir: false,
-            }),
-        }];
+        let entries = vec![sync_test_entry(
+            "c.txt",
+            DiffStatus::Different,
+            Some(30),
+            Some(10),
+        )];
 
         let actions = plan_sync_actions(&entries, "bidirectional", "newest").unwrap();
         assert_eq!(actions.len(), 1);
