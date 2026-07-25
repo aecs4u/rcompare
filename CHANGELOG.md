@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-07-25)
+
+#### Release Pipeline
+- `release.yml` now packages the `teczka` (PySide6/Qt6) GUI with PyInstaller per platform
+  (Linux/Windows/macOS x86_64, macOS arm64) and publishes it alongside the CLI binary.
+- CLI release archives are named by Rust target triple and match `cargo-binstall`'s
+  default template (`[package.metadata.binstall]` added to `rcompare_cli/Cargo.toml`).
+- Release now publishes a `SHA256SUMS` file covering every asset.
+
+### Removed (2026-07-25)
+- **`rcompare_gui`**: the deprecated Slint-based Rust GUI crate has been deleted, along
+  with the `slint` workspace dependency and its CI/build/release jobs. The desktop GUI is
+  now `teczka` (PySide6/Qt6) exclusively.
+
 ### Added (2026-01-30)
 
 #### Documentation

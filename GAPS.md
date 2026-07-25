@@ -122,7 +122,7 @@ Documented in QUICKSTART.md with scripting examples.
 **Description**: Multi-document interface for comparing multiple directory pairs simultaneously.
 
 **Implementation**:
-- Tab widget in Slint
+- Tab widget in teczka (PySide6/Qt6)
 - Tab persistence across sessions
 - Keyboard shortcuts (Ctrl+Tab, etc.)
 

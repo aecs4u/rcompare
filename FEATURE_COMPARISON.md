@@ -1,8 +1,9 @@
 # RCompare vs File Comparison Tools: Feature Comparison
 
-Last updated: 2026-02-13
+Last updated: 2026-07-25
 
-This document reflects current `rcompare` repository status (CLI + Slint GUI + PySide6 GUI).  
+This document reflects current `rcompare` repository status (CLI + teczka PySide6/Qt6 GUI).
+The earlier Slint-based `rcompare_gui` crate has been removed; teczka is now the only GUI.
 Non-RCompare columns are best-effort snapshots and can vary by tool edition and release.
 
 ## Overview
@@ -114,7 +115,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 | Feature | RCompare | Beyond Compare | Notes |
 |---------|----------|----------------|-------|
-| Desktop GUIs | ✅ PySide6 (Slint deprecated) | ✅ Yes | PySide6 is the active frontend |
+| Desktop GUIs | ✅ PySide6/Qt6 (teczka) | ✅ Yes | Slint GUI removed; teczka is the only frontend |
 | Multi-tab sessions | ✅ Yes (PySide) | ✅ Yes | |
 | Session profile manager | ✅ Yes | ✅ Yes | Save/load + auto-save on close |
 | Persistent per-user options | ✅ Yes | ✅ Yes | Paths, filters, options, profiles |
