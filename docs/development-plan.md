@@ -76,6 +76,15 @@ migrated into the visible shell under WI-5.7.
 | 6 | teczka: structural refactor | P5 (test net) | 15–20 d |
 | 7 | teczka: presentation, accessibility & KDE compliance | — | 22–30 d |
 | 8 | Scale & net-new core | P2 | opportunistic |
+| 9 | Beyond Compare configuration parity | P5; WI-9.5/9.6 gate WI-7.3 | 30–45 d |
+
+Phase 9 is the newest tier, added from the 2026-07-26 configuration-surface
+study. It is deliberately last: it is net-new capability rather than repair,
+and roughly half of it needs `rcompare_core`/CLI work before teczka can expose
+anything. Two cross-references matter — **WI-9.5** (grammar/rules engine)
+shares its tokeniser with **WI-7.3** (syntax highlighting), so those should
+land together rather than building two lexers; and **WI-9.8** (connection
+profiles) depends on **WI-2.1** for the URL schemes it stores.
 
 Phases 5–7 are independent of engine Phases 1–4. Within the GUI track, Phase 5
 makes visible controls authoritative before Phase 7 reshapes them; palette,
@@ -407,6 +416,51 @@ leaving it as general “polish”:
    icon/shape, a palette-aware colour and tested contrast.
 6. **The supported minimum is real.** 800×600 and 125–200% scaling are release
    checks, not aspirational dimensions.
+
+### Beyond Compare configuration-surface study (2026-07-26)
+
+A third pass, distinct from the two above: rather than benchmarking teczka's
+*rendered screens*, it enumerated **what Beyond Compare lets a user configure**.
+Every menu, all 11 `Tools > Options` pages, the per-type Session Settings
+dialogs and the File Formats editor were opened in Beyond Compare 5.2.4 (build
+32425) under Linux/Qt and captured via XTEST automation.
+
+Evidence: **62 screenshots** in
+[`../.playwright-mcp/bcompare/`](../.playwright-mcp/bcompare/) — `options_*`
+(all 11 preference pages), `fc_*` (Folder Compare menus, submenus, 6 Session
+Settings tabs), `tc_*` (Text Compare menus, 5 Session Settings tabs), `tbc_*`
+(Table Compare menus, Table Format tabs), `home_*`, `tools_file_formats*`.
+Full analysis in
+[BCOMPARE_GUI_CONFIG_COMPARISON.md](BCOMPARE_GUI_CONFIG_COMPARISON.md).
+
+Not captured, and therefore not costed below: Session Settings for Folder
+Merge, Folder Sync, Text Merge, Hex, Media and Picture Compare (they reuse the
+Folder and Text Compare tab structures), and the contents of Table Compare's
+Sheets/Columns/Rows tabs.
+
+**This study does not overlap the design review.** The review asked whether
+teczka's controls tell the truth — a question Phase 5 answered. This one asks
+what controls exist *at all*, and the answer reorders part of the backlog:
+
+| Finding | Why it matters | Scheduled in |
+|---|---|---|
+| **File Formats is a rules engine**, not a file-type list: 24 formats, each with a Grammar tab defining Keyword/Identifier/Number/String/Comment/Operator as regexes, plus line weights with priorities | This is what powers "Ignore Unimportant Differences" — a headline BC capability with no teczka or `rcompare_core` equivalent at any layer. Larger than the single ❌ row it occupied in FEATURE_COMPARISON.md | WI-9.5 |
+| **Settings apply at a chosen scope** — "Use for this view only" / session / defaults | teczka stores settings per tab in `SessionState` but exposes no scope control, so every change is global. The storage exists; the user-facing half does not | WI-9.1 |
+| **Comparison criteria are far richer**: timestamp tolerance in seconds, ignore DST, ignore timezone, filename case, align differing extensions, Unicode normalisation forms, Unix permissions/owner/group, and CRC vs binary vs rules-based content compare | teczka's `ComparisonSettings` covers roughly 4 of ~40 session-level settings. Timestamp tolerance alone is the most likely cause of false differences across filesystems | WI-9.2 |
+| **Name filters are four independent lists** (include/exclude × files/folders) with reusable presets, plus a separate rule-based Other Filters tab (size/date/attribute) | teczka has one flat `ignore_patterns` glob list | WI-9.3 |
+| **Text alignment is configurable**: Unaligned / Standard / Myers O(ND) / Patience Diff, skew tolerance, closeness matching — plus per-session Replacements and Alignment overrides | teczka's alignment is fixed | WI-9.6 |
+| **Table parsing is configurable**: delimiters, text qualifier, fixed vs delimited, "first line contains", decimal/thousands separators, date order/separator | teczka's table view assumes CSV defaults | WI-9.7 |
+| **`Tools > Profiles` is remote-connection config** (FTP/SFTP/SSH; Global/Server/Connection/Proxy/Listings/Transfer), *not* saved comparison setups | Corrects an earlier assumption. This is the credential-management surface WI-7.9 needs and currently lacks | WI-9.8 |
+| **Workspaces** group multiple sessions and load/save as a unit | teczka has sessions but no workspace concept | WI-9.4 |
+| Global preferences teczka has no equivalent for: Startup, Tabs, Text Editing, Next Difference, Backups, File Operations confirmations, Archive Types, Open With, Tweaks | 8 of BC's 11 preference pages have no teczka counterpart | WI-9.9 |
+| **Commands page** assigns menu placement, toolbar placement and shortcut per command, per view | teczka's Configure Shortcuts covers only the shortcut third | WI-9.10 |
+| Export / Import Settings and Restore Factory Defaults | teczka has a per-dialog Defaults button only; no portability | WI-9.11 |
+| View menu items with no teczka equivalent: Ignore Unimportant Differences, Suppress Filters, Columns (8 selectable fields), Legend, Log panel | Columns and Legend are the cheap ones — `folder_columns` already persists widths and `color_legend.py` already exists | WI-9.12 |
+
+Phase 5's Settings work is confirmed delivered against this study: `--cache-dir`
+now reaches the worker, `AppConfig.shortcuts` persists rebindings, and the Files
+page's encoding/EOL/binary-pattern values are consumed by the views. No
+regression items are carried forward.
 
 ---
 
@@ -1005,6 +1059,240 @@ integrations. Unchanged from `roadmap.md`.
 
 ---
 
+## Phase 9 — Beyond Compare configuration parity
+
+Derived entirely from the 2026-07-26 configuration-surface study. Unlike
+Phases 5–7, **this phase is not GUI-only**: over half the items need
+`rcompare_core` and CLI support before teczka can expose anything, so each item
+below states which side it lands on. Nothing here is a correctness defect —
+these are capabilities teczka does not have.
+
+Sequence by leverage: WI-9.1 first (it is the container the rest configure),
+then WI-9.2/9.3 (the settings users hit first), then the engine-heavy items.
+
+### WI-9.1 — Per-session settings dialog with a scope selector
+**Side**: GUI. **Files**: new `teczka/dialogs/session_settings_dialog.py`,
+`teczka/main_window.py`, `teczka/models/settings.py`
+
+The structural gap. `SessionState` already holds per-tab `ComparisonSettings`
+and `FolderFilterState`, and session switching already captures and reapplies
+them — but the only way in is `Configure RCompare`, which writes the active
+session *and* global config together. Add a session-scoped dialog with BC's
+three-way scope control: **this view only** / **save into the session** /
+**default for new sessions**.
+
+This is a prerequisite for WI-9.2, WI-9.3 and WI-9.6 having anywhere sensible
+to live; without it every new setting added below becomes another global.
+
+**Acceptance**: changing a setting at "this view only" scope leaves a second
+session and the persisted defaults untouched; promoting to default affects
+newly created sessions and not existing ones; a round-trip test per scope.
+
+### WI-9.2 — Comparison criteria parity
+**Side**: core + CLI, then GUI. **Files**:
+`rcompare_core/src/scanner.rs`, `rcompare_cli/src/main.rs`,
+`teczka/models/settings.py`
+
+Add, in rough order of user impact:
+
+1. **Timestamp tolerance** (`--mtime-tolerance <seconds>`). The single most
+   valuable item: FAT/exFAT and many network filesystems store coarser
+   timestamps, so exact mtime comparison reports false differences today.
+   BC defaults to 2 seconds.
+2. **Ignore DST (1 hour)** and **ignore timezone differences** — the classic
+   cross-platform archive-vs-local mismatch.
+3. **Unix metadata comparison**: permissions, owner, group, as independent
+   toggles with their own diff status.
+4. **Content-compare mode**: CRC vs binary vs rules-based, plus "skip if quick
+   tests indicate same". teczka has only a boolean `use_hash_verification`.
+5. **Filename case comparison** and **align filenames differing only in
+   Unicode normalisation form** (NFC vs NFD — the macOS/Linux trap).
+
+**Acceptance**: fixture trees whose mtimes differ by 1 s, 1 h and a timezone
+offset compare equal under the relevant flag and different without it; a
+permissions-only difference is reported when enabled and ignored when not; NFC
+and NFD spellings of the same filename align under the flag.
+
+### WI-9.3 — Structured name filters and rule-based filters
+**Side**: core + CLI, then GUI.
+
+Replace the single `ignore_patterns` list with BC's four independent mask
+lists — **include files / exclude files / include folders / exclude folders** —
+and add reusable **filter presets**. Keep `--ignore` working as an alias for
+exclude-files for one release.
+
+Then add the Other Filters tier: rules on **size**, **date** and **attributes**
+rather than name. `.gitignore` handling stays as-is — that remains a teczka
+differentiator BC lacks.
+
+**Acceptance**: an include-folders mask restricts traversal without excluding
+matching files elsewhere; presets survive restart; existing `--ignore`
+invocations behave unchanged.
+
+### WI-9.4 — Workspaces
+**Side**: GUI. **Files**: `teczka/models/settings.py`, `teczka/main_window.py`
+
+A workspace is a named set of open sessions, loadable and saveable as a unit
+(BC: `Session > Load Workspace` / `Save Workspace As`). teczka has sessions and
+`SessionProfile` but nothing that groups them. Pairs naturally with the
+`Startup` preferences in WI-9.9 ("load workspace on start", "save workspace on
+exit").
+
+Land after WI-7.5 settles the document/session model, or the workspace will
+serialise a model that is about to change.
+
+### WI-9.5 — File-format rules engine and "ignore unimportant differences"
+**Side**: core, then CLI, then GUI. **Files**: new
+`rcompare_core/src/grammar.rs`, `rcompare_core/src/text_diff.rs`
+
+The largest single capability gap in the product, and the reason BC's text
+comparison feels smarter than teczka's.
+
+BC ships 24 file formats, each carrying a **grammar**: named elements
+(Keyword, Identifier, Number, String, Comment, Operator, Environment Variable)
+defined as regexes or delimited ranges, plus **line weights with priorities**.
+The Importance tab then marks which grammar elements *matter*, which is what
+makes "Ignore Unimportant Differences" work — a comment-only or
+whitespace-only change is detected as unimportant and the file reports as
+equal.
+
+Scope this deliberately; it is a multi-week item:
+
+1. A grammar model plus a rules file format, seeded with the languages already
+   in `FEATURE_COMPARISON.md`'s syntax-highlighting scope (WI-7.3 shares the
+   tokeniser — do these together, not twice).
+2. An importance mask per format, and a diff pass that classifies each change
+   as important/unimportant.
+3. `--ignore-unimportant` on `scan` and `diff-file`; the View-menu toggle and
+   the "Minor" indicator in teczka.
+4. Per-session grammar overrides and unimportant-text rules.
+
+**Acceptance**: two files differing only in comments compare equal under
+`--ignore-unimportant` and different without it; the same for
+whitespace-only and case-only changes per the importance mask; grammar
+definitions round-trip through the rules file.
+
+### WI-9.6 — Configurable text alignment, replacements and overrides
+**Side**: core + CLI, then GUI. **Files**: `rcompare_core/src/text_diff.rs`
+
+BC exposes four alignment algorithms — **Unaligned**, **Standard**, **Myers
+O(ND)**, **Patience Diff** — plus **skew tolerance** (default 2000 lines) and
+**closeness matching**. Patience Diff in particular produces markedly better
+results on reordered blocks, which is a common complaint about naive LCS
+output.
+
+Add alongside: per-session **Replacements** (left↔right text substitutions
+applied before comparison — teczka has `regex_rules`, which is the same idea
+and may subsume it) and folder-level **Alignment overrides** (explicit
+left-name↔right-name pairings, for renamed files).
+
+**Acceptance**: a reordered-block fixture yields fewer reported changes under
+Patience than Standard; skew tolerance bounds the search as documented; an
+alignment override pairs two differently-named files.
+
+### WI-9.7 — Table/CSV parsing controls
+**Side**: core + CLI, then GUI. **Files**: `rcompare_core/src/csv_diff.rs`,
+`teczka/views/table_view.py`
+
+BC's Table Format dialog exposes delimiters (comma/semicolon/space/tab/other),
+text qualifier (quote/apostrophe/none/other), fixed-width vs delimited, "treat
+consecutive delimiters as one", "treat surrounding whitespace as part of
+delimiter", **first line contains** (detect/header/data), and a Regional tab
+for decimal separator, thousands separator, date order and date separator.
+
+teczka assumes comma-delimited, quote-qualified, and got a header toggle and
+key columns in WI-5.3. The regional settings matter for this project's own
+Italian data: `1.234,56` and `DMY` dates are misparsed under the current
+assumptions.
+
+**Acceptance**: a semicolon-delimited Italian-locale CSV with `,` decimals
+parses correctly; fixed-width input aligns by column; consecutive-delimiter
+handling is covered both ways.
+
+### WI-9.8 — Remote connection profiles and credential storage
+**Side**: GUI, depends on **WI-2.1**. **Files**: new
+`teczka/dialogs/connection_profiles_dialog.py`
+
+BC's `Tools > Profiles` manages named remote connections (FTP/SFTP/SSH) with
+Global/Server/Connection/Proxy/Listings/Transfer tabs, SSH key and SSL client
+certificate paths, and per-profile ASCII-type masks.
+
+WI-7.9 gives teczka's path bar URL syntax but no place to store credentials.
+This is that place. **Credentials go in the platform keyring, never in
+`pyside.json`** — and never in captured screenshots or logs.
+
+### WI-9.9 — Global preferences parity
+**Side**: GUI. **Files**: `teczka/dialogs/settings_dialog.py`,
+`teczka/utils/config.py`
+
+Eight of BC's 11 preference pages have no teczka counterpart. Add them in
+value order, not the order BC lists them:
+
+1. **File Operations** — 10 confirmation toggles (copy, move, read-only,
+   system files, overwrite-newer, replace-during-move, content compare, delete,
+   explicit side selection, merge) plus sync confirmation policy. teczka has
+   the confirmation *dialogs* already (WI-7.14); this makes them configurable.
+2. **Backups** — back up before copy/save, naming scheme, backup folder. Pairs
+   with the existing undo-for-deletions support.
+3. **Next Difference** — go to first difference on load, advance after copy,
+   limit to current folder, wrap-around behaviour.
+4. **Startup** — load workspace on start, save on exit (needs WI-9.4);
+   file-manager context-menu integration is KDE **WS5** work, cross-reference
+   rather than duplicate.
+5. **Tabs** — open in new tab vs window, warn on closing multiple, hide tab bar
+   when single.
+6. **Text Editing** — auto-indent, backspace unindents, context-line count.
+7. **Archive Types** — the mask table; low value until Phase 2 lands archive
+   write.
+8. **Open With** — user-defined external applications per file type.
+
+Each toggle must have a consumer before it ships. The Phase 5 lesson stands:
+a preference that does nothing is worse than an absent one.
+
+### WI-9.10 — Command customisation beyond shortcuts
+**Side**: GUI. **Files**: `teczka/dialogs/shortcuts_dialog.py`
+
+BC's Commands page is a per-view table with **Menu**, **Toolbar** and
+**Shortcut** columns — the user controls where each command appears, not just
+its chord. teczka persists shortcuts (delivered in Phase 5) but has no menu or
+toolbar placement control, and "Configure Toolbars…" was removed with the
+toolbar itself.
+
+Gate this on WI-7.5 deciding whether a toolbar exists at all. If it does not,
+close this item as "won't do" rather than leaving it open indefinitely.
+
+### WI-9.11 — Settings portability
+**Side**: GUI. **Files**: `teczka/main_window.py`, `teczka/utils/config.py`
+
+`Tools > Export Settings…` / `Import Settings…` / `Restore Factory Defaults…`.
+Cheap to build on the existing JSON config and the standard way users migrate
+between machines. Must exclude anything credential-shaped once WI-9.8 lands.
+
+**Acceptance**: export/import round-trips every configured value; import of a
+file from a newer schema version fails with a message naming both versions,
+matching the WI-5.2 contract.
+
+### WI-9.12 — Complete the View menu
+**Side**: GUI. **Files**: `teczka/main_window.py`,
+`teczka/widgets/color_legend.py`, `teczka/views/folder_view.py`
+
+Four remaining View-menu gaps, two of them nearly free:
+
+1. **Columns** submenu — BC offers 8 selectable fields (Ext, Revision, Size,
+   CRC, Modified, Attributes, Owner, Group). teczka's `folder_columns` already
+   persists widths and the folder view already supports column visibility and
+   order; this is menu plumbing over existing capability.
+2. **Legend** (`Ctrl+Alt+L`) — `color_legend.py` exists with no menu entry.
+3. **Suppress Filters** — a temporary "show everything" override, distinct from
+   clearing filters.
+4. **Log panel** — BC keeps a per-session operation log; teczka's operation
+   messages currently only pass through the status bar.
+
+Items 1 and 2 are the cheapest parity wins in this phase; do them opportunistically
+alongside any other folder-view work.
+
+---
+
 ## Sequencing summary
 
 ```
@@ -1035,6 +1323,12 @@ Phase 4 (CLI v2)                │   Phase 7 ── presentation/a11y/KDE  │
    WI-4.1 schema v2 ◄───────────┴───────── must come after ────────────┘
 
 Phase 8 ── opportunistic
+
+Phase 9 ── BC configuration parity (after Phase 5; spans both tracks)
+   WI-9.1 session scope ──▶ WI-9.2 criteria, WI-9.3 filters, WI-9.6 alignment
+   WI-9.5 grammar/rules ◄──── share one tokeniser ────▶ WI-7.3 highlighting
+   WI-9.8 connection profiles ◄──── needs ──── WI-2.1
+   WI-9.4 workspaces ◄──── after ──── WI-7.5 document model
 ```
 
 The only hard cross-track dependency is **WI-5.2 → WI-4.1**.

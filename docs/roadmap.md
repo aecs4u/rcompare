@@ -1,6 +1,7 @@
 # Roadmap: remaining work for competitive parity
 
-Last verified against source: 2026-07-25. Replaces `GAPS.md`, `ROADMAP.md`,
+Last verified against source: 2026-07-25; §7 added 2026-07-26 from the Beyond
+Compare configuration-surface study. Replaces `GAPS.md`, `ROADMAP.md`,
 `ROADMAP_VFS.md`, and the forward-looking sections of the two dated CLI/GUI
 milestone plans (all deleted this pass — see `CHANGELOG.md`). Competitor
 baseline is [FEATURE_COMPARISON.md](../FEATURE_COMPARISON.md) (Beyond Compare,
@@ -122,6 +123,38 @@ CLI automation, open-source auditability, native `.gitignore` handling.
 | Property-based testing (`proptest`) | ❌ | Low |
 | Fuzz testing (patch/CSV/etc. parsers) | ❌ | Low |
 | teczka automated coverage | 🚧 — see §4 | Medium |
+
+## 7. Configuration-surface parity vs. Beyond Compare
+
+Added 2026-07-26 from a systematic study of what Beyond Compare 5.2.4 lets a
+user *configure* — all 11 `Tools > Options` pages, the per-type Session
+Settings dialogs and the File Formats editor. Evidence: 62 screenshots in
+[`.playwright-mcp/bcompare/`](../.playwright-mcp/bcompare/); analysis in
+[BCOMPARE_GUI_CONFIG_COMPARISON.md](BCOMPARE_GUI_CONFIG_COMPARISON.md);
+sequencing in [development-plan.md](development-plan.md) Phase 9.
+
+This is net-new scope, not repair — none of it is a defect. Roughly half needs
+`rcompare_core`/CLI support before teczka can expose anything, marked below.
+
+| Item | Side | Status | Impact |
+|---|---|---|---|
+| **File-format grammars + "ignore unimportant differences"** — 24 formats, each defining Keyword/Identifier/Number/String/Comment/Operator as regexes, plus line weights and an importance mask | core → CLI → GUI | ❌ | **High** — the largest single capability gap; it is why BC reports a comment-only change as *equal*. Shares a tokeniser with syntax highlighting (WI-7.3) — build once (WI-9.5) |
+| **Settings scope selector** — "this view only" / session / defaults | GUI | ❌ | High — `SessionState` already stores per-tab settings; only the user-facing half is missing, and every other item here needs somewhere to live (WI-9.1) |
+| **Comparison criteria** — timestamp tolerance (seconds), ignore DST, ignore timezone, filename case, Unicode normalisation alignment, Unix permissions/owner/group, CRC vs binary vs rules-based content compare | core → CLI → GUI | ❌ | High — teczka covers ~4 of BC's ~40 session settings. Timestamp tolerance alone removes false differences on FAT/exFAT and network filesystems (WI-9.2) |
+| **Structured name filters** — include/exclude × files/folders as four independent lists, with reusable presets; plus rule-based size/date/attribute filters | core → CLI → GUI | ❌ | High — teczka has one flat `ignore_patterns` list. `.gitignore` handling stays a differentiator BC lacks (WI-9.3) |
+| **Configurable text alignment** — Unaligned / Standard / Myers O(ND) / Patience Diff, skew tolerance, closeness matching; plus per-session replacements and folder-level alignment overrides | core → CLI → GUI | ❌ | Medium — Patience notably improves reordered-block output (WI-9.6) |
+| **Table/CSV parsing controls** — delimiters, text qualifier, fixed-width, consecutive-delimiter handling, first-line-contains; Regional decimal/thousands separator and date order | core → CLI → GUI | ❌ | Medium — current fixed assumptions misparse Italian-locale data (`1.234,56`, DMY) (WI-9.7) |
+| **Remote connection profiles** — named FTP/SFTP/SSH connections, SSH key and SSL certificate paths, per-profile ASCII masks | GUI, needs §1.3 | ❌ | Medium — the credential store the GUI's URL support requires; keyring only, never in `pyside.json` (WI-9.8) |
+| **Workspaces** — a named set of open sessions, loaded/saved as a unit | GUI | ❌ | Medium — teczka has sessions and profiles but no grouping (WI-9.4) |
+| **Global preferences parity** — File Operations confirmations, Backups, Next Difference, Startup, Tabs, Text Editing, Archive Types, Open With | GUI | ❌ | Medium — 8 of BC's 11 preference pages have no teczka counterpart. Each toggle needs a consumer before it ships (WI-9.9) |
+| **Command customisation** — per-view menu placement, toolbar placement and shortcut | GUI | 🚧 shortcuts only | Low — shortcut persistence landed in Phase 5; placement control depends on whether a toolbar returns (WI-9.10) |
+| **Settings portability** — export/import settings, restore factory defaults | GUI | ❌ | Medium — cheap on the existing JSON config; must exclude credentials (WI-9.11) |
+| **View menu completions** — Columns (8 selectable fields), Legend, Suppress Filters, Log panel | GUI | ❌ | Low–Medium — Columns and Legend are near-free: column visibility/order already works and `color_legend.py` already exists (WI-9.12) |
+
+Not surveyed, and therefore not scoped above: Session Settings for Folder
+Merge, Folder Sync, Text Merge, Hex, Media and Picture Compare (they reuse the
+Folder and Text Compare tab structures), and the contents of Table Compare's
+Sheets/Columns/Rows tabs.
 
 ## Out of scope / intentionally deferred
 
