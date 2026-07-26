@@ -50,7 +50,10 @@ class BreadcrumbBar(QWidget):
         # --- Scroll area for breadcrumb segments ---
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # No horizontal scrollbar: it renders inside the row's fixed height and
+        # clips the segment labels from below. Overflow is handled by
+        # auto-scrolling to the deepest segment, as file-manager breadcrumbs do.
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
         self._scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -88,10 +91,18 @@ class BreadcrumbBar(QWidget):
         main_layout.addWidget(self._line_edit, 1)
         main_layout.addWidget(self._edit_button, 0)
 
-        # Keep height compact, matching a standard QLineEdit.
+        # Keep height compact, but never shorter than what the row actually
+        # needs: a hardcoded or line-edit-only height clips segment descenders
+        # once the font is scaled up (HiDPI, large-text accessibility setting).
         ref = QLineEdit()
         ref.ensurePolished()
-        h = ref.sizeHint().height()
+        self._line_edit.ensurePolished()
+        h = max(
+            ref.sizeHint().height(),
+            self._line_edit.sizeHint().height(),
+            self._edit_button.height(),
+            self.fontMetrics().height() + 8,
+        )
         self.setFixedHeight(h)
         self._scroll_area.setFixedHeight(h)
 

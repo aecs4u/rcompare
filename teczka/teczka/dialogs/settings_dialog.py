@@ -29,7 +29,30 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QFontDatabase, QIcon
 
 from ..models.settings import ComparisonSettings
+from ..resources.themes import THEME_NAMES, normalize_theme
 from ..utils.config import AppConfig
+
+
+# (label, CLI value) for --ignore-whitespace. The value is what
+# rcompare_cli's WhitespaceModeArg accepts.
+_WHITESPACE_MODES: tuple[tuple[str, str], ...] = (
+    ("None", "none"),
+    ("All", "all"),
+    ("Leading", "leading"),
+    ("Trailing", "trailing"),
+    ("Changes", "changes"),
+)
+
+_DEFAULT_BINARY_PATTERNS: tuple[str, ...] = (
+    "*.exe", "*.dll", "*.so", "*.dylib", "*.bin", "*.dat", "*.o", "*.a", "*.lib",
+)
+
+_THEME_LABELS: tuple[tuple[str, str], ...] = (
+    ("Follow system", "system"),
+    ("Light", "light"),
+    ("Dark", "dark"),
+)
+assert {value for _, value in _THEME_LABELS} == set(THEME_NAMES)
 
 
 class SettingsDialog(QDialog):
@@ -157,10 +180,17 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(tab)
 
         # Whitespace handling
+        saved_diff = self._config.diff_options
+
         ws_group = QGroupBox("Whitespace Handling")
         ws_layout = QFormLayout(ws_group)
         self._ws_combo = QComboBox()
-        self._ws_combo.addItems(["None", "All", "Leading", "Trailing", "Changes"])
+        for label, value in _WHITESPACE_MODES:
+            self._ws_combo.addItem(label, value)
+        ws_index = self._ws_combo.findData(
+            str(saved_diff.get("ignore_whitespace", "none"))
+        )
+        self._ws_combo.setCurrentIndex(max(0, ws_index))
         ws_layout.addRow("Ignore whitespace:", self._ws_combo)
         layout.addWidget(ws_group)
 
@@ -168,9 +198,10 @@ class SettingsDialog(QDialog):
         text_group = QGroupBox("Text Comparison")
         text_layout = QVBoxLayout(text_group)
         self._case_check = QCheckBox("Ignore case differences")
+        self._case_check.setChecked(bool(saved_diff.get("ignore_case", False)))
         text_layout.addWidget(self._case_check)
         self._text_diff_check = QCheckBox("Enable line-by-line text diff")
-        self._text_diff_check.setChecked(True)
+        self._text_diff_check.setChecked(bool(saved_diff.get("text_diff", True)))
         text_layout.addWidget(self._text_diff_check)
         layout.addWidget(text_group)
 
@@ -178,14 +209,43 @@ class SettingsDialog(QDialog):
         spec_group = QGroupBox("Specialized Comparisons")
         spec_layout = QVBoxLayout(spec_group)
         self._image_diff_check = QCheckBox("Enable pixel-level image comparison")
+        self._image_diff_check.setChecked(bool(saved_diff.get("image_diff", False)))
         spec_layout.addWidget(self._image_diff_check)
+        self._image_exif_check = QCheckBox("Compare EXIF metadata between images")
+        self._image_exif_check.setChecked(bool(saved_diff.get("image_exif", False)))
+        self._image_exif_check.setToolTip(
+            "Shows differing camera, lens, timestamp and exposure tags in Image Compare."
+        )
+        spec_layout.addWidget(self._image_exif_check)
         self._csv_diff_check = QCheckBox("Enable CSV row-by-row comparison")
+        self._csv_diff_check.setChecked(bool(saved_diff.get("csv_diff", False)))
         spec_layout.addWidget(self._csv_diff_check)
         self._json_diff_check = QCheckBox("Enable JSON/YAML structural comparison")
+        self._json_diff_check.setChecked(bool(saved_diff.get("json_diff", False)))
         spec_layout.addWidget(self._json_diff_check)
         self._excel_diff_check = QCheckBox("Enable Excel sheet/cell comparison")
+        self._excel_diff_check.setChecked(bool(saved_diff.get("excel_diff", False)))
         spec_layout.addWidget(self._excel_diff_check)
         layout.addWidget(spec_group)
+
+        # CSV key columns -- the row-alignment fix (WI-5.3). Without a key,
+        # CSV rows are paired by position, so one inserted row reports every
+        # later row as "different".
+        csv_group = QGroupBox("CSV Row Alignment")
+        csv_layout = QFormLayout(csv_group)
+        self._csv_key_edit = QLineEdit(
+            ", ".join(saved_diff.get("csv_key_columns", []) or [])
+        )
+        self._csv_key_edit.setPlaceholderText("id, order_number  (blank = align by position)")
+        csv_layout.addRow("Key columns:", self._csv_key_edit)
+        csv_hint = QLabel(
+            "Comma-separated header names. With a key, rows are matched by "
+            "value instead of by position, so inserted or reordered rows are "
+            "reported as added/removed rather than as differences."
+        )
+        csv_hint.setWordWrap(True)
+        csv_layout.addRow(csv_hint)
+        layout.addWidget(csv_group)
 
         # Regex rules
         regex_group = QGroupBox("Regex Normalization Rules")
@@ -195,6 +255,7 @@ class SettingsDialog(QDialog):
         self._regex_edit = QTextEdit()
         self._regex_edit.setMinimumHeight(80)
         self._regex_edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self._regex_edit.setPlainText("\n".join(saved_diff.get("regex_rules", [])))
         self._regex_edit.setPlaceholderText(
             r"\d{4}-\d{2}-\d{2}:[DATE]:Normalize dates"
         )
@@ -218,7 +279,9 @@ class SettingsDialog(QDialog):
             "iso-8859-15", "cp1252", "shift_jis", "euc-jp", "gb2312",
             "big5", "koi8-r",
         ])
-        self._encoding_combo.setCurrentText("utf-8")
+        self._encoding_combo.setCurrentText(
+            str(self._config.file_options.get("encoding", "utf-8"))
+        )
         encoding_layout.addRow("Default encoding:", self._encoding_combo)
         encoding_hint = QLabel(
             "Encoding used when reading text files for comparison. "
@@ -232,7 +295,9 @@ class SettingsDialog(QDialog):
         eol_group = QGroupBox("Line Endings")
         eol_layout = QVBoxLayout(eol_group)
         self._eol_ignore_check = QCheckBox("Ignore line ending differences (LF vs CRLF)")
-        self._eol_ignore_check.setChecked(True)
+        self._eol_ignore_check.setChecked(
+            bool(self._config.file_options.get("ignore_eol", True))
+        )
         eol_layout.addWidget(self._eol_ignore_check)
         layout.addWidget(eol_group)
 
@@ -250,7 +315,9 @@ class SettingsDialog(QDialog):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         self._binary_patterns_edit.setPlainText(
-            "*.exe\n*.dll\n*.so\n*.dylib\n*.bin\n*.dat\n*.o\n*.a\n*.lib"
+            "\n".join(
+                self._config.file_options.get("binary_patterns", _DEFAULT_BINARY_PATTERNS)
+            )
         )
         filter_layout.addWidget(filter_hint)
         filter_layout.addWidget(self._binary_patterns_edit)
@@ -265,11 +332,10 @@ class SettingsDialog(QDialog):
         appearance_group = QGroupBox("Theme")
         appearance_layout = QFormLayout(appearance_group)
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["Light", "Dark"])
-        current_theme = self._config.theme.strip().capitalize()
-        if current_theme not in {"Light", "Dark"}:
-            current_theme = "Light"
-        self._theme_combo.setCurrentText(current_theme)
+        for label, value in _THEME_LABELS:
+            self._theme_combo.addItem(label, value)
+        theme_index = self._theme_combo.findData(normalize_theme(self._config.theme))
+        self._theme_combo.setCurrentIndex(max(0, theme_index))
         self._theme_hint = QLabel("")
         self._theme_hint.setWordWrap(True)
         self._theme_combo.currentTextChanged.connect(self._update_theme_hint)
@@ -382,19 +448,34 @@ class SettingsDialog(QDialog):
     def _icon(self, name: str) -> QIcon:
         return QIcon.fromTheme(name)
 
-    def _update_theme_hint(self, theme_name: str) -> None:
-        if theme_name.lower() == "dark":
-            self._theme_hint.setText("Dark theme selected. Change takes effect after restart.")
+    def _update_theme_hint(self, _theme_name: str = "") -> None:
+        theme = self._theme_combo.currentData()
+        if theme == "system":
+            self._theme_hint.setText(
+                "Uses the desktop palette, including Plasma dark mode, your "
+                "accent colour and high-contrast schemes."
+            )
         else:
-            self._theme_hint.setText("Light theme selected. Change takes effect after restart.")
+            self._theme_hint.setText(
+                f"The {theme} stylesheet is applied immediately when you click OK."
+            )
 
     def get_settings(self) -> ComparisonSettings:
         patterns = [p.strip() for p in self._patterns_edit.toPlainText().splitlines() if p.strip()]
+        diff = self.get_diff_options()
         return ComparisonSettings(
             ignore_patterns=patterns,
             follow_symlinks=self._symlinks_check.isChecked(),
             use_hash_verification=self._hash_check.isChecked(),
             cache_dir=self._cache_edit.text() or None,
+            text_diff=bool(diff["text_diff"]),
+            ignore_whitespace=str(diff["ignore_whitespace"]),
+            ignore_case=bool(diff["ignore_case"]),
+            regex_rules=list(diff["regex_rules"]),
+            image_diff=bool(diff["image_diff"]),
+            csv_diff=bool(diff["csv_diff"]),
+            json_diff=bool(diff["json_diff"]),
+            excel_diff=bool(diff["excel_diff"]),
         )
 
     def get_appearance_settings(self) -> dict:
@@ -409,9 +490,89 @@ class SettingsDialog(QDialog):
 
     def get_config_updates(self) -> dict:
         return {
-            "theme": self._theme_combo.currentText().lower(),
-            "cli_path": self._cli_edit.text() or None,
+            "theme": normalize_theme(self._theme_combo.currentData()),
+            "cli_path": self._cli_edit.text().strip() or None,
         }
+
+    def get_diff_options(self) -> dict:
+        """Return the Diff Options page.
+
+        Every control here used to be decoration: ``get_settings()`` returned
+        only ignore patterns, symlink/hash and cache, so whitespace, case,
+        specialised comparisons and regex rules were collected and dropped.
+        """
+        rules = [
+            line.strip()
+            for line in self._regex_edit.toPlainText().splitlines()
+            if line.strip()
+        ]
+        keys = [
+            part.strip()
+            for part in self._csv_key_edit.text().split(",")
+            if part.strip()
+        ]
+        return {
+            "ignore_whitespace": self._ws_combo.currentData(),
+            "ignore_case": self._case_check.isChecked(),
+            "text_diff": self._text_diff_check.isChecked(),
+            "image_diff": self._image_diff_check.isChecked(),
+            "image_exif": self._image_exif_check.isChecked(),
+            "csv_diff": self._csv_diff_check.isChecked(),
+            "csv_key_columns": keys,
+            "json_diff": self._json_diff_check.isChecked(),
+            "yaml_diff": self._json_diff_check.isChecked(),
+            "excel_diff": self._excel_diff_check.isChecked(),
+            "regex_rules": rules,
+        }
+
+    def get_file_options(self) -> dict:
+        """Return the Files page (encoding, EOL handling, binary patterns)."""
+        patterns = [
+            line.strip()
+            for line in self._binary_patterns_edit.toPlainText().splitlines()
+            if line.strip()
+        ]
+        return {
+            "encoding": self._encoding_combo.currentText().strip() or "utf-8",
+            "ignore_eol": self._eol_ignore_check.isChecked(),
+            "binary_patterns": patterns,
+        }
+
+    def accept(self) -> None:
+        """Validate before closing.
+
+        An unusable CLI path used to be accepted silently and only surfaced
+        much later as a failed comparison.
+        """
+        problem = self._cli_path_problem()
+        if problem is not None:
+            answer = QMessageBox.warning(
+                self,
+                "CLI Path Not Usable",
+                f"{problem}\n\nSave anyway? Comparison will not work until "
+                "a valid rcompare_cli binary is configured.",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Save:
+                self._tabs.setCurrentIndex(self._tabs.count() - 1)
+                self._cli_edit.setFocus()
+                return
+        super().accept()
+
+    def _cli_path_problem(self) -> str | None:
+        """Return why the configured CLI path is unusable, or None."""
+        raw = self._cli_edit.text().strip()
+        if not raw:
+            return None  # empty means auto-detect, which is legitimate
+        candidate = Path(raw)
+        if not candidate.exists():
+            return f"'{raw}' does not exist."
+        if not candidate.is_file():
+            return f"'{raw}' is not a file."
+        if os.name != "nt" and not os.access(candidate, os.X_OK):
+            return f"'{raw}' is not executable."
+        return None
 
     def _restore_defaults(self) -> None:
         reply = QMessageBox.question(
@@ -427,7 +588,20 @@ class SettingsDialog(QDialog):
         self._symlinks_check.setChecked(False)
         self._hash_check.setChecked(True)
         self._cache_edit.clear()
-        self._theme_combo.setCurrentText("Light")
+        self._theme_combo.setCurrentIndex(self._theme_combo.findData("system"))
+        self._ws_combo.setCurrentIndex(self._ws_combo.findData("none"))
+        self._case_check.setChecked(False)
+        self._text_diff_check.setChecked(True)
+        self._image_diff_check.setChecked(False)
+        self._image_exif_check.setChecked(False)
+        self._csv_diff_check.setChecked(False)
+        self._json_diff_check.setChecked(False)
+        self._excel_diff_check.setChecked(False)
+        self._csv_key_edit.clear()
+        self._regex_edit.clear()
+        self._encoding_combo.setCurrentText("utf-8")
+        self._eol_ignore_check.setChecked(True)
+        self._binary_patterns_edit.setPlainText("\n".join(_DEFAULT_BINARY_PATTERNS))
         # Reset diff colors
         defaults = {
             "color_added": "#c8e6c9",

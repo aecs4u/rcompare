@@ -89,4 +89,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+# Also match a .venv that is a symlink to an out-of-tree environment; the
+# trailing-slash form above only matches real directories.
+.venv
 *.egg

@@ -117,6 +117,7 @@ pub(crate) fn run_diff_file(
     regex_rules: Vec<String>,
     image_exif: bool,
     image_tolerance: u8,
+    csv_key: Vec<String>,
     max_binary_ranges: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rel = PathBuf::from(rel_path.trim());
@@ -182,7 +183,7 @@ pub(crate) fn run_diff_file(
         ResolvedDiffMode::Csv => {
             let left_tmp = TempFileGuard::create("diff_csv_left", "csv", &left_bytes)?;
             let right_tmp = TempFileGuard::create("diff_csv_right", "csv", &right_bytes)?;
-            let engine = CsvDiffEngine::new();
+            let engine = CsvDiffEngine::new().with_key_columns(csv_key.clone());
             let result = engine.compare_files(left_tmp.path(), right_tmp.path())?;
             serde_json::to_value(result)?
         }

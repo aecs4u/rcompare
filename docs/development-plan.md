@@ -1,6 +1,7 @@
 # Development Plan
 
-Created: 2026-07-25. Source-verified against the tree at commit `c17ea5d`.
+Created: 2026-07-25. Initial source review at commit `c17ea5d`; the runtime
+design-review addendum was verified against the 2026-07-25 working tree.
 
 **Scope authority**: [FEATURE_COMPARISON.md](../FEATURE_COMPARISON.md) defines
 *what* parity means; [roadmap.md](roadmap.md) is the maintained list of *what's
@@ -35,6 +36,25 @@ The good news: `rcompare_common::Vfs` already declares the full write surface
 Accordingly the plan front-loads Phase 1, and everything else is scheduled
 around it.
 
+The same pattern recurs in the GUI. The teczka design review found **EXIF
+comparison** and **key-based CSV row alignment** both implemented in
+`rcompare_core`, reachable from the CLI, and invisible in teczka — bringing
+the built-but-unwired count to six. Treat "wire what exists" as this
+project's default posture rather than a one-off phase.
+
+## Already completed (2026-07-25)
+
+Fixed while reviewing, so they are not scheduled below: teczka's permanently
+stuck "Comparing..." status bar, clipped path breadcrumbs, the hex view's
+bottom-pinned layout, the unconditional welcome-dialog launch gate, the
+missing path-bar folder picker (now portal/native, reaching desktop-mounted
+network locations), and the forced Fusion widget style. See `CHANGELOG.md`
+`[Unreleased]`.
+
+The runtime addendum below distinguishes the repaired comparison-completion
+summary from the operation messages and progress state that still need to be
+migrated into the visible shell under WI-5.7.
+
 ---
 
 ## Phase overview
@@ -46,12 +66,21 @@ around it.
 | 2 | Backend wiring on top of Phase 1 | P1 | 7–11 d |
 | 3 | Resumable sync/copy | P1 | 4–6 d |
 | 4 | CLI automation surface (v2) | P1 (loosely) | 8–12 d |
-| 5 | teczka: bugs, remote reach, tests | P2 | 10–15 d |
-| 6 | teczka: KDE compliance to ≥90% | P0 | 12–18 d |
-| 7 | Scale & net-new core | P2 | opportunistic |
+| 5 | teczka: correctness & contract | — | 10–16 d |
+| 6 | teczka: structural refactor | P5 (test net) | 15–20 d |
+| 7 | teczka: presentation, accessibility & KDE compliance | — | 22–30 d |
+| 8 | Scale & net-new core | P2 | opportunistic |
 
-Phases 4 and 6 are independent of 1–3 and can run in parallel if there's more
-than one contributor. Phases 2, 3 and 5 are strictly downstream of Phase 1.
+Phases 5–7 are independent of engine Phases 1–4. Within the GUI track, Phase 5
+makes visible controls authoritative before Phase 7 reshapes them; palette,
+icon and early accessibility work can still run in parallel. Phase 6 depends
+on its own test scaffolding (WI-6.1). Phases 2 and 3 are strictly downstream
+of Phase 1.
+
+**One cross-phase ordering constraint:** **WI-5.2** (validate the CLI schema
+version in teczka) must land before **WI-4.1** (unified JSON schema v2), or
+schema v2 breaks the GUI with a `KeyError` in a worker thread. It is the only
+hard dependency between the Rust and Python tracks.
 
 ---
 
@@ -91,13 +120,9 @@ It is not a workspace member (`Cargo.toml` lists four crates) and contains
 nothing, but its presence contradicts the docs that say the Slint GUI was
 removed. One-line cleanup; prevents recurring "is this still a thing?" churn.
 
-### WI-0.3 — Fix teczka's drag-and-drop truncation
-**File**: [teczka/teczka/main_window.py:3237](../teczka/teczka/main_window.py#L3237)
-
-`dropEvent` collects all dropped URLs then keeps the first two with no
-feedback. Fix: when >2 paths are dropped, use the first two **and** say so in
-the status bar. Cheap, and it's a user-visible papercut currently documented as
-a defect in `FEATURE_COMPARISON.md`.
+### WI-0.3 — *(moved)*
+teczka's drag-and-drop truncation is now **WI-5.6**, with the rest of the GUI
+correctness work.
 
 ### WI-0.4 — Multi-platform CI matrix
 **File**: `.github/workflows/ci.yml`
@@ -259,48 +284,669 @@ teczka already has CSV export — reuse its column model for consistency.
 
 ---
 
-## Phase 5 — teczka: bugs, remote reach, tests
+## Phases 5–7 — teczka
 
-Depends on Phase 2 for remote sources; the test work does not.
+Derived from
+[history/TECZKA_DESIGN_REVIEW.md](history/TECZKA_DESIGN_REVIEW.md) (2026-07-25),
+a runtime-verified architecture/UX review benchmarked against Beyond Compare
+5.2.4. Section references below (§2.2, §2.6, …) point into that document for
+the evidence behind each item.
 
-### WI-5.1 — Remote/archive sources in the path bar
-Accept the WI-2.1 URL syntax in teczka's path bar and file dialogs, with a
-credential prompt backed by the platform keyring. Run resolution off the GUI
-thread — the codebase already established that pattern in recent commits
-(`comparison_worker.py`, background CSV/Excel parsing).
+The review's own conclusion drives the ordering: teczka's problems are
+**concentrated, not diffuse**. One 3,400-line class holds logic that belongs
+elsewhere; two subsystems are built but inert; the contract with the CLI is
+unvalidated. The view layer is healthy and should not be rewritten.
 
-### WI-5.2 — GUI test coverage
-Current state: 4 files, 271 lines total. Untested: merge view, sync/export/
-profile dialogs, drag-and-drop. Target the merge view first — it's the
-youngest, most complex, and least-verified surface in the app, and
-FEATURE_COMPARISON.md already flags its conflict-resolution UI as
-"young/undertested".
+Split into three tiers because they have genuinely different risk profiles:
+Phase 5 is small and safe, Phase 6 is invasive and needs the test net built
+first, and Phase 7 contains presentation/accessibility work that can mostly be
+parallelised once Phase 5 has made the visible controls authoritative.
 
-### WI-5.3 — Sync preview against remote targets
-Extend the existing sync-preview dialog to render capability warnings from
-WI-1.2 (e.g. "target does not support trash; deletes will be permanent").
+### Runtime design-review addendum (2026-07-25)
+
+A second, full product-design pass rendered Home, Folder, Text, Image, Table,
+Splash, Settings and Merge at desktop size, with the Home view repeated at the
+declared 800×600 minimum and Folder repeated under a forced dark palette. It
+also exercised live session closing, path swapping, shortcut resolution,
+view-stack navigation, theme application and filter state. The review combined
+rendered-state inspection, keyboard traversal, widget-tree interrogation and
+source tracing; findings below are therefore confirmed behaviour, not a
+mock-up critique.
+
+The resulting product-design assessment is **4.5/10 overall**: the comparison
+engines and redesigned Folder surface are credible, but the shell cannot yet
+be considered trustworthy because visible controls, hidden state and
+operation feedback disagree. The recent visual redesign is ahead of the
+application state architecture: the visible shell coexists with hidden
+compatibility widgets that still own behaviour.
+
+### Measured design baseline
+
+These numbers are point-in-time regression markers, not targets:
+
+| Measure | Verified value | Design implication |
+|---|---:|---|
+| `MainWindow` size | 3,407 lines, 139 methods, 73 `_on_*` slots | UI construction, navigation, persistence and operations have no enforceable boundaries |
+| Actions in the live window | 121 | Action scope and shortcut correctness need automated checks |
+| Calls to hidden native status messaging | 49 | Routine operation feedback is invisible |
+| Modal `QMessageBox` uses in the main/dialog/view surfaces | 67 | Non-fatal feedback is overly interruptive |
+| Explicit accessible names in the app | 2, both in Splash | Icon-only and custom controls are largely opaque to assistive technology |
+| Initial view stack / sidebar destinations | 6 / 7 | The visible 3-Way destination is inert |
+
+The four visible folder-status pills also fail WCAG contrast for normal text:
+green **2.78:1**, red **3.63:1**, blue **3.59:1**, and right-only red
+**3.76:1**, all below **4.5:1**. In the unchecked state, foreground and
+background both resolve to `palette(mid)`, making the label effectively
+invisible. Treat these values as test fixtures for WI-7.12 rather than merely
+visual preferences.
+
+The verified findings are mapped into work items below:
+
+| Severity | Finding | Scheduled in |
+|---|---|---|
+| Blocker | Visible session tabs cannot close; dynamic file comparisons are registered in a hidden tab bar; 3-Way Merge is advertised but unreachable | WI-5.8, WI-7.5 |
+| Blocker | Visible filters disagree with actual results; menu filters update hidden state; status-pill interaction silently enables files-only mode; `Ctrl+F` focuses a hidden field | WI-5.9 |
+| Blocker | Most operation messages and progress updates target a hidden status bar/progress widget; visible progress and `0/0` navigation do not update | WI-5.7 |
+| Blocker | Path-bar Swap swaps twice and produces no change | WI-5.11 |
+| Blocker | Light/Dark and CLI-path settings are exposed but discarded through the connected Preferences handler; neither theme stylesheet is applied at startup | WI-5.10, WI-7.1 |
+| Blocker | Diff/Files settings expose whitespace, case, specialised comparison, regex, encoding, EOL and binary-pattern controls that are neither returned, persisted nor applied | WI-5.10 |
+| Blocker | Sync Preview promises a later confirmation, but Execute starts mutation immediately; permanent deletion has no distinct second confirmation | WI-7.14 |
+| High | Home profile activation is unconnected and reads a different store from `ProfileManager`; recent sessions are rendered but never populated | WI-5.8, WI-7.11 |
+| High | Home content clips at 800×600; specialist views have weak empty states; fixed dimensions are fragile under font scaling/localisation | WI-7.11 |
+| High | Folder filters and folder paths remain visible in unrelated Text/Image/Hex/Table/Home contexts | WI-7.13 |
+| High | Keyboard conflicts (`Ctrl+P`, `Ctrl+Y`) and non-functional Find behaviour | WI-5.1, WI-5.9 |
+| High | Core controls are removed from keyboard focus; unchecked filter labels have no contrast; status relies primarily on colour | WI-7.12 |
+| High | Theme icons have no fallback in Home/sidebar/settings, producing blank navigation and cards when a FreeDesktop icon theme is absent | WI-7.4, WI-7.12 |
+| Medium | Folder, Text, Hex, Image, Table and Merge use different pane headers, toolbars, empty states and colour semantics | WI-7.1, WI-7.13 |
+| Medium | Home's “New Session” cards only switch modes and omit Table/Merge; sidebar expansion exists without an invocation | WI-7.5, WI-7.11 |
+| Medium | “Configure Toolbars…” is a placeholder after the toolbar was removed; KDE-only and product-name labels are unconditional/inconsistent | WI-7.15 |
+| Medium | “Changed” and “Applied” colour settings are exposed but not consumed by TextView | WI-5.10 |
+
+The folder comparison view remains the strongest surface: its pane hierarchy,
+breadcrumb paths, independent selectable columns and persisted header layouts
+are the reference quality bar. Preserve those behaviours while consolidating
+the shell around them.
+
+### Surface-by-surface target state
+
+This matrix carries the complete screen review into implementation rather than
+leaving it as general “polish”:
+
+| Surface | Keep | Required improvement |
+|---|---|---|
+| Global shell | Compact rail, session strip and integrated footer direction | Make chrome contextual; expose one document model; remove hidden state owners; show messages/progress/diff position in the visible footer |
+| Home | Clear task-launcher intent and recent/profile sections | Responsive scrollable layout; Folder/Text/Hex/Image/Table/Merge coverage; connect profile activation to `ProfileManager`; populate recents; provide explicit Open affordances |
+| Folder | Strong split-pane hierarchy, breadcrumbs and selectable persisted columns | Blank opposite-side gaps for orphan rows; visible status marker; semantic theme colours; metadata strip; discoverable filter/expand/collapse/swap/refresh |
+| Text | Effective side-by-side and intra-line comparison | Remove folder-only chrome; add file metadata, contextual search/edit/save/navigation, syntax highlighting and less oppressive full-line red/green fills |
+| Hex | Correct byte/ASCII comparison | Add search, go-to-offset, selection details and contextual diff navigation |
+| Image | Useful side-by-side image and basic metrics | Add synchronised pan/zoom, overlay/difference modes, responsive statistics and EXIF differences |
+| Table | Useful cell-level comparison | Add key-based alignment, header/schema controls, column selection/reordering and explicit left-only/right-only row treatment |
+| Merge | Sound four-pane structure and resolution actions | Highlight conflict regions in all source panes; group resolution controls; provide narrow-width overflow and clear unresolved-state feedback |
+| Settings | Understandable category structure | Persist and apply every exposed field, validate CLI path, make theme live, remove controls with no consumer, remain readable under scale/localisation |
+| Dialogs/feedback | Errors are consistently surfaced | Replace routine modal alerts with visible non-modal feedback; use specific destructive labels; make Sync Preview a structured plan with an unambiguous confirmation boundary |
+
+### Product-wide design principles established by the review
+
+1. **Visible state is authoritative.** No hidden widget may own navigation,
+   filters, progress, persistence or command state.
+2. **One concept has one source of truth.** Paths, filters, active document,
+   theme and session state must not have parallel widget and model copies.
+3. **Context determines chrome and actions.** Folder controls do not appear in
+   Text/Image/Hex/Table/Merge; unsupported commands are disabled and explain
+   why.
+4. **Safety language matches execution.** “Preview”, “dry run”, “execute” and
+   “permanent delete” describe distinct states, with consent at the actual
+   mutation boundary.
+5. **Status is semantic, not colour-only.** Every diff state has text or an
+   icon/shape, a palette-aware colour and tested contrast.
+6. **The supported minimum is real.** 800×600 and 125–200% scaling are release
+   checks, not aspirational dimensions.
 
 ---
 
-## Phase 6 — KDE compliance to ≥90%
+## Phase 5 — teczka correctness and contract
 
-Tracked in detail in [KDE_COMPLIANCE.md](KDE_COMPLIANCE.md); current ~35%
-against a ≥90% target. Sequence by remaining gap size:
+Small, independent, each verifiable. Nothing here needs the refactor.
+
+### WI-5.1 — Fix the keyboard surface (§2.6)
+Three separate defects, all verified by walking the live menu tree:
+
+1. **`Ctrl+Q` does not quit.** `main_window.py:227` uses
+   `QKeySequence.StandardKey.Quit`, which resolves on Linux to the `Exit`
+   multimedia key. Same trap on `StandardKey.Preferences` → `Settings`. Add an
+   explicit fallback: use the standard key **only if** it produces a
+   non-empty, non-multimedia binding, else hardcode `Ctrl+Q` / `Ctrl+,`.
+2. **`Ctrl+P` collides** — Print (`StandardKey.Print`, correct) vs. Profiles
+   (hardcoded). Rebind Profiles.
+3. **`Ctrl+Y` collides** — Redo (`StandardKey.Redo` includes `Ctrl+Y`) vs.
+   Synchronize (hardcoded). Rebind Synchronize.
+4. **About documents stale shortcuts** — its keyboard table advertises
+   `Ctrl+N` for the live `Ctrl+T` action and `Ctrl+Q` while the live binding is
+   `Exit`. Generate that table from the action registry or test it against the
+   live shortcuts rather than maintaining a second handwritten source.
+
+**Acceptance**: a test that walks the menu tree, asserts no duplicate key
+sequence, asserts Quit/Preferences resolve to real chords, and verifies the
+About shortcut table matches the actions. This test is the point of the item —
+without it the collisions recur. Update the Collision-Free row in
+`KDE_COMPLIANCE.md` when it passes.
+
+### WI-5.2 — Validate the CLI schema contract (§2.4)
+`rcompare_cli` emits `{"schema_version":"1.1.0", …}`; `utils/cli_bridge.py`
+never reads it and parses by direct subscripting (`data["summary"]["total"]`),
+so drift surfaces as a `KeyError` inside a worker thread.
+
+Check the version at the boundary, accept a declared major range, and fail with
+a message naming both the expected and received versions.
+
+**Sequencing note:** this is a prerequisite for **WI-4.1 (JSON schema v2)**.
+Landing schema v2 first breaks the GUI with a stack trace. Do this one before
+Phase 4 reaches WI-4.1, regardless of the phase numbering.
+
+### WI-5.3 — Key-based CSV row alignment (§1, "Algorithmic limitation")
+`rcompare_core/src/csv_diff.rs:201-204` aligns rows positionally
+(`for i in 0..max_rows`), so a left-only and a right-only row get paired and
+reported as "different", and the summary reports "0 left-only, 0 right-only" —
+wrong output, not just a limitation. One inserted row cascades through the
+whole file.
+
+`CsvDiffEngine::with_key_columns()` (`csv_diff.rs:94`) already implements the
+fix and has zero callers. Expose it: a `--csv-key <col>` CLI flag plus a key
+selector in teczka's table view. Pair with a "first row is header" toggle,
+which also retires the hardcoded `Col 1/2/3` labels at `table_view.py:381`
+and `:466`.
+
+Impact: this is the only item in Phase 5 that fixes *incorrect output* rather
+than an ergonomic defect. Rank it first if time is short.
+
+### WI-5.4 — Cancellation for `FunctionWorker` (§2.8)
+`workers/function_worker.py` subclasses `QThread` with no cancellation path —
+long parses can only be orphaned, not interrupted. Add a cooperative cancel
+flag checked between work units, and call it from the existing cancel action.
+
+### WI-5.5 — Wire EXIF comparison into the image view (§1)
+`rcompare_core::image_diff` implements `ExifMetadata`/`exif_differences` and
+the CLI exposes `--image-exif`, but `views/image_view.py` never requests or
+displays it. Wire the existing flag through and render the differences table.
+Then restore the `FEATURE_COMPARISON.md` EXIF row to ✅.
+
+### WI-5.6 — Drag-and-drop >2-path truncation
+Previously WI-0.3. `dropEvent` keeps the first two dropped paths and discards
+the rest silently; use the first two **and** say so in the status bar.
+
+### WI-5.7 — Make the visible shell authoritative
+**Files**: `teczka/main_window.py`,
+`teczka/widgets/integrated_status_bar.py`
+
+The modern shell creates a visible `SessionTabBar`, `CompactPathBar` and
+`IntegratedStatusBar`, then creates hidden `FilterBar`, `ColorLegend`,
+`QTabBar`, status labels and progress widgets as “compatibility shims”
+(`main_window.py:689-718`). Those shims are still the destination for active
+logic:
+
+- more than 40 operations call `statusBar().showMessage()` after the native
+  status bar was hidden;
+- structured progress writes `_progress_bar`/`_status_stage`, not the visible
+  integrated bar;
+- `IntegratedStatusBar.set_diff_position()` has no caller, leaving `0/0`;
+- session capture/persistence reads hidden filter state;
+- dynamic comparison documents are indexed through the hidden tab bar.
+
+Retire the shims as state owners. Add explicit methods to the visible status
+component (`show_message`, `set_progress`, `set_navigation_position`) and
+route every caller through them. Temporary adapter methods on `MainWindow`
+are acceptable during migration; temporary hidden widgets are not.
+
+**Acceptance**:
+
+1. A copy, delete, rename, sync, bookmark and drag/drop operation each produces
+   visible feedback.
+2. A synthetic progress event changes the visible percentage and stage.
+3. Next/previous difference updates the visible counter.
+4. No hidden widget owns user-visible state.
+5. A source check or unit test rejects new `statusBar().showMessage()` calls.
+
+### WI-5.8 — Repair session/document lifecycle and Merge reachability
+**Files**: `teczka/main_window.py`, `teczka/widgets/session_tab_bar.py`,
+`teczka/widgets/sidebar.py`, `teczka/views/home_view.py`,
+`teczka/models/settings.py`
+
+Five related navigation defects were reproduced at runtime:
+
+1. `_on_close_tab()` compares a visible session index against
+   `_BASE_VIEW_TAB_COUNT` (6), so the first six session tabs cannot close and
+   the deletion offset is wrong. The close-button image is also suppressed by
+   the tab stylesheet, weakening the affordance even where closing is allowed.
+2. Folder double-click creates a comparison widget in `_view_stack` but adds
+   its label/data to the hidden `_view_switcher`; the opened document has no
+   visible tab, natural return path or close action.
+3. The sidebar exposes index 6 (“3-Way Merge”) while the initial stack has
+   indices 0–5. `_switch_view(6)` returns without action, and the lazy merge
+   toggle has no connected visible control.
+4. Home emits `profile_selected`, but `MainWindow` never connects it. Home also
+   looks for profiles in `comparison_settings["profiles"]`, while
+   `ProfileManager` persists them in its own profiles file.
+5. Home renders a Recent Sessions section, but no production code populates
+   `recent_sessions`, so it remains an empty promise.
+
+First restore a coherent lifecycle without redesigning the whole navigation
+model: visible session tabs must close, dynamic comparisons must appear in a
+visible tab surface, Merge must either be reachable or absent, and the two
+Home collections must come from the same session/profile services that own the
+data. WI-7.5 then consolidates the resulting model visually.
+
+**Acceptance**: pytest-qt coverage for creating/switching/closing two sessions;
+opening/reusing/closing Text, Hex, Image and Table comparisons; and entering/
+leaving Merge. Selecting a profile opens the persisted pair and completing a
+session adds a usable recent entry. No navigation destination or Home item may
+be inert.
+
+### WI-5.9 — Replace split filter/search state with one contract
+**Files**: `teczka/main_window.py`, `teczka/models/tree_model.py`,
+`teczka/widgets/integrated_status_bar.py`; remove or repurpose
+`teczka/widgets/filter_bar.py`
+
+Introduce one typed `FolderFilterState` containing status visibility,
+files-only, search text and high-level preset. The proxy model, View menu,
+status pills, session persistence and configuration must all read/write that
+object.
+
+Correct the verified contradictions:
+
+- the proxy defaults to `show_differences` while all four visible status pills
+  appear enabled, so “Identical” says on while identical rows are hidden;
+- View-menu toggles only update a hidden FilterBar whose signals are not
+  connected;
+- clicking a visible status pill passes `show_files_only=True`;
+- session capture later reads stale hidden values;
+- `Ctrl+F` focuses the hidden search field;
+- Find Next/Previous always targets Folder view even when another view is
+  active.
+
+The default should be explicit: either show all and mark all controls on, or
+show differences and mark Identical off. Never display a filter state that is
+not the applied state.
+
+**Acceptance**: a state-matrix test drives each input surface and asserts the
+proxy, menu, footer and persisted session agree; `Ctrl+F` focuses the visible
+contextual search; view changes cannot silently change files-only mode.
+
+### WI-5.10 — Complete Settings/theme/CLI round-trip
+**Files**: `teczka/app.py`, `teczka/main_window.py`,
+`teczka/dialogs/settings_dialog.py`, `teczka/resources/themes.py`,
+`teczka/views/text_view.py`
+
+There are two Settings handlers. The connected `_on_preferences()` stores
+comparison and appearance values but ignores `get_config_updates()`, so Theme
+and CLI Path are discarded. The more complete `_on_options()` is unconnected.
+Consolidate them into one handler.
+
+At application startup, apply the selected theme (or deliberately use the
+system palette and remove the Light/Dark selector). If custom themes remain,
+exercise both `load_light_theme()` and `load_dark_theme()` and refresh the
+active widgets after a live change. Rebuild the CLI bridge when its path
+changes and show validation feedback before closing.
+
+The Appearance page also exposes Changed and Applied diff colours while
+`TextView.apply_appearance()` consumes only Added and Removed. Either implement
+the two roles throughout Text/Merge, or remove the controls until meaningful.
+
+The same rule applies beyond Appearance. The Diff Options page exposes
+whitespace, case, specialised comparison and regex controls, while the Files
+page exposes encoding, EOL and binary-pattern controls; the connected
+`get_settings()` path currently returns only ignore patterns, symlink/hash and
+cache values. Wire each field through config and its comparison consumer, or
+remove/disable it with honest “not yet available” copy. The CLI error message
+must point to the actual Settings location rather than the nonexistent
+“Tools > Options”.
+
+**Acceptance**: restart round-trip tests for every Settings field; a visual
+smoke test proves Light and Dark render differently; an invalid CLI path is
+rejected actionably; every exposed appearance, Diff Options and Files value
+has a reader and a behavioural test.
+
+### WI-5.11 — Fix path-command ownership and contextual action state
+**Files**: `teczka/widgets/compact_path_bar.py`, `teczka/main_window.py`
+
+`CompactPathBar._on_swap_clicked()` swaps locally and emits
+`swap_requested`; `MainWindow._on_swap_sides()` receives the signal and swaps
+again. The visible result is no change. Give mutation ownership to one layer:
+recommended, the main/session state performs the swap and the path widget only
+emits intent.
+
+While touching action state, make the primary Compare action disabled until
+both required paths are present and the CLI is available. Enable copy/sync/
+apply/save/print actions only where the active document and selection support
+them; presenting every action everywhere makes the menu feel unreliable.
+
+**Acceptance**: one swap click reverses paths and session state exactly once;
+the action-enablement matrix is tested for Home, empty Folder, populated
+Folder, Text, Image, Hex, Table and Merge.
+
+---
+
+## Phase 6 — teczka structural refactor
+
+The invasive tier. **Build the test net before moving code** — the current
+suite covers `config`/`models`/`utils`/`widgets`, i.e. precisely the areas
+*outside* the class being refactored, so it will not catch regressions here.
+
+The full design review refines the extraction order. After WI-6.1, establish
+the user-visible boundaries first: a `NotificationController` for message,
+progress and error policy; a `NavigationController`/workspace model for active
+documents; the typed `FolderFilterState` introduced in WI-5.9; then
+`SessionManager`, `ComparisonController`, `FileOperationsController` and
+`SyncController`. `MenuBuilder` remains last because it is mechanical. The
+work items below may land in smaller commits, but must preserve this dependency
+order so that refactoring does not recreate hidden state owners.
+
+### WI-6.1 — Characterisation tests before any extraction (§2.8)
+Write tests against current observable behaviour of the logic about to move:
+sync planning, copy/delete paths, session capture/restore, profile save/load.
+These are throwaway scaffolding in the sense that they assert today's
+behaviour, including quirks — that is the point.
+
+Include the visible-shell contracts established in WI-5.7–5.11: active
+document, session count, path/filter state, action enablement, visible status
+message and progress. These are the boundaries most likely to regress when
+the compatibility widgets and `MainWindow` fields disappear.
+
+### WI-6.2 — Extract `SyncController` / `FileOpsController` (§2.2)
+`_plan_sync_actions`, `_sync_local_fallback`, `_copy_paths_local_fallback` and
+`_sync_copy_path` implement file-operation semantics inside a widget class,
+duplicating logic `rcompare_core` already owns and the CLI already exposes.
+
+Move them out, and while moving, resolve the duplication: prefer delegating to
+the CLI/core rather than reimplementing. First extract the visible
+notification/progress and navigation boundaries described above; those are
+the seams the controllers report through. The local fallback must never start
+after a failed CLI sync without fresh confirmation: the engine, capability set
+and risk can differ from the plan the user approved. Keep any fallback thin,
+single-purpose and explicitly consented rather than a parallel implementation
+that can drift.
+
+### WI-6.3 — Extract `SessionManager` (§2.2)
+Tab/session lifecycle: `SessionState`, `_capture_session_state`,
+`_apply_session_state`, `_on_session_changed`, the `_sessions` list and
+`_active_session_index`. Self-contained and highly testable once out.
+
+### WI-6.4 — Extract `MenuBuilder` (§2.2)
+~600 lines of action construction. Mechanical. Do it last of the three — it
+is the lowest-risk and benefits from the shortcut test from WI-5.1 already
+being in place.
+
+### WI-6.5 — Resolve `AppState` (§2.3)
+204 lines, 10 signals, **0 connections**; paths written at two sites and never
+read while `MainWindow` uses its own `_left_path` in 29 places. Two parallel
+state models, one inert.
+
+Decide deliberately — both options are defensible, leaving it is not:
+- **Finish it**: route path/result state through `AppState`, connect the
+  signals, and let views observe it. This meaningfully shrinks `MainWindow`
+  and composes with WI-6.2/6.3.
+- **Delete it**: 204 lines gone and one less trap for the next contributor.
+
+Recommendation: **finish it**, but only *after* WI-6.2/6.3 — those extractions
+will show what state actually needs sharing, and doing it first would mean
+guessing.
+
+Make it the single source of truth completed by WI-5.7/WI-5.9 rather than
+introducing another parallel layer. `SessionManager` should own durable
+per-document/session state; `AppState` should expose only active, observable
+runtime state. Views consume it but do not persist shadow copies.
+
+**Acceptance**: no write-only state remains — every `AppState` setter has a
+reader or a connected signal, enforced by a test.
+
+### WI-6.6 — Coverage backfill on the extracted units
+The real coverage win. Merge view first (youngest, most complex, least
+verified), then the dialogs, then drag-and-drop. Previously WI-5.2.
+
+Add design-regression coverage alongside functional coverage:
+
+- screenshots for Home, Folder, Text, Hex, Image, Table, Merge and Settings at
+  800×600 and 1440×900 in Light/Dark;
+- shortcut collision detection;
+- keyboard traversal of every primary action;
+- accessible-name checks for icon-only controls;
+- a “no inert visible controls” test for sidebar/menu destinations.
+
+---
+
+## Phase 7 — teczka presentation and KDE compliance
+
+Presentation and accessibility tier. Palette and icon work can begin in
+parallel, but navigation and contextual-chrome items depend on Phase 5 making
+visible state authoritative. Absorbs the former Phase 6.
+
+### WI-7.1 — Palette-derived theming (§2.5)
+`resources/themes.py` is 1,531 lines with **390 hardcoded hex colours** and
+**zero** `palette(...)` references; diff colours elsewhere are literals too
+(`hex_view.py:41`). Plasma dark mode, accent colour and high-contrast
+accessibility themes are all ignored.
+
+The codebase is already inconsistent here — newer widgets (`breadcrumb_bar.py`,
+`sidebar.py`) use `palette(...)` correctly. Extend that pattern to
+`themes.py`. Diff colours need a semantic role map (added/removed/changed/
+orphan) resolved against the active palette, not fixed hex.
+
+WI-5.10 makes theme selection functional; this item makes the result coherent.
+Use one semantic map across Folder, Text, Hex, Table and Merge. Today the same
+concept changes colour by view (and Table maps both orphan directions to
+yellow), while the hidden colour legend cannot explain any of it. Provide
+light, dark and high-contrast variants plus a non-colour marker/icon for every
+status.
+
+This is the bulk of KDE **WS2 Theming (1/14)**.
+
+### WI-7.2 — Colour the merge view's source panes (§2.9)
+Only the merged output pane is tinted, so the user cannot see which regions
+conflict in Left/Base/Right. The review calls this the single biggest
+usability gap in the app's youngest feature. The diff data is already computed
+(`_merge_lines`, `_opcodes_to_changes`) — this is a rendering gap, not an
+algorithm one.
+
+### WI-7.3 — Syntax highlighting (§1)
+No `QSyntaxHighlighter` exists. Pygments is already a declared dependency via
+PySide6's tooling. Add a highlighter to `widgets/diff_text_edit.py`, composed
+*under* the existing intra-line diff tinting so both render together. Then
+restore the `FEATURE_COMPARISON.md` row.
+
+### WI-7.4 — Complete icon system and fallbacks (§2.6)
+Main menu actions now use `_themed_icon()` in many places, but Home, Sidebar,
+Settings and several secondary controls still call `QIcon.fromTheme()` with
+no fallback. On a platform/session without a complete FreeDesktop theme the
+rendered sidebar becomes a blank grey rail and Home cards reserve empty icon
+space.
+
+Route all icon lookup through `teczka/icons.py`: prefer the system theme, then
+an embedded semantic fallback. Audit remaining menu actions, button-only
+controls and application/window icons. Test with an intentionally empty icon
+theme on Linux and on the Windows/macOS CI jobs from WI-0.4.
+
+### WI-7.5 — Unify the navigation model (§2.9)
+WI-5.8 restores correct lifecycle mechanics. This item completes the product
+model: one visible tab represents one comparison document/session; its type is
+Folder, Text, Hex, Image, Table or Merge. Home creates those documents and a
+folder double-click opens/reuses a visible child document rather than changing
+an invisible mode. The icon rail becomes a launcher/recent-documents surface
+or is removed—do not keep a second navigation system.
+
+Rename “New Session” and “Session 1” to match the chosen document model, make
+close affordances consistent, persist open documents deliberately, and expose
+the sidebar's existing expanded mode through a visible control if the rail
+remains.
+
+### WI-7.6 — Folder-view presentation parity (§2.9)
+- Blank aligned gap for orphan rows instead of rendering the name on both
+  sides in the same "different" tint.
+- Per-pane file metadata strip (type, encoding, EOL, size, mtime) as BC has.
+- Surface the existing filter/expand/collapse/swap/refresh actions in the
+  toolbar — teczka *has* them, they are just undiscoverable.
+
+Partly delivered: both panes now have structured Left/Right headers plus
+independent, persisted column visibility/order/width with Name, Size,
+Modified, Status, Extension, Type and Relative Path. Preserve this as the
+reference component while adding the remaining parity items above.
+
+### WI-7.7 — Route strings through the localizer, or remove it (§2.7)
+`localizer.py` wraps `fluent.runtime` and `i18n/en/teczka.ftl` holds 152 lines
+of messages, with **zero call sites**. Same failure mode as `AppState`.
+Either adopt it across the UI or delete both. This is KDE **WS6 (1/12)**.
+
+### WI-7.8 — Remaining KDE workstreams
+Tracked in [KDE_COMPLIANCE.md](KDE_COMPLIANCE.md); ~35% against a ≥90% target.
+After the items above, sequence the remainder by gap size:
 
 1. **WS5 Desktop integration** — 0/17, the largest single hole.
 2. **WS4 Dialogs** — 0/12.
-3. **WS7 QA** — 0/13; overlaps WI-5.2, do them together.
-4. **WS2 Theming** — 1/14; completes the partial color work already started.
-5. **WS6 A11y/i18n** — 1/12.
-6. **WS1/WS3** — already improved to 86%/75% on menus and shortcuts; finish the
-   remainder last.
+3. **WS7 QA** — 0/13; overlaps WI-6.6, do them together.
+4. **WS3 Shortcuts** — finish after WI-5.1 lands.
 
 Update the score table in `KDE_COMPLIANCE.md` as each workstream lands — that
-doc's numbers are the acceptance criteria for this phase.
+doc's numbers are the acceptance criteria.
+
+### WI-7.9 — Remote/archive sources in the GUI
+Depends on **WI-2.1**. Accept the URL syntax in teczka's path bar and file
+dialogs, with credentials from the platform keyring. Resolution runs off the
+GUI thread.
+
+Partly delivered already: the path bar now has folder-picker buttons using the
+portal/native chooser (`utils/path_picker.py`), so desktop-mounted network
+locations (kio-fuse, GVfs) already work. What remains is rcompare's *own* VFS
+schemes — `s3://`, `dav://` — which the desktop cannot mount.
+
+### WI-7.10 — Sync preview against remote targets
+Previously WI-5.3. Extend the sync-preview dialog to render the capability
+warnings from WI-1.2 (e.g. "target does not support trash; deletes will be
+permanent").
+
+### WI-7.11 — Responsive Home and purposeful empty states
+**Files**: `teczka/views/home_view.py`, all comparison views
+
+The declared 800×600 minimum clips the Home cards: fixed 180×140 cards,
+24-pixel vertical spacing and 120-pixel list minima exceed the content area
+remaining after menu/session/path/status chrome. Replace the fixed 2×2 layout
+with a responsive grid/flow inside a scroll area; validate 800×600, 125–200%
+display scaling and long translated labels.
+
+Home must represent every reachable document type (including Table and Merge)
+and use the same terms as WI-7.5. Recent sessions/profiles need an explicit
+single-click/Open affordance rather than unexplained double-click-only
+activation.
+
+Text, Hex, Image and Table currently open as large blank surfaces with small
+“no file loaded” labels. Add a shared empty state with:
+
+- a short explanation and supported-format guidance;
+- primary Choose Left / Choose Right actions;
+- drag-and-drop affordance;
+- recent pair/profile shortcuts where relevant;
+- loading, error and partial-pair variants.
+
+**Acceptance**: no clipping or horizontal control overlap at the supported
+minimum and scaling factors; every empty view tells the user what to do next.
+
+### WI-7.12 — Accessibility baseline
+**Files**: all visible teczka widgets/dialogs; add `tests/test_accessibility.py`
+
+Establish a keyboard, screen-reader and contrast baseline:
+
+1. Remove `NoFocus` from status filter pills and previous/next navigation;
+   provide visible focus rings and logical Tab order.
+2. Fix unchecked pill styling (`background-color` and `color` are both
+   `palette(mid)` today).
+3. Add accessible names/descriptions to icon-only sidebar, breadcrumb edit,
+   browse, swap, column, fit and navigation controls. Home cards must expose
+   their title as the button's accessible name, not only as child labels.
+4. Never communicate Same/Different/Left-only/Right-only/Unchecked through
+   colour alone. Add a status icon/text/shape that remains distinguishable in
+   monochrome and common colour-vision deficiencies.
+5. Verify normal text ≥4.5:1 and large text/control indicators ≥3:1 in Light,
+   Dark and high-contrast/system palettes.
+6. Respect system font and reduced-motion preferences; avoid animation where
+   it is not informative.
+
+**Acceptance**: complete keyboard operation without a mouse; automated
+accessible-name/focus-order checks; documented manual screen-reader pass on
+one Linux AT-SPI environment plus Windows or macOS.
+
+### WI-7.13 — Contextual chrome and shared comparison components
+**Files**: `teczka/main_window.py`, `teczka/views/*`, new reusable widgets
+
+The folder breadcrumb row and folder-only footer filters sit outside the view
+stack, so they remain visible on Home, Text, Hex, Image, Table and Merge where
+they are irrelevant. Introduce view contributions for:
+
+- command/path bar;
+- primary and secondary actions;
+- search/filter controls;
+- status summary, progress and navigation.
+
+Only Folder Compare shows folder paths and folder-status filters. Text exposes
+file paths, edit/save and line-difference navigation; Image exposes fit/zoom/
+tolerance/metadata; Table exposes sheet/key/header controls; Merge exposes
+conflict navigation and resolution.
+
+Build shared `ComparisonPaneHeader`, `ComparisonToolbar`,
+`EmptyComparisonState` and responsive `MetricStrip` components. Use them to
+replace the current mixture of bare labels, group boxes and per-view button
+rows. The Image statistics strip must wrap/collapse instead of placing seven
+metrics in one fixed horizontal row; the Merge conflict toolbar must expose
+overflow at narrow widths rather than clipping.
+
+### WI-7.14 — Action hierarchy, destructive safety and feedback language
+Define one action hierarchy across menus, toolbars and dialogs:
+
+- one primary action per state (`Compare`, `Run Dry Run`, `Execute Sync`,
+  `Save Merged`);
+- destructive actions carry a clear direction/target and confirmation;
+- unavailable actions are disabled with an explanatory tooltip;
+- completion messages state what changed, where, and whether undo is
+  available;
+- progress states distinguish queued, scanning, comparing, cancelling,
+  cancelled, completed and failed.
+
+Upgrade Sync Preview from a proportional-font text dump to a structured,
+sortable operation table with direction, action, path, reason and risk.
+Preserve dry-run/trash as safe defaults, show operation counts prominently,
+and require a second confirmation when permanent deletion is selected.
+
+Correct the present false safety boundary: the dialog says “Execute changes
+on confirmation”, but its Execute button immediately starts the operation and
+there is no later confirmation. Either make that button the clearly labelled
+final confirmation (including source, target and destructive counts) or add
+the promised confirmation step. A failed CLI execution must not silently fall
+back to a local implementation under the original approval; show the failure
+and require the user to approve a newly previewed fallback plan.
+
+**Acceptance**: tests prove dry run never mutates; ordinary execution has
+exactly one unambiguous final consent boundary; permanent deletion requires a
+separate explicit confirmation naming the target and count; CLI failure cannot
+trigger local mutation without a new preview and consent.
+
+### WI-7.15 — Settings/dialog and product-language polish
+Finish the secondary surfaces after the state and theme work:
+
+- remove “Configure Toolbars…” while no configurable toolbar exists, or ship
+  the actual feature;
+- show “About KDE” only in a KDE environment;
+- standardise `RCompare` capitalization and Folder/Text/Hex/Image/Table/Merge
+  terminology;
+- raise subtitle/helper-text contrast from `palette(mid)` where it fails;
+- use consistent button boxes, default buttons, spacing and validation;
+- ensure west-position Settings tabs remain readable under scaling and
+  localisation, switching to a labelled category list if necessary;
+- make online Help/Report Bug failure states actionable and retain an offline
+  help entry point.
+
+**Acceptance**: terminology inventory has no unintended `rcompare`/`RCompare`
+or Session/Document inconsistency; no visible placeholder menu items; all
+dialogs pass the responsive/accessibility checks from WI-7.11/WI-7.12.
 
 ---
 
-## Phase 7 — Scale and net-new core
+## Phase 8 — Scale and net-new core
 
 Opportunistic; none of it blocks parity.
 
@@ -321,25 +967,45 @@ integrations. Unchanged from `roadmap.md`.
 ## Sequencing summary
 
 ```
-Phase 0 ──┬── WI-0.1 WebDAV fixes ──────────────┐
-          ├── WI-0.2 gui dir cleanup            │
-          ├── WI-0.3 teczka DnD                 │
-          └── WI-0.4 CI matrix ─────┐           │
-                                    ▼           │
-Phase 1  ── SyncTarget / capabilities / tests   │
-                   │                            │
-       ┌───────────┼────────────┐               │
-       ▼           ▼            ▼               ▼
-   Phase 2     Phase 3      Phase 5 ◄──── (WebDAV gate)
-  (backends)  (resume)      (teczka)
+RUST / ENGINE TRACK                    TECZKA / GUI TRACK
 
-Phase 4 (CLI v2) ── parallel, independent
-Phase 6 (KDE)    ── parallel, independent
-Phase 7          ── opportunistic
+Phase 0 ──┬── WI-0.1 WebDAV fixes      Phase 5 ── correctness & contract
+          ├── WI-0.2 gui dir cleanup     │  WI-5.1 shortcuts
+          └── WI-0.4 CI matrix           │  WI-5.2 schema validation ──┐
+                    │                    │  WI-5.3 CSV key alignment   │
+                    ▼                    │  WI-5.4 worker cancel       │
+Phase 1  ── SyncTarget / capabilities    │  WI-5.5 EXIF wiring         │
+                    │                    │  WI-5.6 drag-drop           │
+                    │                    │  WI-5.7 visible shell       │
+                    │                    │  WI-5.8 tabs / Merge        │
+                    │                    │  WI-5.9 filter state        │
+                    │                    │  WI-5.10 Settings roundtrip │
+                    │                    │  WI-5.11 swap/action state  │
+       ┌────────────┼───────────┐        ▼                             │
+       ▼            ▼           │   Phase 6 ── structural refactor     │
+   Phase 2      Phase 3         │     WI-6.1 characterisation tests    │
+  (backends)   (resume)         │     WI-6.2/3/4 extract controllers   │
+       │                        │     WI-6.5 resolve AppState          │
+       │                        │     WI-6.6 coverage backfill         │
+       │                        │                                      │
+       └────── WI-2.1 ──────────┼──▶ WI-7.9 (remote sources in GUI)    │
+                                │                                      │
+Phase 4 (CLI v2)                │   Phase 7 ── presentation/a11y/KDE  │
+   WI-4.1 schema v2 ◄───────────┴───────── must come after ────────────┘
+
+Phase 8 ── opportunistic
 ```
 
-Single contributor: 0 → 1 → 2 → 3 → 4 → 5 → 6. Two or more: one takes 0→1→2→3,
-the other takes 6 then 4, converging on 5.
+The only hard cross-track dependency is **WI-5.2 → WI-4.1**.
+
+**Single contributor:** WI-5.3 first (it fixes wrong output), then the
+trust-critical GUI items 5.7 → 5.11, then 0 → 1 → 2 → 3, then the remainder
+of 5 → 6 → 7, with 4 interleaved as appetite allows.
+
+**Two contributors:** one takes the Rust track (0 → 1 → 2 → 3 → 4), the other
+takes teczka (5 → 6 → 7). They meet at WI-2.1/WI-7.9 and at the
+WI-5.2/WI-4.1 gate. This is the natural split — the tracks share almost no
+files.
 
 ## Definition of done for each work item
 
@@ -351,3 +1017,8 @@ the other takes 6 then 4, converging on 5.
    per that document's own standing rule.
 5. `FEATURE_COMPARISON.md` row updated when a 🔌/❌ becomes ✅.
 6. `CHANGELOG.md` `[Unreleased]` entry for anything user-visible.
+7. GUI changes are exercised at 800×600 and 1440×900 in the relevant light,
+   dark and high-contrast themes.
+8. Keyboard navigation, focus order and accessible names are checked for every
+   altered interactive control.
+9. No visible control is inert and no hidden widget owns user-visible state.

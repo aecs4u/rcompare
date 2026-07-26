@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from pathlib import PurePosixPath
 from typing import Any, Optional
 
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QSortFilterProxyModel
@@ -20,14 +21,20 @@ COL_LEFT_DATE = 2
 COL_STATUS = 3
 COL_RIGHT_SIZE = 4
 COL_RIGHT_DATE = 5
+COL_EXTENSION = 6
+COL_TYPE = 7
+COL_PATH = 8
 
 _COLUMN_HEADERS = [
     "Name",
-    "Left Size",
-    "Left Date",
+    "Size",
+    "Modified",
     "Status",
-    "Right Size",
-    "Right Date",
+    "Size",
+    "Modified",
+    "Extension",
+    "Type",
+    "Relative Path",
 ]
 
 _STATUS_LABELS = {
@@ -37,6 +44,18 @@ _STATUS_LABELS = {
     DiffStatus.ORPHAN_RIGHT: "Right Only",
     DiffStatus.UNCHECKED: "Unchecked",
 }
+
+_COLUMN_TOOLTIPS = [
+    "File or folder name",
+    "Size on this side",
+    "Last modification time on this side",
+    "Comparison result",
+    "Size on this side",
+    "Last modification time on this side",
+    "Filename extension",
+    "Detected item type",
+    "Path relative to the comparison root",
+]
 
 
 def _format_size(size: Optional[int]) -> str:
@@ -182,6 +201,12 @@ class ComparisonTreeModel(QAbstractItemModel):
                 return _format_size(node.right_size)
             if col == COL_RIGHT_DATE:
                 return _format_date(node.right_modified)
+            if col == COL_EXTENSION:
+                return _file_extension(node)
+            if col == COL_TYPE:
+                return _file_type(node)
+            if col == COL_PATH:
+                return node.path
 
         elif role == Qt.DecorationRole:
             if col == COL_NAME:
@@ -193,12 +218,19 @@ class ComparisonTreeModel(QAbstractItemModel):
         elif role == Qt.UserRole + 1:
             return node
 
+        elif role == Qt.TextAlignmentRole:
+            if col in (COL_LEFT_SIZE, COL_RIGHT_SIZE):
+                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole) -> Any:
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            if 0 <= section < len(_COLUMN_HEADERS):
+        if orientation == Qt.Horizontal and 0 <= section < len(_COLUMN_HEADERS):
+            if role == Qt.DisplayRole:
                 return _COLUMN_HEADERS[section]
+            if role == Qt.ToolTipRole:
+                return _COLUMN_TOOLTIPS[section]
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
@@ -223,6 +255,21 @@ class ComparisonTreeModel(QAbstractItemModel):
         return self._file_icon
 
 
+def _file_extension(node: TreeNode) -> str:
+    """Return a concise extension for display, without a leading dot."""
+    if node.is_dir:
+        return ""
+    return PurePosixPath(node.name).suffix.removeprefix(".").lower()
+
+
+def _file_type(node: TreeNode) -> str:
+    """Return a friendly, deterministic item type."""
+    if node.is_dir:
+        return "Folder"
+    extension = _file_extension(node)
+    return f"{extension.upper()} file" if extension else "File"
+
+
 class ComparisonFilterProxy(QSortFilterProxyModel):
     """Filter proxy that hides rows based on DiffStatus visibility and search text.
 
@@ -238,7 +285,11 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
         self._show_right_only: bool = True
         self._show_files_only: bool = False
         self._search_text: str = ""
-        self._diff_option_mode: str = "show_differences"
+        # Must agree with FolderFilterState.DEFAULT_DIFF_OPTION_MODE: all four
+        # status toggles default to visible, so the proxy has to show every
+        # status too. Defaulting to "show_differences" here is what used to
+        # hide identical rows while the Identical control read "on".
+        self._diff_option_mode: str = "show_all"
         # Cleared on every invalidateFilter() call (results depend on the
         # current filter criteria); avoids re-walking the same subtree
         # repeatedly across the many filterAcceptsRow() calls Qt issues
@@ -403,6 +454,8 @@ class ComparisonFilterProxy(QSortFilterProxyModel):
                 and node.right_modified > node.left_modified
             )
 
+        if mode == "show_all":
+            return True
         if mode == "show_differences":
             return status in {
                 DiffStatus.DIFFERENT,

@@ -203,6 +203,27 @@ def icon(name: str, fallback_svg: str | None = None) -> QIcon:
     return QIcon()
 
 
+def first_available(*names: str, fallback_svg: str | None = None) -> QIcon:
+    """Return the first theme icon among *names*, else the embedded fallback.
+
+    Several XDG icon names mean the same thing across themes (Breeze uses
+    ``object-flip-horizontal`` where others use ``view-sort-descending``), so
+    call sites usually want to try a list before giving up.
+    """
+    for name in names:
+        theme_icon = QIcon.fromTheme(name)
+        if not theme_icon.isNull():
+            return theme_icon
+    if fallback_svg is not None:
+        return _svg_to_icon(fallback_svg)
+    return QIcon()
+
+
+def from_svg(svg_data: str) -> QIcon:
+    """Render an SVG string into a QIcon at the standard icon sizes."""
+    return _svg_to_icon(svg_data)
+
+
 def app_icon() -> QIcon:
     """Return the application icon, preferring the XDG theme entry."""
     theme_icon = QIcon.fromTheme("org.aecs4u.rcompare")

@@ -92,39 +92,100 @@ def _build_tree_from_entries(entries: Iterable[DiffEntry]) -> TreeNode:
     root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
 
     for entry in entries:
-        parts = PurePosixPath(entry.path).parts
-        current = root
-        for i, part in enumerate(parts):
-            is_last = i == len(parts) - 1
-            child = current.get_child(part)
-            if child is None:
-                path_so_far = str(PurePosixPath(*parts[: i + 1]))
-                is_dir_node = not is_last
-                if is_last and entry.left and entry.left.is_dir:
-                    is_dir_node = True
-                if is_last and entry.right and entry.right.is_dir:
-                    is_dir_node = True
-                child = TreeNode(
-                    name=part,
-                    path=path_so_far,
-                    status=DiffStatus.SAME if not is_last else entry.status,
-                    is_dir=is_dir_node,
-                    parent=current,
-                )
-                current.add_child(child)
-            if is_last:
-                child.status = entry.status
-                if entry.left:
-                    child.left_size = entry.left.size
-                    child.left_modified = entry.left.modified_unix
-                if entry.right:
-                    child.right_size = entry.right.size
-                    child.right_modified = entry.right.modified_unix
-            current = child
+        _insert_entry(root, entry)
 
     _aggregate_status(root)
     _sort_children(root)
     return root
+
+
+class IncrementalTreeBuilder:
+    """Builds a comparison tree entry-by-entry as results stream in.
+
+    ``_build_tree_from_entries`` needs the complete entry list up front, which
+    forces the GUI to wait for the whole scan before showing anything. This
+    builder inserts one entry at a time so partial results can be published
+    while the CLI is still running (see ``workers/comparison_worker.py``).
+
+    ``finish()`` applies the aggregation and sorting passes that the batch
+    builder does at the end; ``snapshot()`` applies them to a copy so a partial
+    tree can be handed to the model without freezing further insertion.
+    """
+
+    def __init__(self) -> None:
+        self.root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+        self._count = 0
+
+    def __len__(self) -> int:
+        return self._count
+
+    def add(self, entry: DiffEntry) -> None:
+        """Insert a single entry, creating intermediate nodes as needed."""
+        _insert_entry(self.root, entry)
+        self._count += 1
+
+    def finish(self) -> TreeNode:
+        """Aggregate and sort in place, returning the completed tree."""
+        _aggregate_status(self.root)
+        _sort_children(self.root)
+        return self.root
+
+    def snapshot(self) -> TreeNode:
+        """Return an aggregated, sorted copy safe to publish mid-stream."""
+        copy = _copy_tree(self.root, None)
+        _aggregate_status(copy)
+        _sort_children(copy)
+        return copy
+
+
+def _insert_entry(root: TreeNode, entry: DiffEntry) -> None:
+    """Insert one entry into *root*, creating missing intermediate nodes."""
+    parts = PurePosixPath(entry.path).parts
+    current = root
+    for i, part in enumerate(parts):
+        is_last = i == len(parts) - 1
+        child = current.get_child(part)
+        if child is None:
+            path_so_far = str(PurePosixPath(*parts[: i + 1]))
+            is_dir_node = not is_last
+            if is_last and entry.left and entry.left.is_dir:
+                is_dir_node = True
+            if is_last and entry.right and entry.right.is_dir:
+                is_dir_node = True
+            child = TreeNode(
+                name=part,
+                path=path_so_far,
+                status=DiffStatus.SAME if not is_last else entry.status,
+                is_dir=is_dir_node,
+                parent=current,
+            )
+            current.add_child(child)
+        if is_last:
+            child.status = entry.status
+            if entry.left:
+                child.left_size = entry.left.size
+                child.left_modified = entry.left.modified_unix
+            if entry.right:
+                child.right_size = entry.right.size
+                child.right_modified = entry.right.modified_unix
+        current = child
+
+
+def _copy_tree(node: TreeNode, parent: Optional[TreeNode]) -> TreeNode:
+    """Deep-copy a tree so the original can keep growing independently."""
+    clone = TreeNode(
+        name=node.name,
+        path=node.path,
+        status=node.status,
+        is_dir=node.is_dir,
+        left_size=node.left_size,
+        left_modified=node.left_modified,
+        right_size=node.right_size,
+        right_modified=node.right_modified,
+        parent=parent,
+    )
+    clone.children = [_copy_tree(c, clone) for c in node.children]
+    return clone
 
 
 def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:

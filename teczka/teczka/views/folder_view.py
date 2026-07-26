@@ -5,16 +5,20 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QModelIndex, QTimer
+from PySide6.QtCore import QByteArray, Qt, Signal, QModelIndex, QPoint, QTimer
 from PySide6.QtGui import QColor, QPainter, QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
     QHeaderView,
+    QHBoxLayout,
+    QLabel,
     QMenu,
     QPlainTextEdit,
     QSplitter,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -24,10 +28,13 @@ from ..models.comparison import TreeNode
 from ..models.tree_model import (
     COL_LEFT_DATE,
     COL_LEFT_SIZE,
+    COL_EXTENSION,
     COL_NAME,
+    COL_PATH,
     COL_RIGHT_DATE,
     COL_RIGHT_SIZE,
     COL_STATUS,
+    COL_TYPE,
     ComparisonFilterProxy,
     ComparisonTreeModel,
 )
@@ -38,6 +45,19 @@ _PREVIEW_DEBOUNCE_MS = 200
 _PREVIEW_MAX_LINES = 100
 _PREVIEW_MAX_BYTES = 64 * 1024  # 64 KB
 _AUTO_SIZE_NODE_LIMIT = 2_000
+_COLUMN_STATE_VERSION = 2
+
+_COLUMN_TITLES = {
+    COL_NAME: "Name",
+    COL_LEFT_SIZE: "Size",
+    COL_LEFT_DATE: "Modified",
+    COL_STATUS: "Comparison status",
+    COL_RIGHT_SIZE: "Size",
+    COL_RIGHT_DATE: "Modified",
+    COL_EXTENSION: "Extension",
+    COL_TYPE: "Type",
+    COL_PATH: "Relative path",
+}
 
 
 def _read_preview_side(root: str, rel_path: str) -> str:
@@ -112,6 +132,9 @@ class FolderView(QWidget):
     file_activated = Signal(str, bool)
     # Emitted from context menu. Arguments: (command, relative_path, side)
     context_command = Signal(str, str, str)
+    # Emitted whenever the selected row changes, so the window can enable or
+    # disable the copy/apply actions that need a selection.
+    selection_changed = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -130,13 +153,18 @@ class FolderView(QWidget):
 
         self._configure_left_tree()
         self._configure_right_tree()
+        self._column_menus: dict[QTreeView, QMenu] = {}
+        self._left_pane = self._build_pane(self._left_tree, "left")
+        self._right_pane = self._build_pane(self._right_tree, "right")
 
         # Layout -------------------------------------------------------
         self._tree_splitter = QSplitter(Qt.Horizontal)
-        self._tree_splitter.addWidget(self._left_tree)
-        self._tree_splitter.addWidget(self._right_tree)
+        self._tree_splitter.setObjectName("comparisonSplitter")
+        self._tree_splitter.addWidget(self._left_pane)
+        self._tree_splitter.addWidget(self._right_pane)
         self._tree_splitter.setStretchFactor(0, 1)
         self._tree_splitter.setStretchFactor(1, 1)
+        self._tree_splitter.setChildrenCollapsible(False)
 
         # Preview panel (collapsible below the trees)
         self._preview_splitter = QSplitter(Qt.Vertical)
@@ -167,7 +195,58 @@ class FolderView(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self._preview_splitter)
+
+        self.setStyleSheet(
+            """
+            QFrame#folderPane {
+                background-color: palette(base);
+                border: 1px solid palette(mid);
+                border-radius: 7px;
+            }
+            QWidget#paneHeader {
+                background-color: palette(alternate-base);
+                border-bottom: 1px solid palette(mid);
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+            }
+            QLabel#sideBadge {
+                background-color: palette(highlight);
+                color: palette(highlighted-text);
+                border-radius: 8px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QLabel#paneTitle {
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QLabel#paneHint {
+                color: palette(text);
+                font-size: 10px;
+            }
+            QToolButton#columnsButton {
+                border: 1px solid transparent;
+                border-radius: 5px;
+                padding: 4px 8px;
+            }
+            QToolButton#columnsButton:hover,
+            QToolButton#columnsButton:pressed {
+                background-color: palette(button);
+                border-color: palette(mid);
+            }
+            QTreeView#comparisonTree {
+                border: none;
+                border-bottom-left-radius: 7px;
+                border-bottom-right-radius: 7px;
+            }
+            QSplitter#comparisonSplitter::handle {
+                background-color: transparent;
+                width: 8px;
+            }
+            """
+        )
 
         # Synchronisation guards ---------------------------------------
         self._syncing_scroll = False
@@ -352,9 +431,23 @@ class FolderView(QWidget):
     def proxy_model(self) -> ComparisonFilterProxy:
         return self._proxy_model
 
-    def column_widths(self) -> dict[str, int]:
-        """Return current visible column widths for persistence."""
+    def column_widths(self) -> dict[str, object]:
+        """Return each pane's complete column layout for persistence."""
+        left_header = self._left_tree.header()
+        right_header = self._right_tree.header()
         return {
+            "version": _COLUMN_STATE_VERSION,
+            "left_header_state": (
+                bytes(left_header.saveState().toBase64().data()).decode("ascii")
+                if left_header is not None
+                else ""
+            ),
+            "right_header_state": (
+                bytes(right_header.saveState().toBase64().data()).decode("ascii")
+                if right_header is not None
+                else ""
+            ),
+            # Keep explicit widths for compatibility with older config files.
             "left_name": self._left_tree.columnWidth(COL_NAME),
             "left_size": self._left_tree.columnWidth(COL_LEFT_SIZE),
             "left_date": self._left_tree.columnWidth(COL_LEFT_DATE),
@@ -363,9 +456,20 @@ class FolderView(QWidget):
             "right_date": self._right_tree.columnWidth(COL_RIGHT_DATE),
         }
 
-    def set_column_widths(self, widths: dict[str, int]) -> None:
-        """Apply persisted column widths for both trees."""
+    def set_column_widths(self, widths: dict[str, object]) -> None:
+        """Restore column visibility, order, and widths for both panes."""
         applied = False
+
+        if widths.get("version") == _COLUMN_STATE_VERSION:
+            for tree, key in (
+                (self._left_tree, "left_header_state"),
+                (self._right_tree, "right_header_state"),
+            ):
+                encoded = widths.get(key)
+                header = tree.header()
+                if isinstance(encoded, str) and encoded and header is not None:
+                    state = QByteArray.fromBase64(encoded.encode("ascii"))
+                    applied = header.restoreState(state) or applied
 
         def _set(tree: QTreeView, column: int, value: object) -> None:
             nonlocal applied
@@ -380,6 +484,13 @@ class FolderView(QWidget):
         _set(self._right_tree, COL_RIGHT_SIZE, widths.get("right_size"))
         _set(self._right_tree, COL_RIGHT_DATE, widths.get("right_date"))
 
+        # A corrupt or stale header state must never reveal the other side's
+        # size/date columns or hide the primary Name column.
+        self._enforce_side_columns(self._left_tree, "left")
+        self._enforce_side_columns(self._right_tree, "right")
+        self._sync_column_menu(self._left_tree)
+        self._sync_column_menu(self._right_tree)
+
         if applied:
             self._has_persisted_widths = True
 
@@ -387,21 +498,75 @@ class FolderView(QWidget):
     # Tree construction helpers
     # ------------------------------------------------------------------
 
+    def _build_pane(self, tree: QTreeView, side: str) -> QFrame:
+        """Wrap a comparison tree in a labelled, self-contained pane."""
+        pane = QFrame(self)
+        pane.setObjectName("folderPane")
+        pane_layout = QVBoxLayout(pane)
+        pane_layout.setContentsMargins(0, 0, 0, 0)
+        pane_layout.setSpacing(0)
+
+        header_bar = QWidget(pane)
+        header_bar.setObjectName("paneHeader")
+        header_layout = QHBoxLayout(header_bar)
+        header_layout.setContentsMargins(10, 7, 7, 7)
+        header_layout.setSpacing(8)
+
+        badge = QLabel("L" if side == "left" else "R", header_bar)
+        badge.setObjectName("sideBadge")
+        badge.setFixedSize(17, 17)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        title = QLabel("Left side" if side == "left" else "Right side", header_bar)
+        title.setObjectName("paneTitle")
+        hint = QLabel("Comparison pane", header_bar)
+        hint.setObjectName("paneHint")
+
+        menu = self._build_column_menu(tree, side)
+        self._column_menus[tree] = menu
+        columns_button = QToolButton(header_bar)
+        columns_button.setObjectName("columnsButton")
+        columns_button.setText("Columns")
+        columns_button.setToolTip(f"Choose columns shown on the {side} side")
+        columns_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        columns_button.setMenu(menu)
+
+        header_layout.addWidget(badge)
+        header_layout.addWidget(title)
+        header_layout.addWidget(hint)
+        header_layout.addStretch(1)
+        header_layout.addWidget(columns_button)
+        pane_layout.addWidget(header_bar)
+        pane_layout.addWidget(tree, 1)
+        return pane
+
     def _create_tree(self) -> QTreeView:
         """Build a QTreeView with shared settings."""
         tree = QTreeView(self)
+        tree.setObjectName("comparisonTree")
         tree.setModel(self._proxy_model)
         tree.setItemDelegate(self._delegate)
 
-        tree.setAlternatingRowColors(False)
+        tree.setAlternatingRowColors(True)
         tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         tree.setUniformRowHeights(True)
         tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree.setRootIsDecorated(True)
+        tree.setItemsExpandable(True)
+        tree.setAnimated(True)
         header = tree.header()
         if header is not None:
             header.setStretchLastSection(False)
             header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+            header.setSectionsMovable(True)
+            header.setSectionsClickable(True)
+            header.setMinimumSectionSize(52)
+            header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            header.setToolTip("Drag columns to reorder · Right-click to choose columns")
+            header.customContextMenuRequested.connect(
+                lambda pos, current_tree=tree: self._show_column_menu(current_tree, pos)
+            )
 
         tree.customContextMenuRequested.connect(self._on_context_menu)
         tree.doubleClicked.connect(self._on_double_click)
@@ -409,16 +574,129 @@ class FolderView(QWidget):
         return tree
 
     def _configure_left_tree(self) -> None:
-        """Hide right-side columns in the left tree."""
+        """Apply the default left-side column set."""
         self._left_tree.setColumnHidden(COL_RIGHT_SIZE, True)
         self._left_tree.setColumnHidden(COL_RIGHT_DATE, True)
-        self._left_tree.setColumnHidden(COL_STATUS, True)
+        self._reset_columns(self._left_tree, "left", sync_menu=False)
 
     def _configure_right_tree(self) -> None:
-        """Hide left-side columns in the right tree."""
+        """Apply the default right-side column set."""
         self._right_tree.setColumnHidden(COL_LEFT_SIZE, True)
         self._right_tree.setColumnHidden(COL_LEFT_DATE, True)
-        self._right_tree.setColumnHidden(COL_STATUS, True)
+        self._reset_columns(self._right_tree, "right", sync_menu=False)
+
+    def _side_columns(self, side: str) -> tuple[int, ...]:
+        size_column = COL_LEFT_SIZE if side == "left" else COL_RIGHT_SIZE
+        date_column = COL_LEFT_DATE if side == "left" else COL_RIGHT_DATE
+        return (
+            COL_NAME,
+            size_column,
+            date_column,
+            COL_STATUS,
+            COL_EXTENSION,
+            COL_TYPE,
+            COL_PATH,
+        )
+
+    def _build_column_menu(self, tree: QTreeView, side: str) -> QMenu:
+        menu = QMenu(f"{side.title()} columns", self)
+        menu.setToolTipsVisible(True)
+        for column in self._side_columns(side):
+            action = menu.addAction(_COLUMN_TITLES[column])
+            action.setData(column)
+            action.setCheckable(True)
+            action.setChecked(not tree.isColumnHidden(column))
+            if column == COL_NAME:
+                action.setEnabled(False)
+                action.setToolTip("The Name column is always visible")
+            else:
+                action.toggled.connect(
+                    lambda checked, current_tree=tree, current_column=column:
+                    self._set_column_visible(current_tree, current_column, checked)
+                )
+
+        menu.addSeparator()
+        fit_action = menu.addAction("Fit visible columns")
+        fit_action.triggered.connect(lambda: self._resize_visible_columns_for(tree))
+        reset_action = menu.addAction("Reset columns")
+        reset_action.triggered.connect(lambda: self._reset_columns(tree, side))
+        menu.aboutToShow.connect(lambda: self._sync_column_menu(tree))
+        return menu
+
+    def _show_column_menu(self, tree: QTreeView, pos: QPoint) -> None:
+        header = tree.header()
+        menu = self._column_menus.get(tree)
+        if header is not None and menu is not None:
+            self._sync_column_menu(tree)
+            menu.exec(header.mapToGlobal(pos))
+
+    def _sync_column_menu(self, tree: QTreeView) -> None:
+        menu = self._column_menus.get(tree)
+        if menu is None:
+            return
+        for action in menu.actions():
+            column = action.data()
+            if isinstance(column, int):
+                action.blockSignals(True)
+                action.setChecked(not tree.isColumnHidden(column))
+                action.blockSignals(False)
+
+    def _set_column_visible(
+        self,
+        tree: QTreeView,
+        column: int,
+        visible: bool,
+    ) -> None:
+        tree.setColumnHidden(column, not visible)
+        if visible:
+            tree.resizeColumnToContents(column)
+            if tree.columnWidth(column) < 90:
+                tree.setColumnWidth(column, 90)
+
+    def _reset_columns(
+        self,
+        tree: QTreeView,
+        side: str,
+        *,
+        sync_menu: bool = True,
+    ) -> None:
+        default_columns = {
+            COL_NAME,
+            COL_LEFT_SIZE if side == "left" else COL_RIGHT_SIZE,
+            COL_LEFT_DATE if side == "left" else COL_RIGHT_DATE,
+        }
+        for column in self._side_columns(side):
+            tree.setColumnHidden(column, column not in default_columns)
+        self._apply_default_column_order(tree, side)
+        self._enforce_side_columns(tree, side)
+        if sync_menu:
+            self._sync_column_menu(tree)
+            self._resize_visible_columns_for(tree)
+
+    def _enforce_side_columns(self, tree: QTreeView, side: str) -> None:
+        tree.setColumnHidden(COL_NAME, False)
+        if side == "left":
+            tree.setColumnHidden(COL_RIGHT_SIZE, True)
+            tree.setColumnHidden(COL_RIGHT_DATE, True)
+        else:
+            tree.setColumnHidden(COL_LEFT_SIZE, True)
+            tree.setColumnHidden(COL_LEFT_DATE, True)
+
+    def _apply_default_column_order(self, tree: QTreeView, side: str) -> None:
+        """Keep each pane's visible metadata in the same intuitive order."""
+        header = tree.header()
+        if header is None:
+            return
+        opposite_columns = (
+            (COL_RIGHT_SIZE, COL_RIGHT_DATE)
+            if side == "left"
+            else (COL_LEFT_SIZE, COL_LEFT_DATE)
+        )
+        logical_order = (*self._side_columns(side), *opposite_columns)
+        for target_position, logical_index in enumerate(logical_order):
+            current_position = header.visualIndex(logical_index)
+            if current_position != target_position:
+                header.moveSection(current_position, target_position)
 
     def _resize_visible_columns(self) -> None:
         """Auto-size visible columns for both LH/RH trees after loading data."""
@@ -431,9 +709,21 @@ class FolderView(QWidget):
                 tree.setColumnWidth(COL_RIGHT_SIZE, 100)
                 tree.setColumnWidth(COL_LEFT_DATE, 155)
                 tree.setColumnWidth(COL_RIGHT_DATE, 155)
+                tree.setColumnWidth(COL_STATUS, 120)
+                tree.setColumnWidth(COL_EXTENSION, 90)
+                tree.setColumnWidth(COL_TYPE, 110)
+                tree.setColumnWidth(COL_PATH, 280)
             return
-        self._resize_tree_columns(self._left_tree, (COL_NAME, COL_LEFT_SIZE, COL_LEFT_DATE))
-        self._resize_tree_columns(self._right_tree, (COL_NAME, COL_RIGHT_SIZE, COL_RIGHT_DATE))
+        self._resize_visible_columns_for(self._left_tree)
+        self._resize_visible_columns_for(self._right_tree)
+
+    def _resize_visible_columns_for(self, tree: QTreeView) -> None:
+        columns = tuple(
+            column
+            for column in range(self._source_model.columnCount())
+            if not tree.isColumnHidden(column)
+        )
+        self._resize_tree_columns(tree, columns)
 
     def _resize_tree_columns(self, tree: QTreeView, columns: tuple[int, ...]) -> None:
         for col in columns:
@@ -665,6 +955,7 @@ class FolderView(QWidget):
         Debounced: rapid arrow-key navigation restarts the timer instead of
         firing a read per row.
         """
+        self.selection_changed.emit()
         if not self._preview_visible:
             return
         if not current.isValid():

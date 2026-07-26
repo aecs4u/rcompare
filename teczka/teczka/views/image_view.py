@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from PySide6.QtCore import QSize, Qt
@@ -16,8 +16,11 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QHeaderView,
     QPushButton,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -57,18 +60,100 @@ def _load_image_for_display(path: str) -> QImage:
     return reader.read()
 
 
+# EXIF tags worth surfacing in a comparison, in the order photographers read
+# them. Anything else the files carry is appended alphabetically afterwards.
+_EXIF_PRIORITY_TAGS: tuple[str, ...] = (
+    "Make",
+    "Model",
+    "LensModel",
+    "DateTimeOriginal",
+    "DateTime",
+    "ExposureTime",
+    "FNumber",
+    "ISOSpeedRatings",
+    "FocalLength",
+    "Orientation",
+    "Software",
+    "Artist",
+    "Copyright",
+    "ColorSpace",
+    "XResolution",
+    "YResolution",
+)
+
+
+def _read_exif(path: str) -> dict[str, str]:
+    """Return a ``tag name -> printable value`` map for *path*.
+
+    Returns an empty dict when the file carries no EXIF, when Pillow is
+    unavailable, or when the payload is malformed — none of which is an error
+    worth interrupting an image comparison for.
+    """
+    try:
+        from PIL import Image  # type: ignore[import-untyped]
+        from PIL.ExifTags import TAGS  # type: ignore[import-untyped]
+    except ImportError:
+        return {}
+
+    try:
+        with Image.open(path) as source:
+            raw = source.getexif()
+            if not raw:
+                return {}
+            result: dict[str, str] = {}
+            for tag_id, value in raw.items():
+                name = TAGS.get(tag_id, f"Tag{tag_id}")
+                if isinstance(value, bytes):
+                    text = value.decode("utf-8", errors="replace").strip("\x00").strip()
+                else:
+                    text = str(value).strip()
+                if text:
+                    result[str(name)] = text
+            return result
+    except Exception:  # noqa: BLE001 - absent/corrupt EXIF is not a failure
+        return {}
+
+
+def _exif_differences(
+    left: dict[str, str], right: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """Return ``(tag, left value, right value)`` for every differing tag.
+
+    Tags present on one side only are reported with an em dash for the missing
+    side, so a stripped-metadata copy is visible rather than silently equal.
+    """
+    names = set(left) | set(right)
+    ordered = [tag for tag in _EXIF_PRIORITY_TAGS if tag in names]
+    ordered += sorted(names - set(_EXIF_PRIORITY_TAGS))
+
+    rows: list[tuple[str, str, str]] = []
+    for tag in ordered:
+        left_value = left.get(tag, "")
+        right_value = right.get(tag, "")
+        if left_value == right_value:
+            continue
+        rows.append((tag, left_value or "—", right_value or "—"))
+    return rows
+
+
 @dataclass
 class _PreparedImages:
     left: QImage
     right: QImage
     stats: dict[str, float | int]
     error: str = ""
+    exif_differences: list[tuple[str, str, str]] = field(default_factory=list)
+    exif_available: bool = False
 
 
-def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
+def _prepare_image_pair(
+    left_path: str, right_path: str, *, cancel_token=None
+) -> _PreparedImages:
     """Decode previews and calculate full-resolution stats off the GUI thread."""
     left = _load_image_for_display(left_path)
     right = _load_image_for_display(right_path)
+    if cancel_token is not None:
+        cancel_token.check()
     if left.isNull() or right.isNull():
         failed = []
         if left.isNull():
@@ -76,6 +161,13 @@ def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
         if right.isNull():
             failed.append(f"Cannot read right image: {right_path}")
         return _PreparedImages(left, right, {}, "; ".join(failed))
+
+    left_exif = _read_exif(left_path)
+    right_exif = _read_exif(right_path)
+    exif_available = bool(left_exif or right_exif)
+    exif_rows = _exif_differences(left_exif, right_exif)
+    if cancel_token is not None:
+        cancel_token.check()
 
     try:
         from PIL import Image, ImageChops  # type: ignore[import-untyped]
@@ -85,6 +177,8 @@ def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
             right,
             {},
             "Pillow is not installed; pixel statistics are unavailable.",
+            exif_rows,
+            exif_available,
         )
 
     try:
@@ -111,6 +205,8 @@ def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
             (index % 256) * count for index, count in enumerate(histogram)
         )
         difference_pct = (different / total * 100.0) if total else 0.0
+        if cancel_token is not None:
+            cancel_token.check()
         return _PreparedImages(
             left,
             right,
@@ -125,9 +221,19 @@ def _prepare_image_pair(left_path: str, right_path: str) -> _PreparedImages:
                 "mean_diff": channel_delta / (total * 3) if total else 0.0,
                 "similarity_pct": 100.0 - difference_pct,
             },
+            "",
+            exif_rows,
+            exif_available,
         )
     except Exception as exc:  # noqa: BLE001 - shown as a non-fatal UI error
-        return _PreparedImages(left, right, {}, f"Failed to compare images: {exc}")
+        return _PreparedImages(
+            left,
+            right,
+            {},
+            f"Failed to compare images: {exc}",
+            exif_rows,
+            exif_available,
+        )
 
 
 def _similarity_color(similarity_pct: float) -> QColor:
@@ -259,9 +365,35 @@ class ImageView(QWidget):
         ):
             stats_layout.addWidget(lbl)
 
+        # EXIF differences ---------------------------------------------
+        # rcompare_core has implemented EXIF comparison all along and the CLI
+        # exposes --image-exif; this view simply never showed the result.
+        self._exif_box = QGroupBox("EXIF Differences")
+        exif_layout = QVBoxLayout(self._exif_box)
+        exif_layout.setContentsMargins(6, 6, 6, 6)
+
+        self._exif_status = QLabel("No image loaded.")
+        self._exif_status.setWordWrap(True)
+        exif_layout.addWidget(self._exif_status)
+
+        self._exif_table = QTableWidget(0, 3)
+        self._exif_table.setHorizontalHeaderLabels(["Tag", "Left", "Right"])
+        self._exif_table.verticalHeader().setVisible(False)
+        self._exif_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._exif_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._exif_table.setAlternatingRowColors(True)
+        self._exif_table.setMaximumHeight(160)
+        self._exif_table.setAccessibleName("EXIF metadata differences")
+        header = self._exif_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._exif_table.setVisible(False)
+        exif_layout.addWidget(self._exif_table)
+
         # Error label (hidden by default) ------------------------------
         self._error_label = QLabel()
-        self._error_label.setStyleSheet("color: red; font-weight: bold;")
+        self._error_label.setStyleSheet("color: palette(bright-text); font-weight: bold;")
         self._error_label.setVisible(False)
 
         # Main layout --------------------------------------------------
@@ -271,6 +403,7 @@ class ImageView(QWidget):
         main_layout.addWidget(self._error_label)
         main_layout.addWidget(splitter, stretch=1)
         main_layout.addWidget(self._stats_box)
+        main_layout.addWidget(self._exif_box)
 
         # Internal state -----------------------------------------------
         self._left_path: str = ""
@@ -297,19 +430,41 @@ class ImageView(QWidget):
 
         self._left_path_label.setText("Loading...")
         self._right_path_label.setText("Loading...")
+        self._exif_status.setText("Reading metadata…")
+        self._exif_table.setVisible(False)
         self._load_generation += 1
         generation = self._load_generation
-        worker = FunctionWorker(_prepare_image_pair, left_path, right_path, parent=self)
+        # Supersede any in-flight comparison rather than letting it finish and
+        # race the new one to the labels.
+        self.cancel_pending()
+        worker = FunctionWorker(
+            _prepare_image_pair,
+            left_path,
+            right_path,
+            parent=self,
+            cancellable=True,
+        )
         self._image_worker = worker
         worker.finished_with_result.connect(
             lambda result: self._on_images_prepared(result, generation)
         )
         worker.error.connect(self._show_error)
+        worker.cancelled.connect(self._on_load_cancelled)
         worker.start()
+
+    def cancel_pending(self) -> None:
+        """Cancel an in-flight image comparison, if any."""
+        worker = self._image_worker
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+
+    def _on_load_cancelled(self) -> None:
+        self._image_worker = None
 
     def _on_images_prepared(self, result: _PreparedImages, generation: int) -> None:
         if generation != self._load_generation:
             return
+        self._apply_exif(result)
         left_ok = self._display_image(
             result.left, self._left_path, self._left_scene, self._left_path_label
         )
@@ -374,6 +529,42 @@ class ImageView(QWidget):
             self._set_similarity(similarity_pct)
         else:
             self._lbl_similarity.setText("Similarity: -")
+
+        self._apply_cli_exif(report_dict)
+
+    def _apply_cli_exif(self, report_dict: dict[str, Any]) -> None:
+        """Render EXIF differences produced by ``rcompare_cli --image-exif``.
+
+        The CLI emits ``exif_differences`` as a list of
+        ``{tag_name, left_value, right_value}`` objects (rcompare_core's
+        ``ExifDifference``), plus ``left_exif``/``right_exif`` metadata blocks
+        that tell us whether EXIF was read at all.
+        """
+        raw = report_dict.get("exif_differences")
+        if raw is None:
+            # --image-exif was not requested for this scan.
+            self._exif_table.setRowCount(0)
+            self._exif_table.setVisible(False)
+            self._exif_status.setText(
+                "EXIF comparison is off. Enable it in Settings > Diff Options."
+            )
+            return
+
+        rows = [
+            (
+                str(item.get("tag_name", "")),
+                str(item.get("left_value") or "—"),
+                str(item.get("right_value") or "—"),
+            )
+            for item in raw
+            if isinstance(item, dict)
+        ]
+        available = bool(report_dict.get("left_exif") or report_dict.get("right_exif"))
+        self._apply_exif(
+            _PreparedImages(
+                QImage(), QImage(), {}, "", rows, available
+            )
+        )
 
     # ------------------------------------------------------------------
     # Image loading
@@ -473,6 +664,35 @@ class ImageView(QWidget):
         self._lbl_mean_diff.setText(f"Mean diff: {mean_diff:.2f}")
         self._set_similarity(similarity_pct)
 
+    def _apply_exif(self, result: _PreparedImages) -> None:
+        """Render the EXIF differences table from a prepared comparison."""
+        rows = result.exif_differences
+        self._exif_table.setRowCount(len(rows))
+        for row, (tag, left_value, right_value) in enumerate(rows):
+            for column, text in enumerate((tag, left_value, right_value)):
+                item = QTableWidgetItem(text)
+                item.setToolTip(text)
+                self._exif_table.setItem(row, column, item)
+        self._exif_table.setVisible(bool(rows))
+
+        if not result.exif_available:
+            self._exif_status.setText("Neither image carries EXIF metadata.")
+        elif not rows:
+            self._exif_status.setText("EXIF metadata is identical on both sides.")
+        else:
+            plural = "tag" if len(rows) == 1 else "tags"
+            self._exif_status.setText(f"{len(rows)} EXIF {plural} differ.")
+
+    def _clear_exif(self) -> None:
+        self._exif_table.setRowCount(0)
+        self._exif_table.setVisible(False)
+        self._exif_status.setText("No image loaded.")
+
+    @property
+    def exif_difference_count(self) -> int:
+        """Number of differing EXIF tags currently displayed (used by tests)."""
+        return self._exif_table.rowCount()
+
     def _apply_stats(self, stats: dict[str, float | int]) -> None:
         """Render statistics calculated by the background worker."""
         self._lbl_left_dims.setText(
@@ -511,6 +731,7 @@ class ImageView(QWidget):
         self._lbl_mean_diff.setText("Mean diff: -")
         self._lbl_similarity.setText("Similarity: -")
         self._lbl_similarity.setStyleSheet("")
+        self._clear_exif()
 
     def _show_error(self, message: str) -> None:
         """Display an error message above the image panels."""

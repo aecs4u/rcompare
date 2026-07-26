@@ -5,7 +5,12 @@ from __future__ import annotations
 from teczka.state import AppState, CompareState, ActiveView
 from teczka.models.undo_stack import OperationHistory, Operation
 from teczka.models.comparison import TreeNode
-from teczka.models.tree_model import ComparisonTreeModel
+from teczka.models.tree_model import (
+    COL_EXTENSION,
+    COL_PATH,
+    COL_TYPE,
+    ComparisonTreeModel,
+)
 from teczka.utils.cli_bridge import DiffStatus
 
 
@@ -88,3 +93,22 @@ def test_tree_model_tracks_large_node_count(qapp):
     model.set_tree(root)
     assert model.node_count == 10_001
     assert model.rowCount() == 10_000
+
+
+def test_tree_model_exposes_derived_file_columns(qapp):
+    root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+    root.add_child(
+        TreeNode(
+            name="archive.tar.gz",
+            path="exports/archive.tar.gz",
+            status=DiffStatus.DIFFERENT,
+            is_dir=False,
+        )
+    )
+
+    model = ComparisonTreeModel()
+    model.set_tree(root)
+
+    assert model.index(0, COL_EXTENSION).data() == "gz"
+    assert model.index(0, COL_TYPE).data() == "GZ file"
+    assert model.index(0, COL_PATH).data() == "exports/archive.tar.gz"

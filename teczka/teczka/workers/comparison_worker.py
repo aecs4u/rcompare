@@ -4,13 +4,31 @@ from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass
-from PySide6.QtCore import QObject, QProcess, Signal
-from ..models.comparison import TreeNode, build_tree_with_options
-from ..utils.cli_bridge import CliBridge, ScanReport
+from typing import Optional
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+from ..models.comparison import (
+    IncrementalTreeBuilder,
+    TreeNode,
+    build_tree_with_options,
+)
+from ..utils.cli_bridge import CliBridge, ScanReport, ScanSummary
 from ..utils.telemetry import log_error, log_info
 from .function_worker import FunctionWorker
 
 _PROGRESS_PREFIX = "PROGRESS:"
+
+# Reported on results assembled from --jsonl lines. The per-line summary is
+# schema-checked as it arrives (CliBridge.parse_summary_obj), so this records
+# how the report was built rather than re-deriving a version.
+SCHEMA_VERSION_STREAMED = "1.1.0"
+
+
+def _empty_summary(total: int) -> ScanSummary:
+    """Fallback when the CLI exits before emitting its summary line."""
+    return ScanSummary(
+        total=total, same=0, different=0,
+        orphan_left=0, orphan_right=0, unchecked=0,
+    )
 
 # Stage labels matching rcompare_core::progress::ScanStage
 _STAGE_LABELS = {
@@ -35,6 +53,19 @@ class ProgressInfo:
     entries_done: int
     entries_total: int
     percent: int
+
+
+@dataclass
+class PartialResult:
+    """A snapshot of a comparison that is still running.
+
+    Emitted repeatedly while --jsonl output streams in, so the folder view can
+    fill progressively instead of staying empty until the scan completes.
+    """
+
+    summary: Optional[ScanSummary]
+    tree: TreeNode
+    entries_seen: int
 
 
 @dataclass
@@ -79,6 +110,8 @@ class CliJsonWorker(QObject):
 
     def cancel(self) -> None:
         self._cancelled = True
+        if self._result_worker is not None:
+            self._result_worker.cancel()
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling cli json process")
             self._process.kill()
@@ -150,18 +183,39 @@ class ComparisonWorker(QObject):
     error = Signal(str)
     progress = Signal(str)  # Raw text progress (backward compatible)
     progress_update = Signal(object)  # ProgressInfo with structured data
+    partial_ready = Signal(object)  # PartialResult while the scan is running
+
+    # Cap on entry lines decoded per event-loop pass. Decoding costs roughly
+    # 4us/entry, so this bounds each pass to a few milliseconds and keeps the
+    # UI interactive no matter how fast the CLI floods stdout.
+    _MAX_LINES_PER_PASS = 2000
+    # How often a partial tree is published to the view while streaming, and
+    # the ceiling that back-off may raise it to on very large result sets.
+    _PUBLISH_INTERVAL_MS = 400
+    _MAX_PUBLISH_INTERVAL_MS = 5000
 
     def __init__(self, cli_bridge: CliBridge, parent=None):
         super().__init__(parent)
         self._cli_bridge = cli_bridge
         self._process = QProcess(self)
         self._stderr_buffer = ""
+        self._stdout_remainder = ""
         self._result_worker: FunctionWorker | None = None
         self._folder_view_mode = "compare_structure"
         self._always_show_folders = True
         self._cancelled = False
+        self._streaming = False
+        self._builder: IncrementalTreeBuilder | None = None
+        self._entries: list = []
+        self._summary: ScanSummary | None = None
+        self._dirty = False
         self._process.finished.connect(self._on_finished)
         self._process.readyReadStandardError.connect(self._on_stderr)
+        self._process.readyReadStandardOutput.connect(self._on_stdout)
+
+        self._publish_timer = QTimer(self)
+        self._publish_timer.setInterval(self._PUBLISH_INTERVAL_MS)
+        self._publish_timer.timeout.connect(self._publish_partial)
 
     def start_scan(
         self,
@@ -181,6 +235,9 @@ class ComparisonWorker(QObject):
         parquet_diff: bool = False,
         ignore_whitespace: str | None = None,
         ignore_case: bool = False,
+        regex_rules: list[str] | None = None,
+        csv_key_columns: list[str] | None = None,
+        cache_dir: str | None = None,
         folder_view_mode: str = "compare_structure",
         always_show_folders: bool = True,
     ) -> None:
@@ -214,12 +271,42 @@ class ComparisonWorker(QObject):
             args.extend(["--ignore-whitespace", ignore_whitespace])
         if ignore_case:
             args.append("--ignore-case")
+        for rule in regex_rules or []:
+            args.extend(["--regex-rule", rule])
+        for column in csv_key_columns or []:
+            args.extend(["--csv-key", column])
+        if cache_dir:
+            args.extend(["--cache-dir", cache_dir])
+
+        # --jsonl emits one summary line followed by one line per entry, so
+        # results can be rendered while the scan is still running instead of
+        # after it. Only the default hierarchical mode can be built
+        # incrementally; the other modes need the full entry set up front.
+        #
+        # The CLI rejects --json together with --jsonl, so swap rather than add.
+        # --jsonl is newer than the oldest binaries teczka may be pointed at, so
+        # it is feature-detected rather than assumed; older builds keep the
+        # previous all-at-once behaviour instead of failing.
+        self._streaming = folder_view_mode in (
+            "", "compare_structure"
+        ) and self._cli_bridge.supports_flag("scan", "--jsonl")
+        if self._streaming:
+            args = ["--jsonl" if a == "--json" else a for a in args]
 
         cmd = self._cli_bridge.build_command(args)
         self._stderr_buffer = ""
+        self._stdout_remainder = ""
         self._cancelled = False
         self._folder_view_mode = folder_view_mode
         self._always_show_folders = always_show_folders
+        self._builder = IncrementalTreeBuilder() if self._streaming else None
+        self._entries = []
+        self._summary = None
+        self._dirty = False
+        self._left = left
+        self._right = right
+        if self._streaming:
+            self._publish_timer.start()
         log_info(
             "starting async scan process",
             command=cmd[0] if cmd else "",
@@ -231,6 +318,9 @@ class ComparisonWorker(QObject):
     def cancel(self) -> None:
         """Cancel a running comparison."""
         self._cancelled = True
+        self._publish_timer.stop()
+        if self._result_worker is not None:
+            self._result_worker.cancel()
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling comparison process")
             self._process.kill()
@@ -257,6 +347,12 @@ class ComparisonWorker(QObject):
             log_error("comparison process crashed")
             self.error.emit("Comparison process crashed")
             return
+        if self._streaming:
+            # Drain anything that arrived between the last readyRead and exit.
+            self._on_stdout()
+            if self._stdout_remainder.strip():
+                self._consume_lines([self._stdout_remainder])
+                self._stdout_remainder = ""
 
         # rcompare_cli exit codes:
         #   0 => no differences found
@@ -270,6 +366,38 @@ class ComparisonWorker(QObject):
             details = "\n".join(details_lines) or "no stderr output"
             log_error("comparison process failed", exit_code=exit_code, details=details)
             self.error.emit(f"Comparison failed (exit {exit_code}): {details}")
+            return
+
+        # clap also exits 2 on a usage error, which is indistinguishable from
+        # "differences found" by exit code alone. Without this, a malformed
+        # invocation is reported to the user as a successful empty comparison.
+        if not self._summary and not self._entries and stdout.strip() == "":
+            details = "\n".join(
+                line for line in stderr.splitlines()
+                if not line.startswith(_PROGRESS_PREFIX)
+            ).strip()
+            if details:
+                log_error("comparison produced no output", exit_code=exit_code,
+                          details=details)
+                self.error.emit(f"Comparison produced no output: {details}")
+                return
+
+        if self._streaming:
+            # Everything was decoded incrementally as it arrived; the tree only
+            # needs its final aggregate/sort pass. No second parse, no second
+            # copy of the result set.
+            report = ScanReport(
+                schema_version=SCHEMA_VERSION_STREAMED,
+                left=self._left,
+                right=self._right,
+                summary=self._summary or _empty_summary(len(self._entries)),
+                entries=self._entries,
+            )
+            if self._builder is None:
+                self.error.emit("Streaming comparison ended without a tree builder")
+                return
+            result = ComparisonResult(report=report, tree=self._builder.finish())
+            self._on_result_ready(result, exit_code)
             return
 
         # JSON decoding and tree construction scale with the complete result
@@ -319,6 +447,79 @@ class ComparisonWorker(QObject):
         self.error.emit(f"Failed to parse results: {message}")
         self._result_worker = None
 
+    def _on_stdout(self) -> None:
+        """Decode newly arrived --jsonl lines without blocking the event loop.
+
+        Non-streaming runs leave the data in the QProcess buffer for
+        _on_finished to read in one go, exactly as before.
+        """
+        if not self._streaming or self._cancelled:
+            return
+        data = bytes(self._process.readAllStandardOutput().data()).decode(
+            "utf-8", errors="replace"
+        )
+        if not data:
+            return
+        self._stdout_remainder += data
+        # Keep the trailing fragment: the pipe may have been read mid-line.
+        lines = self._stdout_remainder.split("\n")
+        self._stdout_remainder = lines.pop()
+        self._consume_lines(lines)
+
+    def _consume_lines(self, lines: list[str]) -> None:
+        """Decode up to _MAX_LINES_PER_PASS lines, yielding between batches."""
+        batch = lines[: self._MAX_LINES_PER_PASS]
+        rest = lines[self._MAX_LINES_PER_PASS:]
+        for line in batch:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = _json.loads(line)
+            except ValueError:
+                continue
+            kind = obj.get("type")
+            if kind == "entry":
+                try:
+                    entry = self._cli_bridge.parse_entry_obj(obj)
+                except (KeyError, ValueError):
+                    continue
+                self._entries.append(entry)
+                if self._builder is not None:
+                    self._builder.add(entry)
+                self._dirty = True
+            elif kind == "summary":
+                # Arrives first: totals are known before any entry renders.
+                self._summary = self._cli_bridge.parse_summary_obj(obj)
+                self._dirty = True
+        if rest and not self._cancelled:
+            # Hand control back to the event loop before decoding the rest.
+            QTimer.singleShot(0, lambda: self._consume_lines(rest))
+
+    def _publish_partial(self) -> None:
+        """Push the tree built so far to the view, if anything changed."""
+        if not self._streaming or self._cancelled or not self._dirty:
+            return
+        if self._builder is None:
+            return
+        self._dirty = False
+        seen = len(self._builder)
+        self.partial_ready.emit(
+            PartialResult(
+                summary=self._summary,
+                tree=self._builder.snapshot(),
+                entries_seen=seen,
+            )
+        )
+        # Snapshotting copies the tree, so its cost grows with the result set.
+        # Back the interval off as the tree grows to keep that overhead a
+        # roughly fixed share of runtime instead of letting it dominate on
+        # very large comparisons.
+        self._publish_timer.setInterval(
+            min(self._MAX_PUBLISH_INTERVAL_MS,
+                max(self._PUBLISH_INTERVAL_MS, seen // 20))
+        )
+
     def _on_stderr(self) -> None:
         data = bytes(self._process.readAllStandardError().data()).decode(
             "utf-8", errors="replace"
@@ -356,11 +557,16 @@ class ComparisonWorker(QObject):
             )
             self.progress_update.emit(info)
 
-            # Also emit a human-readable text for backward compatibility
+            # Also emit a human-readable text for backward compatibility.
+            # During the directory walk the total is not yet known, but the
+            # running count still distinguishes a slow scan from a hung one —
+            # which is the whole point of reporting it.
             if entries_total > 0:
                 self.progress.emit(
-                    f"{info.stage_label} ({entries_done}/{entries_total}, {percent}%)"
+                    f"{info.stage_label} ({entries_done:,}/{entries_total:,}, {percent}%)"
                 )
+            elif entries_done > 0:
+                self.progress.emit(f"{info.stage_label} ({entries_done:,} entries)")
             else:
                 self.progress.emit(info.stage_label)
         except (ValueError, KeyError, _json.JSONDecodeError):

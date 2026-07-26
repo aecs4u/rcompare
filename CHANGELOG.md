@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-07-26) — teczka renders comparisons while they run
+
+- teczka now drives `rcompare_cli --jsonl` and builds the folder tree
+  incrementally as entries stream in, instead of buffering the whole JSON
+  document and parsing it after the process exits. On a 40k-entry comparison
+  the first results appear at **~415 ms instead of ~1230 ms**, the total is
+  known from the first line (the summary is emitted first), and the worst
+  event-loop stall drops to **72 ms with no pause over 100 ms**.
+- Decoding is capped per event-loop pass and partial trees are published on a
+  timer that backs off as the result set grows, so snapshot cost stays a
+  roughly fixed share of runtime rather than dominating large comparisons.
+- `--jsonl` is feature-detected through `rcompare_cli capabilities` and cached;
+  binaries that predate the flag keep the previous all-at-once behaviour. The
+  GUI and the CLI are installed independently, so a stale
+  `~/.cargo/bin/rcompare_cli` must not be assumed to match the GUI.
+- Folder filter changes are coalesced behind a 120 ms timer. Applying filters
+  walks the whole tree and was running inline on every pill click.
+
+### Fixed (2026-07-26) — teczka startup and CLI error reporting
+
+- Restored startup: `_build_toolbar()` was still called after the toolbar was
+  removed, and `_tb_compare`/`_tb_cancel` were still toggled in four places;
+  the session tab bar's `set_comparing()` already covers both. Also supplied
+  the missing `_close_session`, `_on_home_profile_selected`,
+  `_record_recent_session` and `_update_action_states` methods, and converted
+  the two remaining `_on_filters_changed` callers to `_apply_filter_state`.
+- A CLI invocation that fails argument parsing is no longer reported as a
+  successful empty comparison. `clap` exits 2 on a usage error, which teczka
+  treated as "differences found"; an empty result with diagnostic output on
+  stderr is now surfaced as an error.
+
+### Added (2026-07-25) — teczka folder selection
+
+- Added folder-picker ("Browse") buttons to both sides of the path bar, and a
+  third for the base path in three-way mode. Previously the only folder chooser
+  was buried in a menu action.
+- Folder selection now goes through `QFileDialog.getExistingDirectoryUrl` with
+  the desktop's native/portal chooser (`teczka/utils/path_picker.py`), so
+  network locations (SFTP/SMB/WebDAV/MTP) reachable from the system file
+  dialog can be selected. Locations the desktop mounts locally (kio-fuse,
+  GVfs) are handed to the comparison engine as ordinary paths; unmounted
+  remote schemes are reported instead of being passed down as unusable strings.
+- teczka now prefers the XDG desktop portal platform theme when the session
+  provides one, and no longer forces the Fusion widget style over the
+  system's (e.g. Breeze on Plasma).
+
+### Fixed (2026-07-25) — teczka UI defects found while reviewing against Beyond Compare
+
+- The integrated status bar stayed on "Comparing..." forever: it was set when a
+  scan started and reset on cancel and error, but never on success. It now
+  shows the comparison summary.
+- Path breadcrumbs were clipped along their lower edge. The scroll area was
+  pinned to a `QLineEdit`'s height while its horizontal scrollbar rendered
+  inside that height, cutting off the segment text; the row height was also
+  hardcoded at 32px, which clipped further under display scaling. The
+  scrollbar is gone (breadcrumbs auto-scroll to the deepest segment) and both
+  row heights now derive from the current font.
+- The hex compare view was pinned to the bottom of its pane with roughly half
+  the area left empty, because its title label and the splitter both had a
+  zero stretch factor and the label absorbed the extra space.
+- The welcome dialog no longer blocks every launch: it is skipped when left or
+  right paths are supplied (command line, desktop file, `xdg-open`) and offers
+  a "don't show this again" choice that is remembered.
+
 ### Changed (2026-07-25) — Documentation consolidation
 
 - Replaced five overlapping/stale roadmap docs (`GAPS.md`, `ROADMAP.md`,

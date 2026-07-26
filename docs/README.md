@@ -24,6 +24,7 @@ One doc per workspace crate/component, each source-verified and cross-linked:
 - [Roadmap](roadmap.md): **Source-verified**, prioritized list of remaining work for parity with Beyond Compare/WinMerge/Meld/KDiff3. The maintained source of truth — keep this current instead of adding new standalone roadmap docs.
 - [Development Plan](development-plan.md): Execution plan — how the roadmap's remaining work is sequenced into phases and shippable work items, with acceptance criteria. Scope lives in `roadmap.md`; sequencing lives here.
 - [Feature Comparison](../FEATURE_COMPARISON.md): Comparison with competing tools.
+- [Beyond Compare GUI Config Comparison](BCOMPARE_GUI_CONFIG_COMPARISON.md): teczka's configuration surface (menus, Options, per-session settings) against Beyond Compare 5.2.4, transcribed from a live inspection on 2026-07-26.
 - [Architecture](../ARCHITECTURE.md): Original design handbook (largely historical — see the notice at its top; current module boundaries are documented in `docs/modules/` instead).
 
 ## Cloud and Storage Docs
@@ -42,6 +43,7 @@ One doc per workspace crate/component, each source-verified and cross-linked:
 - [WinMerge Parity Plan](history/WINMERGE_PARITY.md) / [Phase 1](history/WINMERGE_PARITY_PHASE1.md): Phase implementation write-ups.
 - [CI and Pattern Improvements](history/CI_AND_PATTERN_IMPROVEMENTS.md): Dated CI/ignore-pattern change summary (2026-01-26).
 - [Test Coverage Report](history/TEST_COVERAGE_REPORT.md): Dated test-count snapshot (2026-01-26) — see [status.md](status.md) for current counts.
+- [teczka Design Review](history/TECZKA_DESIGN_REVIEW.md): Dated architecture/UX review of the GUI (2026-07-25), runtime-verified against a live session and benchmarked against Beyond Compare.
 
 ## Contributor Docs
 

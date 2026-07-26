@@ -50,7 +50,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 |---------|----------|----------------|----------|------|--------|---------|
 | Line-by-line diff | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Intra-line diff | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Syntax highlighting | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ⚠️ Limited |
+| Syntax highlighting | ❌ No (teczka has no `QSyntaxHighlighter`; the CLI's `highlighted_segments` drives intra-line diff tinting only) | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ⚠️ Limited |
 | Ignore whitespace / case | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | Regex rules | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No |
 | Patience diff | ✅ Yes | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies |
@@ -64,7 +64,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Hex view | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | Hex diff highlighting | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | Pixel-level image diff | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| EXIF metadata comparison | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
+| EXIF metadata comparison | ⚠️ CLI only (`rcompare_core::image_diff` + `--image-exif`; teczka's image view never requests or displays it) | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
 | Image tolerance controls | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No | ⚠️ Limited |
 | Perceptual image hashing | ✅ Yes | ⚠️ Limited/indirect | ❌ No | ❌ No | ❌ No | ❌ No |
 

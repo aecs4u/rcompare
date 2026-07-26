@@ -79,19 +79,27 @@ class _FileDiffResult:
     char_hl_right: CharHighlights = field(default_factory=list)
 
 
-def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> _FileDiffResult:
+def _compute_file_diff(
+    left_path: str,
+    right_path: str,
+    color_equal: QColor,
+    encoding: str = "utf-8",
+    ignore_eol: bool = True,
+) -> _FileDiffResult:
     """Read both files and compute the side-by-side diff (runs off the GUI thread).
 
     Raises ``OSError`` if either file can't be read; the caller (FunctionWorker)
     turns that into an ``error`` signal.
     """
-    left_text = Path(left_path).read_text(errors="replace")
-    right_text = Path(right_path).read_text(errors="replace")
+    left_text = Path(left_path).read_text(encoding=encoding, errors="replace")
+    right_text = Path(right_path).read_text(encoding=encoding, errors="replace")
 
     left_lines = left_text.splitlines()
     right_lines = right_text.splitlines()
+    left_compare = left_lines if ignore_eol else left_text.splitlines(keepends=True)
+    right_compare = right_lines if ignore_eol else right_text.splitlines(keepends=True)
 
-    matcher = difflib.SequenceMatcher(None, left_lines, right_lines)
+    matcher = difflib.SequenceMatcher(None, left_compare, right_compare)
     result = _FileDiffResult()
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -163,6 +171,8 @@ class TextView(QWidget):
         self._edit_mode = False
         self._pending_diff_paths: tuple[str, str] | None = None
         self._diff_worker: FunctionWorker | None = None
+        self._encoding = "utf-8"
+        self._ignore_eol = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -334,7 +344,15 @@ class TextView(QWidget):
         self._right_path_label.setText(right_path)
         self._pending_diff_paths = (left_path, right_path)
 
-        worker = FunctionWorker(_compute_file_diff, left_path, right_path, _color_equal(), parent=self)
+        worker = FunctionWorker(
+            _compute_file_diff,
+            left_path,
+            right_path,
+            _color_equal(),
+            self._encoding,
+            self._ignore_eol,
+            parent=self,
+        )
         worker.finished_with_result.connect(
             lambda result, lp=left_path, rp=right_path: self._on_file_diff_computed(lp, rp, result)
         )
@@ -560,7 +578,7 @@ class TextView(QWidget):
         if self._left_editor.dirty and self._left_path:
             try:
                 Path(self._left_path).write_text(
-                    self._left_editor.toPlainText(), encoding="utf-8",
+                    self._left_editor.toPlainText(), encoding=self._encoding,
                 )
                 self._left_editor._dirty = False
                 saved.append("left")
@@ -571,7 +589,7 @@ class TextView(QWidget):
         if self._right_editor.dirty and self._right_path:
             try:
                 Path(self._right_path).write_text(
-                    self._right_editor.toPlainText(), encoding="utf-8",
+                    self._right_editor.toPlainText(), encoding=self._encoding,
                 )
                 self._right_editor._dirty = False
                 saved.append("right")
@@ -582,6 +600,39 @@ class TextView(QWidget):
         if saved:
             self._modified_label.setText("Saved")
             self._save_btn.setEnabled(False)
+
+    def set_file_options(self, encoding: str = "utf-8", ignore_eol: bool = True) -> None:
+        """Set how files are decoded, saved, and compared for line endings."""
+        self._encoding = encoding or "utf-8"
+        self._ignore_eol = bool(ignore_eol)
+
+    @property
+    def has_unsaved_changes(self) -> bool:
+        return self._left_editor.dirty or self._right_editor.dirty
+
+    def save_changes(self) -> bool:
+        """Save edits and return whether no dirty content remains."""
+        self._on_save()
+        return not self.has_unsaved_changes
+
+    def maybe_close(self) -> bool:
+        """Ask what to do with edits before this view is destroyed."""
+        if not self.has_unsaved_changes:
+            return True
+        answer = QMessageBox.warning(
+            self,
+            "Unsaved Changes",
+            "This comparison contains unsaved edits.",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        if answer == QMessageBox.StandardButton.Cancel:
+            return False
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_changes()
+        return True
 
     # ------------------------------------------------------------------
     # Overview bar integration

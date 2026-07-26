@@ -3,10 +3,63 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 from .telemetry import log_exception
+
+
+# Major version of the rcompare_cli JSON schema this GUI understands.
+#
+# rcompare_cli emits {"schema_version": "1.1.0", ...}. Without a check at this
+# boundary, a schema bump surfaces as a KeyError raised inside a worker thread
+# with no indication that a version mismatch is the cause.
+SUPPORTED_SCHEMA_MAJOR = 1
+# Emitted by CLI builds predating the schema_version field.
+_ASSUMED_LEGACY_SCHEMA = "1.0.0"
+
+
+class SchemaVersionError(RuntimeError):
+    """Raised when the CLI emits a JSON schema this GUI cannot parse."""
+
+    def __init__(self, received: str, expected_major: int) -> None:
+        self.received = received
+        self.expected_major = expected_major
+        super().__init__(
+            f"rcompare_cli reported JSON schema version {received!r}, but this "
+            f"version of teczka only understands schema {expected_major}.x. "
+            "Update teczka, or point Settings > CLI at a matching rcompare_cli "
+            "binary."
+        )
+
+
+def parse_schema_version(raw: object) -> tuple[int, str]:
+    """Return ``(major, normalized)`` for a reported schema version.
+
+    Missing or unparseable values are treated as the legacy 1.0.0 schema
+    rather than rejected, so a mismatch is reported only when the CLI actually
+    declares an incompatible version.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return 1, _ASSUMED_LEGACY_SCHEMA
+    text = raw.strip()
+    head = text.split(".", 1)[0]
+    try:
+        return int(head), text
+    except ValueError:
+        return 1, text
+
+
+def check_schema_version(data: dict) -> str:
+    """Validate ``data['schema_version']``, raising :class:`SchemaVersionError`.
+
+    Returns the normalized version string on success.
+    """
+    major, normalized = parse_schema_version(data.get("schema_version"))
+    if major != SUPPORTED_SCHEMA_MAJOR:
+        raise SchemaVersionError(normalized, SUPPORTED_SCHEMA_MAJOR)
+    return normalized
 
 
 class DiffStatus(str, Enum):
@@ -81,6 +134,7 @@ class ScanReport:
     right: str
     summary: ScanSummary
     entries: list[DiffEntry]
+    schema_version: str = _ASSUMED_LEGACY_SCHEMA
     text_diffs: list[TextDiffReport] = field(default_factory=list)
     image_diffs: list[ImageDiffReport] = field(default_factory=list)
     csv_diffs: list[dict] = field(default_factory=list)
@@ -95,10 +149,93 @@ class CliBridge:
 
     def __init__(self, cli_path: str):
         self._cli_path = cli_path
+        self._caps_cache: Optional[dict[str, frozenset]] = None
 
     def build_command(self, args: list[str]) -> list[str]:
         """Build a command list for QProcess usage."""
         return [self._cli_path] + args
+
+    @staticmethod
+    def parse_entry_obj(obj: dict) -> DiffEntry:
+        """Build a :class:`DiffEntry` from one decoded ``--jsonl`` entry line."""
+        def side(key: str) -> Optional[FileSide]:
+            raw = obj.get(key)
+            if not raw:
+                return None
+            return FileSide(
+                size=raw["size"],
+                modified_unix=raw.get("modified_unix"),
+                is_dir=raw["is_dir"],
+            )
+
+        return DiffEntry(
+            path=obj["path"],
+            status=DiffStatus(obj["status"]),
+            left=side("left"),
+            right=side("right"),
+        )
+
+    @staticmethod
+    def parse_summary_obj(obj: dict) -> ScanSummary:
+        """Build a :class:`ScanSummary` from the ``--jsonl`` summary line.
+
+        The summary is emitted *first* in JSONL mode, so counts can be shown
+        before a single entry has been rendered.
+        """
+        check_schema_version(obj)
+        raw = obj.get("summary", obj)
+        try:
+            return ScanSummary(
+                total=raw["total"],
+                same=raw["same"],
+                different=raw["different"],
+                orphan_left=raw["orphan_left"],
+                orphan_right=raw["orphan_right"],
+                unchecked=raw["unchecked"],
+            )
+        except (KeyError, TypeError) as exc:
+            raise SchemaVersionError(
+                f"jsonl summary (missing field {exc})", SUPPORTED_SCHEMA_MAJOR
+            ) from exc
+
+    def supports_flag(self, command: str, flag: str) -> bool:
+        """Return whether the configured CLI advertises *flag* for *command*.
+
+        Feature-detected via ``rcompare_cli capabilities --json`` and cached for
+        the life of the bridge. The GUI and the binary are versioned and shipped
+        independently (a stale ``~/.cargo/bin/rcompare_cli`` easily shadows a
+        newer build on PATH), so newer flags must be probed, not assumed.
+        Anything unexpected — old binary, no ``capabilities`` command, malformed
+        output — resolves to False so the caller falls back to older behaviour.
+        """
+        caps = self._capabilities()
+        return flag in caps.get(command, frozenset())
+
+    def _capabilities(self) -> dict[str, frozenset]:
+        if self._caps_cache is not None:
+            return self._caps_cache
+        caps: dict[str, frozenset] = {}
+        try:
+            proc = subprocess.run(
+                [self._cli_path, "capabilities", "--json"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode == 0:
+                data = json.loads(proc.stdout)
+                for cmd in data.get("commands", []):
+                    name = cmd.get("name")
+                    if not name:
+                        continue
+                    flags: set[str] = set()
+                    for raw in cmd.get("flags", []):
+                        # Entries may combine a pair, e.g.
+                        # "--verify-hashes/--no-verify-hashes".
+                        flags.update(part for part in str(raw).split("/") if part)
+                    caps[name] = frozenset(flags)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            log_exception("could not read rcompare_cli capabilities")
+        self._caps_cache = caps
+        return caps
 
     def parse_scan_report(self, json_str: str) -> ScanReport:
         """Parse JSON string into ScanReport."""
@@ -107,14 +244,27 @@ class CliBridge:
         except Exception:
             log_exception("failed to decode scan JSON")
             raise
-        summary = ScanSummary(
-            total=data["summary"]["total"],
-            same=data["summary"]["same"],
-            different=data["summary"]["different"],
-            orphan_left=data["summary"]["orphan_left"],
-            orphan_right=data["summary"]["orphan_right"],
-            unchecked=data["summary"]["unchecked"],
-        )
+        if not isinstance(data, dict):
+            raise ValueError("rcompare_cli did not emit a JSON object")
+
+        # Check the contract before touching any field, so an incompatible
+        # schema is reported as such rather than as a KeyError deep in parsing.
+        schema_version = check_schema_version(data)
+
+        try:
+            raw_summary = data["summary"]
+            summary = ScanSummary(
+                total=raw_summary["total"],
+                same=raw_summary["same"],
+                different=raw_summary["different"],
+                orphan_left=raw_summary["orphan_left"],
+                orphan_right=raw_summary["orphan_right"],
+                unchecked=raw_summary["unchecked"],
+            )
+        except (KeyError, TypeError) as exc:
+            raise SchemaVersionError(
+                f"{schema_version} (missing field {exc})", SUPPORTED_SCHEMA_MAJOR
+            ) from exc
 
         entries = []
         for e in data["entries"]:
@@ -171,6 +321,7 @@ class CliBridge:
             right=data["right"],
             summary=summary,
             entries=entries,
+            schema_version=schema_version,
             text_diffs=text_diffs,
             image_diffs=image_diffs,
             csv_diffs=data.get("csv_diffs") or [],

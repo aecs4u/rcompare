@@ -13,8 +13,8 @@ from typing import Optional
 from PySide6.QtCore import QStandardPaths
 
 
-def _default_config_path() -> Path:
-    """Return the default config file path.
+def default_config_dir() -> Path:
+    """Return the writable application configuration directory.
 
     Uses ``QStandardPaths.AppConfigLocation`` so the location honours XDG
     on Linux, ``%APPDATA%`` on Windows, and ``~/Library/Application Support``
@@ -32,7 +32,34 @@ def _default_config_path() -> Path:
             config_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
-    return config_dir / "pyside.json"
+    return config_dir
+
+
+def _default_config_path() -> Path:
+    """Return the default application configuration file."""
+    return default_config_dir() / "pyside.json"
+
+
+def atomic_write_json(path: Path, data: object) -> bool:
+    """Atomically write JSON data, returning whether it reached disk."""
+
+    tmp_name: str | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+        os.replace(tmp_name, path)
+        return True
+    except OSError:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        return False
 
 
 def _find_cli() -> Optional[str]:
@@ -83,12 +110,20 @@ class AppConfig:
     window_geometry: dict = field(default_factory=dict)
     comparison_settings: dict = field(default_factory=dict)
     filter_options: dict = field(default_factory=dict)
+    # Settings > Diff Options and Settings > Files. These pages exposed
+    # whitespace/case/specialised-comparison/regex and encoding/EOL/binary
+    # controls that were never returned, persisted or applied; they round-trip
+    # through here now.
+    diff_options: dict = field(default_factory=dict)
+    file_options: dict = field(default_factory=dict)
     last_paths: dict = field(default_factory=dict)
     folder_columns: dict = field(default_factory=dict)
     active_view: int = 0
     three_way_mode: bool = False
     appearance: dict = field(default_factory=dict)
+    shortcuts: dict[str, str] = field(default_factory=dict)
     bookmarks: list[dict] = field(default_factory=list)
+    show_splash: bool = True
     _config_file: Optional[str] = field(default=None, repr=False)
 
     @classmethod
@@ -105,12 +140,16 @@ class AppConfig:
                     window_geometry=data.get("window_geometry", {}),
                     comparison_settings=data.get("comparison_settings", {}),
                     filter_options=data.get("filter_options", {}),
+                    diff_options=data.get("diff_options", {}),
+                    file_options=data.get("file_options", {}),
                     last_paths=data.get("last_paths", {}),
                     folder_columns=data.get("folder_columns", {}),
                     active_view=int(data.get("active_view", 0)),
                     three_way_mode=bool(data.get("three_way_mode", False)),
                     appearance=data.get("appearance", {}),
+                    shortcuts=data.get("shortcuts", {}),
                     bookmarks=data.get("bookmarks", []),
+                    show_splash=bool(data.get("show_splash", True)),
                 )
                 config._config_file = str(path)
                 return config
@@ -136,30 +175,18 @@ class AppConfig:
             "window_geometry": self.window_geometry,
             "comparison_settings": self.comparison_settings,
             "filter_options": self.filter_options,
+            "diff_options": self.diff_options,
+            "file_options": self.file_options,
             "last_paths": self.last_paths,
             "folder_columns": self.folder_columns,
             "active_view": self.active_view,
             "three_way_mode": self.three_way_mode,
             "appearance": self.appearance,
+            "shortcuts": self.shortcuts,
             "bookmarks": self.bookmarks,
+            "show_splash": self.show_splash,
         }
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(
-                dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
-            )
-            try:
-                with os.fdopen(fd, "w") as f:
-                    json.dump(data, f, indent=2)
-                os.replace(tmp_name, path)
-            except OSError:
-                try:
-                    os.unlink(tmp_name)
-                except OSError:
-                    pass
-                raise
-        except OSError:
-            pass
+        atomic_write_json(path, data)
 
     def get_cli_path(self) -> str:
         """Return CLI path, raising if not found."""
@@ -171,5 +198,6 @@ class AppConfig:
             self.cli_path = found
             return found
         raise FileNotFoundError(
-            "rcompare_cli binary not found. Please set the path in Tools > Options."
+            "rcompare_cli binary not found. Set the path in "
+            "Settings \u2192 Configure RCompare \u2192 CLI."
         )

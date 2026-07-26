@@ -1529,3 +1529,46 @@ QSlider::handle:horizontal:hover {
     outline: none;
 }
 """
+
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+
+#: Theme names the Settings dialog offers. ``system`` applies no stylesheet at
+#: all, so the platform palette (Breeze Light/Dark, high-contrast, the user's
+#: accent colour) shows through untouched.
+THEME_NAMES: tuple[str, ...] = ("system", "light", "dark")
+
+
+def normalize_theme(name: str | None) -> str:
+    """Return a supported theme name, defaulting to ``system``."""
+    candidate = (name or "").strip().lower()
+    return candidate if candidate in THEME_NAMES else "system"
+
+
+def load_theme(name: str | None) -> str:
+    """Return the stylesheet for *name* (empty string for ``system``)."""
+    theme = normalize_theme(name)
+    if theme == "light":
+        return load_light_theme()
+    if theme == "dark":
+        return load_dark_theme()
+    return ""
+
+
+def apply_theme(app, name: str | None) -> str:
+    """Apply the selected theme to *app* and return the normalized name.
+
+    The Light/Dark selector used to persist nothing and apply nothing: neither
+    stylesheet was ever loaded, at startup or on change. Calling this both at
+    launch and from Settings is what makes the control real.
+
+    Passing ``None`` for *app* is a no-op, so headless tests can call
+    :func:`load_theme` without a QApplication.
+    """
+    theme = normalize_theme(name)
+    setter = getattr(app, "setStyleSheet", None)
+    if callable(setter):
+        setter(load_theme(theme))
+    return theme

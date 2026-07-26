@@ -57,7 +57,7 @@ After the first work session (menu restructure, shortcut fixes, desktop integrat
 | Action Naming | 0% | 80% | +80% |
 | Navigation | 0% | 50% | +50% |
 | Standard Shortcuts | 13% | 75% | +62% |
-| Collision-Free | 0% | 100% | +100% |
+| Collision-Free | 0% | 33% | +33% |
 | Keyboard Navigation | 25% | 50% | +25% |
 | Theming - Colors | 17% | 50% | +33% |
 | Desktop File | 0% | 100% | +100% |
@@ -457,7 +457,7 @@ Future versions will support shortcut customization through Settings > Configure
 
 | Criteria | Status | Notes |
 |----------|--------|-------|
-| No duplicate shortcut assignments | Partial | Need comprehensive audit |
+| No duplicate shortcut assignments | Fail | Audited 2026-07-25 by walking the live menu tree: `Ctrl+P` is bound to both Print and Profiles, `Ctrl+Y` to both Redo and Synchronize. Separately, `Ctrl+Q` does not quit — `StandardKey.Quit` resolves to the `Exit` multimedia key on Linux. See [history/TECZKA_DESIGN_REVIEW.md](history/TECZKA_DESIGN_REVIEW.md) §2.6 |
 | Global actions take priority over context actions | Partial | Need audit |
 | Shortcut list available in Help menu | Fail | Not implemented |
 

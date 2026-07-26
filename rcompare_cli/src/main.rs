@@ -109,6 +109,13 @@ enum Commands {
         #[arg(long)]
         csv_diff: bool,
 
+        /// Align CSV rows by the named key column instead of by position.
+        /// Repeat for a composite key. Without this, an inserted row shifts
+        /// every following row and is reported as a cascade of differences
+        /// with zero left-only/right-only rows.
+        #[arg(long, value_name = "COLUMN", requires = "csv_diff")]
+        csv_key: Vec<String>,
+
         /// Enable Excel-specific comparison with sheet and cell analysis
         #[arg(long)]
         excel_diff: bool,
@@ -349,6 +356,11 @@ enum Commands {
         #[arg(long, value_name = "TOLERANCE", default_value = "1")]
         image_tolerance: u8,
 
+        /// Align CSV rows by the named key column instead of by position.
+        /// Repeat for a composite key.
+        #[arg(long, value_name = "COLUMN")]
+        csv_key: Vec<String>,
+
         /// Maximum number of binary mismatch ranges to emit
         #[arg(long, default_value = "2000")]
         max_binary_ranges: usize,
@@ -457,6 +469,7 @@ fn main() {
             columns,
             image_diff,
             csv_diff,
+            csv_key,
             excel_diff,
             json_diff,
             yaml_diff,
@@ -507,6 +520,7 @@ fn main() {
                 columns,
                 image_diff,
                 csv_diff,
+                csv_key,
                 excel_diff,
                 json_diff,
                 yaml_diff,
@@ -612,6 +626,7 @@ fn main() {
             regex_rule,
             image_exif,
             image_tolerance,
+            csv_key,
             max_binary_ranges,
         } => {
             if let Err(e) = run_diff_file(
@@ -625,6 +640,7 @@ fn main() {
                 regex_rule,
                 image_exif,
                 image_tolerance,
+                csv_key,
                 max_binary_ranges,
             ) {
                 error!("diff-file failed: {}", e);

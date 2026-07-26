@@ -31,8 +31,17 @@ class AboutDialog(QDialog):
     PROJECT_URL = "https://github.com/aecs4u/rcompare"
     ISSUES_URL = "https://github.com/aecs4u/rcompare/issues"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, shortcuts: list[tuple[str, str]] | None = None):
+        """Build the About/Help dialog.
+
+        *shortcuts* is a list of ``(chord, description)`` pairs read off the
+        live actions (see ``MainWindow.action_registry``). The table used to be
+        maintained by hand here and had drifted: it advertised ``Ctrl+N`` for an
+        action bound to ``Ctrl+T``, and ``Ctrl+Q`` while the live binding had
+        silently resolved to the ``Exit`` multimedia key.
+        """
         super().__init__(parent)
+        self._shortcuts = shortcuts
         self.setWindowTitle("RCompare Help")
         self.setMinimumSize(760, 560)
         self.setModal(True)
@@ -173,32 +182,37 @@ class AboutDialog(QDialog):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(8)
 
-        shortcuts = [
-            ("Ctrl+N", "Create a new session tab"),
-            ("Ctrl+Q", "Quit application"),
-            ("F5", "Refresh comparison"),
-            ("F7", "Copy selected left -> right"),
-            ("F8", "Copy selected right -> left"),
-            ("Double-click row", "Open/switch to best matching compare view"),
+        # Mouse gestures have no QAction and so cannot come from the registry.
+        gestures = [
+            ("Double-click row", "Open the best matching comparison view"),
             ("Right-click row", "Open context commands"),
         ]
+        shortcuts = list(self._shortcuts) if self._shortcuts is not None else []
+        rows = shortcuts + gestures
 
         grid.addWidget(QLabel("<b>Shortcut</b>", w), 0, 0)
         grid.addWidget(QLabel("<b>Action</b>", w), 0, 1)
-        for i, (key, desc) in enumerate(shortcuts, start=1):
+        for i, (key, desc) in enumerate(rows, start=1):
             k = QLabel(key, w)
             k.setStyleSheet("font-family: monospace;")
             grid.addWidget(k, i, 0)
             grid.addWidget(QLabel(desc, w), i, 1)
 
         notes = QLabel(
-            "Tip: Filter settings and options are stored per user and restored on startup.",
+            "This table is generated from the application's live actions, so it "
+            "always matches the bindings in the menus.",
             w,
         )
         notes.setWordWrap(True)
-        grid.addWidget(notes, len(shortcuts) + 2, 0, 1, 2)
+        grid.addWidget(notes, len(rows) + 2, 0, 1, 2)
 
+        self._shortcut_rows = rows
         return w
+
+    @property
+    def shortcut_rows(self) -> list[tuple[str, str]]:
+        """The rendered keyboard table (used by tests)."""
+        return list(self._shortcut_rows)
 
     def _build_system_tab(self) -> QWidget:
         w = QWidget(self)

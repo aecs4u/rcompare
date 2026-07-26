@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -30,6 +31,8 @@ class ShortcutsDialog(QDialog):
         self.setMinimumSize(640, 480)
         self._main_window = main_window
         self._changes: dict[str, QKeySequence] = {}
+        self._actions: list[QAction] = []
+        self._originals: dict[QAction, QKeySequence] = {}
 
         layout = QVBoxLayout(self)
 
@@ -118,6 +121,8 @@ class ShortcutsDialog(QDialog):
         shortcut = action.shortcut().toString() if action.shortcut() else ""
         item = QTreeWidgetItem(parent, [name, shortcut])
         item.setData(0, Qt.ItemDataRole.UserRole, action)
+        self._actions.append(action)
+        self._originals[action] = action.shortcut()
 
     def _on_item_changed(self, current: QTreeWidgetItem | None, _prev: QTreeWidgetItem | None) -> None:
         """Enable editor when an action item is selected."""
@@ -189,3 +194,47 @@ class ShortcutsDialog(QDialog):
                     child.setHidden(not visible)
                     any_visible = any_visible or visible
             menu_item.setHidden(not any_visible)
+
+    def accept(self) -> None:
+        """Reject duplicate bindings before committing the live edits."""
+        by_shortcut: dict[str, list[str]] = {}
+        for action in self._actions:
+            sequence = action.shortcut()
+            if sequence.isEmpty():
+                continue
+            chord = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+            by_shortcut.setdefault(chord, []).append(
+                action.text().replace("&", "").strip()
+            )
+        collisions = {
+            chord: labels
+            for chord, labels in by_shortcut.items()
+            if len(labels) > 1
+        }
+        if collisions:
+            details = "\n".join(
+                f"{chord}: {', '.join(labels)}"
+                for chord, labels in sorted(collisions.items())
+            )
+            QMessageBox.warning(
+                self,
+                "Shortcut Collision",
+                f"Each shortcut must be unique:\n\n{details}",
+            )
+            return
+        super().accept()
+
+    def reject(self) -> None:
+        """Restore shortcuts changed through Apply/Clear when Cancel is used."""
+        for action, sequence in self._originals.items():
+            action.setShortcut(sequence)
+        super().reject()
+
+    def shortcut_map(self) -> dict[str, str]:
+        """Return persisted action-label to portable shortcut mappings."""
+        return {
+            action.text().replace("&", "").strip(): action.shortcut().toString(
+                QKeySequence.SequenceFormat.PortableText
+            )
+            for action in self._actions
+        }

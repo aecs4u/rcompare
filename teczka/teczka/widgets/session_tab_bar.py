@@ -75,9 +75,12 @@ QTabBar::tab:hover:!selected {
 }
 QTabBar::close-button {
     subcontrol-position: right;
-    image: none;
+    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-closetab-16.png);
     border: none;
     padding: 0px;
+}
+QTabBar::close-button:hover {
+    image: url(:/qt-project.org/styles/commonstyle/images/standardbutton-closetab-hover-16.png);
 }
 """
 
@@ -136,6 +139,7 @@ class SessionTabBar(QWidget):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
 
+        self._tab_bar.setAccessibleName("Comparison sessions")
         self._tab_bar.currentChanged.connect(self.session_changed)
         self._tab_bar.tabCloseRequested.connect(self.session_close_requested)
 
@@ -145,6 +149,7 @@ class SessionTabBar(QWidget):
         self._add_button = QToolButton()
         self._add_button.setText("+")
         self._add_button.setToolTip("New session")
+        self._add_button.setAccessibleName("New session")
         self._add_button.setFixedSize(24, 24)
         self._add_button.setStyleSheet(_ADD_BUTTON_STYLE)
         self._add_button.clicked.connect(self.new_session_requested)
@@ -157,6 +162,8 @@ class SessionTabBar(QWidget):
         # --- Compare button ---
         self._compare_button = QPushButton("Compare")
         self._compare_button.setStyleSheet(_COMPARE_BUTTON_STYLE)
+        self._compare_button.setAccessibleName("Compare")
+        self._compare_button.setDefault(True)
         self._compare_button.clicked.connect(self.compare_requested)
 
         layout.addWidget(self._compare_button, 0)
@@ -164,6 +171,7 @@ class SessionTabBar(QWidget):
         # --- Stop button ---
         self._stop_button = QPushButton("Stop")
         self._stop_button.setStyleSheet(_STOP_BUTTON_STYLE)
+        self._stop_button.setAccessibleName("Stop comparison")
         self._stop_button.clicked.connect(self.stop_requested)
         self._stop_button.setVisible(False)
 
@@ -193,6 +201,21 @@ class SessionTabBar(QWidget):
         """Update the label text for the tab at *index*."""
         if 0 <= index < self._tab_bar.count():
             self._tab_bar.setTabText(index, name)
+
+    def set_compare_enabled(self, enabled: bool, reason: str = "") -> None:
+        """Enable/disable the primary Compare button.
+
+        Offering Compare before both paths and the CLI are available produces
+        a modal error instead of a comparison; *reason* explains the block on
+        hover rather than leaving the disabled state unexplained.
+        """
+        self._compare_button.setEnabled(enabled)
+        self._compare_button.setToolTip(reason)
+
+    @property
+    def count(self) -> int:
+        """Number of session tabs."""
+        return self._tab_bar.count()
 
     def set_comparing(self, active: bool) -> None:
         """Toggle between Compare and Stop button visibility.

@@ -228,6 +228,16 @@ class ProfilesDialog(QDialog):
         right_name = Path(self._right_path).name if self._right_path else "right"
         return f"{left_name} <> {right_name}"
 
+    def _persisted(self, saved: bool) -> bool:
+        if saved:
+            return True
+        QMessageBox.warning(
+            self,
+            "Profile Not Saved",
+            self._manager.last_save_error or "The profile file could not be written.",
+        )
+        return False
+
     def _on_save_current(self) -> None:
         if not self._left_path.strip() and not self._right_path.strip():
             QMessageBox.information(
@@ -255,8 +265,8 @@ class ProfilesDialog(QDialog):
             hash_verification=self._hash_verification,
             last_used=datetime.now().isoformat(),
         )
-        self._manager.add(profile)
-        self._refresh_list()
+        if self._persisted(self._manager.add(profile)):
+            self._refresh_list()
 
     def _on_rename(self) -> None:
         profile = self._selected_profile()
@@ -271,8 +281,8 @@ class ProfilesDialog(QDialog):
         if not ok or not name.strip():
             return
         profile.name = name.strip()
-        self._manager.update(profile)
-        self._refresh_list()
+        if self._persisted(self._manager.update(profile)):
+            self._refresh_list()
 
     def _on_duplicate(self) -> None:
         profile = self._selected_profile()
@@ -288,8 +298,8 @@ class ProfilesDialog(QDialog):
             hash_verification=profile.hash_verification,
             last_used=datetime.now().isoformat(),
         )
-        self._manager.add(copy_profile)
-        self._refresh_list()
+        if self._persisted(self._manager.add(copy_profile)):
+            self._refresh_list()
 
     def _on_load(self) -> None:
         profile = self._selected_profile()
@@ -297,7 +307,8 @@ class ProfilesDialog(QDialog):
             QMessageBox.information(self, "Load Profile", "No profile selected.")
             return
         profile.last_used = datetime.now().isoformat()
-        self._manager.update(profile)
+        if not self._persisted(self._manager.update(profile)):
+            return
         self._loaded_profile_id = profile.id
         self.profile_loaded.emit(profile.left_path, profile.right_path)
         self.accept()
@@ -315,7 +326,8 @@ class ProfilesDialog(QDialog):
             QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
-            self._manager.delete(profile.id)
+            if not self._persisted(self._manager.delete(profile.id)):
+                return
             if self._loaded_profile_id == profile.id:
                 self._loaded_profile_id = None
             self._refresh_list()

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableView,
     QVBoxLayout,
@@ -308,10 +309,16 @@ class HexView(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
 
+        # The title label must not absorb vertical space: with both children
+        # at stretch 0 the label's Preferred policy let it grow and pushed the
+        # hex panes to the bottom of the view.
+        title = QLabel("<b>Hex Compare</b>")
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.addWidget(QLabel("<b>Hex Compare</b>"))
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(title, 0)
+        main_layout.addWidget(splitter, 1)
 
     # ------------------------------------------------------------------
     # Public API
