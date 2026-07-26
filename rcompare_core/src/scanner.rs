@@ -54,6 +54,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::debug;
 
+/// How many walked entries between progress callbacks during a scan.
+///
+/// Small enough that the count visibly moves on a slow network mount, large
+/// enough that the callback is noise next to the `statx` each entry already
+/// costs.
+pub const SCAN_PROGRESS_INTERVAL: usize = 512;
+
 /// A single non-fatal problem encountered while scanning, e.g. a file that
 /// vanished between being listed and being stat'd, or a permission error.
 ///
@@ -198,7 +205,28 @@ impl FolderScanner {
         root: &Path,
         cancel: Option<&AtomicBool>,
     ) -> Result<ScanOutcome, RCompareError> {
+        self.scan_with_progress(root, cancel, None)
+    }
+
+    /// Scan a directory, reporting how many entries have been walked so far.
+    ///
+    /// `on_progress` is invoked every [`SCAN_PROGRESS_INTERVAL`] entries and
+    /// once more at the end. Directory traversal dominates the cost of
+    /// comparing large trees, and without this the caller has no way to tell a
+    /// long walk from a hung one: a 2.7 TB pair produced no output at all for
+    /// over four minutes before this existed.
+    ///
+    /// The total is not known until the walk finishes, so the callback
+    /// receives a running count rather than a fraction.
+    /// The callback is `Sync` because callers scan both sides concurrently.
+    pub fn scan_with_progress(
+        &self,
+        root: &Path,
+        cancel: Option<&AtomicBool>,
+        on_progress: Option<&(dyn Fn(usize) + Sync)>,
+    ) -> Result<ScanOutcome, RCompareError> {
         let mut outcome = ScanOutcome::default();
+        let mut walked: usize = 0;
 
         let root_buf = root.to_path_buf();
         let custom_ignore = self.custom_ignore.clone();
@@ -220,6 +248,15 @@ impl FolderScanner {
         for entry in walker {
             if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 return Err(RCompareError::Comparison("Scan cancelled".to_string()));
+            }
+
+            // Counted before filtering so the number keeps moving even through
+            // stretches that yield no kept entries (pruned or erroring dirs).
+            walked += 1;
+            if walked % SCAN_PROGRESS_INTERVAL == 0 {
+                if let Some(report) = on_progress {
+                    report(walked);
+                }
             }
 
             let entry = match entry {
@@ -295,6 +332,12 @@ impl FolderScanner {
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
                 is_dir,
             });
+        }
+
+        // Final tick so the caller's last displayed count matches reality
+        // rather than the most recent multiple of the interval.
+        if let Some(report) = on_progress {
+            report(walked);
         }
 
         debug!(

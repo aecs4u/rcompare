@@ -87,6 +87,7 @@ pub(crate) fn run_scan(
     columns: bool,
     image_diff: bool,
     csv_diff: bool,
+    csv_key: Vec<String>,
     excel_diff: bool,
     json_diff: bool,
     yaml_diff: bool,
@@ -260,12 +261,30 @@ pub(crate) fn run_scan(
         None
     };
 
+    // Directory traversal dominates wall time on large trees, and it used to
+    // emit nothing: a 2.7 TB pair ran for over four minutes with no output and
+    // no way to distinguish a slow walk from a hang. Report the running count.
+    let left_progress = |done: usize| emit_json_progress(ScanStage::ScanningLeft, done, 0);
+    let right_progress = |done: usize| emit_json_progress(ScanStage::ScanningRight, done, 0);
+
     let (left_outcome, right_outcome) = if scan_jobs > 1 {
         std::thread::scope(|scope| {
-            let left_task =
-                scope.spawn(|| scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref())));
-            let right_task = scope
-                .spawn(|| scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref())));
+            let left_task = scope.spawn(|| {
+                scan_source_with_progress(
+                    &left_scanner,
+                    &left_source,
+                    Some(stop_flag.as_ref()),
+                    Some(&left_progress),
+                )
+            });
+            let right_task = scope.spawn(|| {
+                scan_source_with_progress(
+                    &right_scanner,
+                    &right_source,
+                    Some(stop_flag.as_ref()),
+                    Some(&right_progress),
+                )
+            });
             let left_result = left_task.join().map_err(|_| "left scan worker panicked")?;
             let right_result = right_task
                 .join()
@@ -274,8 +293,18 @@ pub(crate) fn run_scan(
         })?
     } else {
         (
-            scan_source(&left_scanner, &left_source, Some(stop_flag.as_ref()))?,
-            scan_source(&right_scanner, &right_source, Some(stop_flag.as_ref()))?,
+            scan_source_with_progress(
+                &left_scanner,
+                &left_source,
+                Some(stop_flag.as_ref()),
+                Some(&left_progress),
+            )?,
+            scan_source_with_progress(
+                &right_scanner,
+                &right_source,
+                Some(stop_flag.as_ref()),
+                Some(&right_progress),
+            )?,
         )
     };
 
@@ -812,7 +841,9 @@ pub(crate) fn run_scan(
     // CSV-specific analysis if enabled
     #[cfg(feature = "csv-diff")]
     if csv_diff {
-        let csv_engine = CsvDiffEngine::new();
+        // An empty key list leaves the engine in its positional RowByRow
+        // default; with_key_columns() flips it to ByKey.
+        let csv_engine = CsvDiffEngine::new().with_key_columns(csv_key.clone());
 
         let csv_count = csv_candidates.len();
 
@@ -2301,8 +2332,20 @@ pub(crate) fn scan_source(
     source: &ScanSource,
     cancel: Option<&AtomicBool>,
 ) -> Result<rcompare_core::ScanOutcome, rcompare_common::RCompareError> {
+    scan_source_with_progress(scanner, source, cancel, None)
+}
+
+/// As [`scan_source`], but reporting entries walked so far while the scan runs.
+///
+/// The callback may be invoked from either scan thread, so it must be `Sync`.
+pub(crate) fn scan_source_with_progress(
+    scanner: &FolderScanner,
+    source: &ScanSource,
+    cancel: Option<&AtomicBool>,
+    on_progress: Option<&(dyn Fn(usize) + Sync)>,
+) -> Result<rcompare_core::ScanOutcome, rcompare_common::RCompareError> {
     match source {
-        ScanSource::Local { root } => scanner.scan_with_cancel(root, cancel),
+        ScanSource::Local { root } => scanner.scan_with_progress(root, cancel, on_progress),
         ScanSource::Vfs { vfs, root } => scanner.scan_vfs_with_cancel(vfs.as_ref(), root, cancel),
     }
 }
