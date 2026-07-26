@@ -3,7 +3,7 @@
 Last verified against source: 2026-07-25. Replaces `DEVELOPMENT_STATUS.md` and
 `COMPLIANCE_MATRIX.md` (both deleted this pass — they had drifted from source;
 see `CHANGELOG.md`). For what's left to build, see
-[docs/roadmap.md](roadmap.md). For per-crate detail, see [docs/modules/](modules/).
+[docs/PLAN.md](PLAN.md). For per-crate detail, see [docs/modules/](modules/).
 
 ## Workspace
 
@@ -36,7 +36,7 @@ see `CHANGELOG.md`). For what's left to build, see
 The single biggest gap pattern in the project right now, not a missing-feature
 problem: archive write, cloud VFS, Union/Filtered VFS, and the resumable-copy
 checkpoint engine all exist and are tested in `rcompare_core`, but nothing in
-`rcompare_cli` or `teczka` calls them. See [docs/roadmap.md §1](roadmap.md#1-highest-value-near-term-work-wiring-not-new-features)
+`rcompare_cli` or `teczka` calls them. See [docs/PLAN.md §1](PLAN.md#a1-highest-value-near-term-work-wiring-not-new-features)
 for the prioritized list — this is the fastest path to closing remaining
 competitive gaps.
 
@@ -46,7 +46,7 @@ SQLite index for very large trees, watch mode, semantic/AST diff, connection
 pooling/retry for SSH/cloud, snapshot VFS, ISO support, `.zst` compression,
 GCS/Azure/Dropbox/OneDrive backends, HTML/JUnit/Markdown report export,
 unified JSON schema v2, `--progress-json`/`--ndjson` streaming, property-based/
-fuzz testing. Full list with impact ratings in [docs/roadmap.md](roadmap.md).
+fuzz testing. Full list with impact ratings in [docs/PLAN.md](PLAN.md).
 
 ## Known weak spots
 

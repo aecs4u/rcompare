@@ -1,16 +1,244 @@
-# Development Plan
+# RCompare — Work Plan
 
-Created: 2026-07-25. Initial source review at commit `c17ea5d`; the runtime
-design-review addendum was verified against the 2026-07-25 working tree.
+**Single source of truth for what's left and how it gets done.**
+Consolidated 2026-07-26 from `docs/roadmap.md` (scope) and
+`docs/development-plan.md` (sequencing), which this file replaces, plus the
+open GitHub issues and pull requests. Both predecessors are in git history at
+`58507eb` if you need the split view.
 
-**Scope authority**: [FEATURE_COMPARISON.md](../FEATURE_COMPARISON.md) defines
-*what* parity means; [roadmap.md](roadmap.md) is the maintained list of *what's
-left*. This document is neither — it is the **execution plan**: how the
-remaining work is sequenced into shippable increments, what each increment
-touches, and how we know it's done. When scope changes, update `roadmap.md`;
-when sequencing changes, update this file.
+Scope last verified against source 2026-07-25; §7 of the scope ledger and
+Phase 9 were added 2026-07-26 from the Beyond Compare configuration-surface
+study. Competitor baseline is
+[FEATURE_COMPARISON.md](../FEATURE_COMPARISON.md).
 
-## The central finding that shapes this plan
+## How to use this file
+
+| You want to know | Read |
+|---|---|
+| What is still missing, and how much it matters | [§A Scope ledger](#a-scope-ledger--what-is-left) |
+| What is being worked on now, in what order | [§C Execution plan](#c-execution-plan) |
+| What is tracked on GitHub | [§B Issues and pull requests](#b-github-issues-and-pull-requests) |
+| Whether a work item is finished | [§E Definition of done](#e-definition-of-done) |
+
+**Maintenance rule** (inherited from the two predecessor docs, and the reason
+they existed separately): the scope ledger carries **status flags** and is
+updated only after checking against source; the execution plan carries
+**sequencing and acceptance criteria**. When you finish a work item, update
+both the ledger flag and the phase entry — they are now adjacent, so there is
+no excuse for drift. Do not start a new standalone gaps/roadmap document; a
+previous audit found three of them disagreeing with each other and with the
+source.
+
+Status legend: ✅ Done · 🔌 Built but unwired · 🚧 Partial · ❌ Missing.
+
+---
+
+## A. Scope ledger — what is left
+
+The fastest path to parity is **wiring what already exists**, not new
+features. A source audit found the recurring pattern that shapes everything
+below: real, tested `rcompare_core` APIs that nothing in `rcompare_cli` or
+`teczka` calls. Six such items were found; two have since been closed
+(EXIF display, key-based CSV alignment), and the remaining four all share the
+single blocker described in [§C](#c-execution-plan).
+
+### A.1 Highest-value near-term work (wiring, not new features)
+
+These are the fastest path to real parity gains — the engines already exist
+and are tested; they're just not reachable from the CLI or GUI.
+
+1. **Wire archive write (ZIP/TAR/7Z) into `rcompare_cli sync`/`copy` and
+   teczka.** `WritableZipVfs`/`WritableTarVfs`/`Writable7zVfs` are done and
+   tested in `rcompare_core::vfs::archive` but have zero callers outside
+   their own tests. See [docs/modules/rcompare_core.md](modules/rcompare_core.md).
+   Impact: high (this is table-stakes for BC/WinMerge-style archive sync).
+2. **Wire `ResumableCopy` into `sync`/`copy`.** The checkpoint/resume engine
+   in `rcompare_core::resumable_copy` (554 lines, tested) has zero callers
+   from `rcompare_cli`. Impact: high — "resume interrupted sync" is currently
+   listed as a Beyond Compare advantage in FEATURE_COMPARISON.md purely
+   because of this wiring gap, not a missing capability.
+3. **Wire cloud VFS (S3/SFTP/WebDAV) into CLI path parsing and teczka's path
+   bar** (e.g. `s3://bucket/path`, `sftp://host/path`). All three backends
+   are fully implemented in `rcompare_core::vfs` but unreachable from either
+   frontend. Impact: high — "full remote source parity in desktop UI" is the
+   #1 item Beyond Compare still wins on, and the gap is wiring, not code.
+4. **Fix the three WebDAV bugs** before wiring it up per #3: digest auth
+   silently falls back to Basic; PROPFIND parsing is substring search, not a
+   real XML parser; `parse_date()` always returns `now()` so mtimes are never
+   actually read from the server. See
+   [docs/modules/rcompare_core.md](modules/rcompare_core.md). Impact:
+   correctness bug, not just a gap — shipping this wired-but-unfixed would be
+   worse than leaving it unwired.
+5. **Wire Union/Filtered VFS** (`rcompare_core::vfs::virtual_vfs`) into CLI or
+   GUI — real, tested, currently reachable only via direct core API use.
+   Impact: medium.
+6. ~~**Fix teczka's drag-and-drop >2-path truncation**~~ ✅ Done 2026-07-26
+   (WI-5.6): the first two paths are still the ones compared, but the
+   discarded ones are now named in the status bar.
+
+### A.2 rcompare_core (net-new)
+
+| Item | Status | Impact |
+|---|---|---|
+| Connection pooling / retry+backoff for SSH & cloud backends | ❌ | Medium — needed before #3 above is production-ready at scale |
+| Snapshot VFS | ❌ | Medium |
+| SQLite-backed index for 1M+ file trees | ❌ | Medium — current in-memory HashMap model is fine up to ~100k files |
+| ISO image read support | ❌ | Low |
+| `.zst` (Zstandard) single-file compression | ❌ | Low — `.gz`/`.bz2`/`.xz` already work |
+| RAR write support / password-protected RAR | ❌ | Low — read-only RAR already covers the common case |
+| Additional cloud providers (GCS, Azure Blob, Dropbox, OneDrive) | ❌ | Low — S3/SFTP/WebDAV cover the common cases; niche vs. dedicated sync tools |
+| Watch mode (continuous directory monitoring) | ❌ | Low |
+| Semantic/AST-based diff (refactor-aware) | ❌ | Low/experimental |
+| Git-repository VFS | ❌ | Low — dedicated VCS tools already cover this well |
+
+### A.3 rcompare_cli
+
+| Item | Status | Impact |
+|---|---|---|
+| Structured progress streaming (`--progress-json`/`--ndjson`) | ❌ | Medium — needed for GUI/CI integration beyond the current terminal-only bar |
+| Unified JSON schema v2 across commands | ❌ | Medium — each command currently versions its own `1.x` schema independently |
+| Report export: HTML/Markdown/JUnit XML | ❌ | Medium — only JSON + human text exist; teczka's GUI has CSV export but there's no CLI equivalent |
+| Resumable sync/copy checkpoints, transaction log | 🔌 engine exists, unwired | See §1.2 |
+| Cancellation | 🚧 | Scan-level Ctrl+C works (`ctrlc` → `AtomicBool` → `scan_vfs_with_cancel`); no resumable checkpoint for interrupted sync/copy |
+
+### A.4 teczka (GUI)
+
+| Item | Status | Impact |
+|---|---|---|
+| KDE/Plasma compliance | 🚧 ~40% (baseline was 5%, target ≥90%) | High — see [docs/KDE_COMPLIANCE.md](KDE_COMPLIANCE.md), single largest open GUI-quality gap. WS3 Shortcuts is now test-enforced; WS5 Desktop (0/17) and WS4 Dialogs (0/12) are untouched |
+| Automated GUI test coverage | 🚧 improving (11 files, ~205 tests, `pytest-qt`) | Medium — shortcut collisions, filter state, visible shell, session/document lifecycle, Settings round-trip and contrast are covered. Merge view, sync/export/profile dialogs and screenshot regression are not (WI-6.6) |
+| `MainWindow` structural refactor | ❌ 3,400 lines, 139 methods | High — Phase 6 of the development plan; the Phase 5 contracts above are the seams it should be extracted along |
+| Palette-derived theming | 🚧 partial | High — the theme selector now works and applies at startup, but `resources/themes.py` still holds 390 hardcoded hex colours and zero `palette(...)` references (WI-7.1) |
+| Syntax highlighting | ❌ no `QSyntaxHighlighter` | Medium (WI-7.3) |
+| Merge-view source-pane colouring | ❌ only the output pane is tinted | Medium — the diff data is already computed; this is a rendering gap (WI-7.2) |
+| Localizer adoption | ❌ `localizer.py` + 152 `.ftl` lines, zero call sites | Medium — adopt or delete (WI-7.7) |
+| Cloud/archive-write sources reachable from GUI | 🔌 depends on §1.1/§1.3 | High |
+| ~~Drag-and-drop >2-path handling~~ | ✅ Done 2026-07-26 | — |
+| ~~EXIF differences shown in the image view~~ | ✅ Done 2026-07-26 (WI-5.5) | — |
+| ~~Key-based CSV row alignment~~ | ✅ Done 2026-07-26 (WI-5.3) — `--csv-key` plus a GUI key selector | — |
+| ~~Hidden widgets owning visible state~~ | ✅ Done 2026-07-26 (WI-5.7/5.9) | — |
+
+Already done and should **not** be re-added to future gap lists without
+re-verifying against source first: multi-tab sessions, session profiles,
+sync-preview dialog, three-way merge UI (independent `difflib`-based line
+diff, not just a display of the core engine's tree-level plan), synced
+scrolling + gutter map, hex viewer, drag-and-drop (modulo the bug above). See
+[docs/modules/teczka.md](modules/teczka.md).
+
+### A.5 Competitive gaps vs. named tools (from FEATURE_COMPARISON.md)
+
+| Feature | Competitor | Status | Impact |
+|---|---|---|---|
+| Full remote-source parity in desktop UI | Beyond Compare | 🔌 — see §1.3 | High |
+| Resume interrupted sync | Beyond Compare | 🔌 — see §1.2 | High |
+| MP3/audio tag comparison | Beyond Compare | ❌ | Low — niche |
+| Windows Registry comparison | Beyond Compare | ❌ | Low — Windows-only niche |
+| Immediate production-grade 3-way merge UX | Beyond Compare / KDiff3 | 🚧 — teczka's merge view is real but young/undertested (§4) | Medium |
+
+RCompare's differentiators that competitors lack (unchanged from
+FEATURE_COMPARISON.md, still accurate): memory-safe Rust core, strong JSON
+CLI automation, open-source auditability, native `.gitignore` handling.
+
+### A.6 Testing / CI
+
+| Item | Status | Impact |
+|---|---|---|
+| Multi-platform CI for core/CLI test matrix | 🚧 Linux-only in `ci.yml`; Windows/macOS only exercised at release time (`release.yml`) | Medium |
+| Property-based testing (`proptest`) | ❌ | Low |
+| Fuzz testing (patch/CSV/etc. parsers) | ❌ | Low |
+| teczka automated coverage | 🚧 — see §4 | Medium |
+
+### A.7 Configuration-surface parity vs. Beyond Compare
+
+Added 2026-07-26 from a systematic study of what Beyond Compare 5.2.4 lets a
+user *configure* — all 11 `Tools > Options` pages, the per-type Session
+Settings dialogs and the File Formats editor. Evidence: 62 screenshots in
+[`.playwright-mcp/bcompare/`](../.playwright-mcp/bcompare/); analysis in
+[BCOMPARE_GUI_CONFIG_COMPARISON.md](BCOMPARE_GUI_CONFIG_COMPARISON.md);
+sequencing in [§C Phase 9](#phase-9--beyond-compare-configuration-parity).
+
+This is net-new scope, not repair — none of it is a defect. Roughly half needs
+`rcompare_core`/CLI support before teczka can expose anything, marked below.
+
+| Item | Side | Status | Impact |
+|---|---|---|---|
+| **File-format grammars + "ignore unimportant differences"** — 24 formats, each defining Keyword/Identifier/Number/String/Comment/Operator as regexes, plus line weights and an importance mask | core → CLI → GUI | ❌ | **High** — the largest single capability gap; it is why BC reports a comment-only change as *equal*. Shares a tokeniser with syntax highlighting (WI-7.3) — build once (WI-9.5) |
+| **Settings scope selector** — "this view only" / session / defaults | GUI | ❌ | High — `SessionState` already stores per-tab settings; only the user-facing half is missing, and every other item here needs somewhere to live (WI-9.1) |
+| **Comparison criteria** — timestamp tolerance (seconds), ignore DST, ignore timezone, filename case, Unicode normalisation alignment, Unix permissions/owner/group, CRC vs binary vs rules-based content compare | core → CLI → GUI | ❌ | High — teczka covers ~4 of BC's ~40 session settings. Timestamp tolerance alone removes false differences on FAT/exFAT and network filesystems (WI-9.2) |
+| **Structured name filters** — include/exclude × files/folders as four independent lists, with reusable presets; plus rule-based size/date/attribute filters | core → CLI → GUI | ❌ | High — teczka has one flat `ignore_patterns` list. `.gitignore` handling stays a differentiator BC lacks (WI-9.3) |
+| **Configurable text alignment** — Unaligned / Standard / Myers O(ND) / Patience Diff, skew tolerance, closeness matching; plus per-session replacements and folder-level alignment overrides | core → CLI → GUI | ❌ | Medium — Patience notably improves reordered-block output (WI-9.6) |
+| **Table/CSV parsing controls** — delimiters, text qualifier, fixed-width, consecutive-delimiter handling, first-line-contains; Regional decimal/thousands separator and date order | core → CLI → GUI | ❌ | Medium — current fixed assumptions misparse Italian-locale data (`1.234,56`, DMY) (WI-9.7) |
+| **Remote connection profiles** — named FTP/SFTP/SSH connections, SSH key and SSL certificate paths, per-profile ASCII masks | GUI, needs §1.3 | ❌ | Medium — the credential store the GUI's URL support requires; keyring only, never in `pyside.json` (WI-9.8) |
+| **Workspaces** — a named set of open sessions, loaded/saved as a unit | GUI | ❌ | Medium — teczka has sessions and profiles but no grouping (WI-9.4) |
+| **Global preferences parity** — File Operations confirmations, Backups, Next Difference, Startup, Tabs, Text Editing, Archive Types, Open With | GUI | ❌ | Medium — 8 of BC's 11 preference pages have no teczka counterpart. Each toggle needs a consumer before it ships (WI-9.9) |
+| **Command customisation** — per-view menu placement, toolbar placement and shortcut | GUI | 🚧 shortcuts only | Low — shortcut persistence landed in Phase 5; placement control depends on whether a toolbar returns (WI-9.10) |
+| **Settings portability** — export/import settings, restore factory defaults | GUI | ❌ | Medium — cheap on the existing JSON config; must exclude credentials (WI-9.11) |
+| **View menu completions** — Columns (8 selectable fields), Legend, Suppress Filters, Log panel | GUI | ❌ | Low–Medium — Columns and Legend are near-free: column visibility/order already works and `color_legend.py` already exists (WI-9.12) |
+
+Not surveyed, and therefore not scoped above: Session Settings for Folder
+Merge, Folder Sync, Text Merge, Hex, Media and Picture Compare (they reuse the
+Folder and Text Compare tab structures), and the contents of Table Compare's
+Sheets/Columns/Rows tabs.
+
+### A.8 Out of scope / intentionally deferred
+
+Plugin/extension system, REST/gRPC API server, per-platform shell
+integrations (Finder/Explorer/Nautilus extensions) — none started, all low
+priority relative to the wiring work in §1. Not tracked further here unless
+someone requests them.
+
+---
+
+## B. GitHub issues and pull requests
+
+State as of 2026-07-26. Neither predecessor document tracked these, so they
+were invisible to planning; that is the main thing consolidation buys.
+
+### Open issues (1)
+
+| # | Title | Assessment |
+|---|---|---|
+| [#26](https://github.com/aecs4u/rcompare/issues/26) | Unable to run examples | **Valid and reproduced.** `cargo run --example specialized_formats` fails with *"no example target named `specialized_formats` in default-run packages"*. Root `Cargo.toml` is a **virtual manifest** — `[workspace]` with four members and no `[package]` — so the four files in `examples/` (`basic_comparison`, `archive_comparison`, `specialized_formats`, `cloud_storage_example`) belong to no crate and Cargo cannot build them. README.md:506–525 documents the failing commands. Scheduled as **WI-0.5** |
+
+The reporter is a real user ("I have been able to use the rcompare app and am
+quite happy with it"), and this is the only user-filed issue in the tracker.
+It is a documentation-or-layout bug of a few hours; it should not be sitting
+open while 30-day GUI phases are planned around it. Fix it first.
+
+### Open pull requests (16)
+
+| Author | Count | Disposition |
+|---|---:|---|
+| `dependabot` | 15 | Dependency bumps, oldest from 2026-01-30 — see below |
+| `aecs4u` | 1 | [#2](https://github.com/aecs4u/rcompare/pull/2) *WinMerge Parity Phase 1 + CI/CD Modernization* (`feature/winmerge-parity`) |
+
+**Dependabot backlog (WI-0.6).** Fifteen open bumps, several of them
+majors that will not merge cleanly and at least one with real API churn:
+`zip 0.6.6 → 2.4.2`, `polars 0.46 → 0.52`, `bincode 1.3.3 → 2.0.1`,
+`reqwest 0.12.28 → 0.13.1`, `toml 0.8 → 0.9`, `directories 5 → 6`,
+`native-dialog 0.7 → 0.9.6`, `kamadak-exif 0.5.5 → 0.6.1`,
+`indicatif 0.17 → 0.18.3`, plus a 17-update grouped PR (#25). `zip` and
+`polars` are load-bearing for archive and Parquet comparison respectively, so
+these are not rubber-stamp merges.
+
+Six months of accumulation is itself the problem: every additional week makes
+each bump harder to land. Triage in one sitting — take the patch/minor bumps
+as a batch, then handle `zip`, `polars`, `bincode` and `reqwest` individually
+with the test suite. This also wants the multi-platform CI matrix (WI-0.4) in
+place first, so a bump cannot silently break Windows or macOS.
+
+**PR #2** predates the current branch structure and the last five months of
+work. Decide deliberately: rebase and land it, or close it and let
+`roadmap`/`FEATURE_COMPARISON` carry whatever scope it still represents. An
+open PR that cannot merge is a standing source of confusion about what has
+shipped.
+
+
+---
+
+## C. Execution plan
+
+### The central finding that shapes this plan
 
 `FEATURE_COMPARISON.md` lists five capabilities as 🔌 "engine exists, not
 wired" (archive write, cloud VFS, resumable copy, union VFS, plus GUI reach for
@@ -48,7 +276,7 @@ EXIF differences, and `--csv-key` plus a GUI key selector expose
 cloud VFS, resumable copy, union VFS) remain, and Phase 1 is still their
 single blocker.
 
-## Already completed (2026-07-25)
+### Already completed (2026-07-25)
 
 Fixed while reviewing, so they are not scheduled below: teczka's permanently
 stuck "Comparing..." status bar, clipped path breadcrumbs, the hex view's
@@ -63,11 +291,11 @@ migrated into the visible shell under WI-5.7.
 
 ---
 
-## Phase overview
+### Phase overview
 
 | Phase | Theme | Gates | Est. |
 |---|---|---|---|
-| 0 | Preconditions & correctness debt | — | 3–5 d |
+| 0 | Preconditions & correctness debt (incl. issue #26, dependency backlog) | — | 5–8 d |
 | 1 | VFS-aware mutation path (the unlock) | P0 | 8–13 d |
 | 2 | Backend wiring on top of Phase 1 | P1 | 7–11 d |
 | 3 | Resumable sync/copy | P1 | 4–6 d |
@@ -99,12 +327,12 @@ hard dependency between the Rust and Python tracks.
 
 ---
 
-## Phase 0 — Preconditions and correctness debt
+### Phase 0 — Preconditions and correctness debt
 
 Small, unblocking, and mostly cleanup. Do this first because Phase 2 must not
 ship WebDAV in its current state.
 
-### WI-0.1 — Fix the three WebDAV correctness bugs
+#### WI-0.1 — Fix the three WebDAV correctness bugs
 **Files**: [rcompare_core/src/vfs/webdav.rs](../rcompare_core/src/vfs/webdav.rs)
 
 Three real defects, all confirmed in source:
@@ -130,16 +358,62 @@ servers with differing namespace prefixes; a test asserting a Digest-configured
 client never emits a `Basic` header; a test asserting mtime round-trips from
 a fixture body rather than tracking wall-clock.
 
-### WI-0.2 — Remove the empty `rcompare_gui/` directory
+#### WI-0.2 — Remove the empty `rcompare_gui/` directory
 It is not a workspace member (`Cargo.toml` lists four crates) and contains
 nothing, but its presence contradicts the docs that say the Slint GUI was
 removed. One-line cleanup; prevents recurring "is this still a thing?" churn.
 
-### WI-0.3 — *(moved)*
+#### WI-0.3 — *(moved)*
 teczka's drag-and-drop truncation is now **WI-5.6**, with the rest of the GUI
 correctness work.
 
-### WI-0.4 — Multi-platform CI matrix
+#### WI-0.5 — Make the documented examples runnable (closes issue #26)
+**Files**: `examples/`, root `Cargo.toml`, `README.md:506-525`
+
+The only user-filed issue in the tracker, and reproducible in one command:
+
+```
+$ cargo run --example specialized_formats
+error: no example target named `specialized_formats` in default-run packages
+```
+
+Root `Cargo.toml` is a virtual manifest — `[workspace]` with four members and
+no `[package]` — so the four files under `examples/` belong to no crate and
+Cargo will not build them. README documents the failing invocations.
+
+Pick one and make the docs match:
+
+- **Move** `examples/` into `rcompare_core/examples/`; commands become
+  `cargo run -p rcompare_core --example specialized_formats`. Preferred — the
+  examples exercise core APIs and gain `cargo test --examples` coverage.
+- **Or** keep them at the root and add a thin `[package]` to the workspace
+  manifest. Cheaper, but a package existing only to host examples is a trap
+  for the next contributor.
+
+Whichever is chosen, the examples must compile in CI so this cannot regress
+silently — that is the actual defect here, not the path.
+
+**Acceptance**: every command quoted in README runs against a fixture pair;
+CI builds all examples; issue #26 closed with the working invocation.
+
+#### WI-0.6 — Drain the dependency backlog
+**Files**: `Cargo.toml`, `*/Cargo.toml`
+
+Fifteen open Dependabot PRs, oldest from 2026-01-30. Several are majors with
+real API churn — `zip 0.6 → 2.4`, `polars 0.46 → 0.52`, `bincode 1.3 → 2.0`,
+`reqwest 0.12 → 0.13` — and `zip`/`polars` are load-bearing for archive and
+Parquet comparison. Six months of drift makes each one harder to land, so
+this is decay, not housekeeping.
+
+Sequence it after **WI-0.4**: without the Windows/macOS matrix a bump can
+break a platform silently. Then take patch/minor bumps as one batch and the
+four majors individually, each with the full suite.
+
+**Acceptance**: no Dependabot PR older than one release cycle; `cargo deny` or
+equivalent green; the four majors either merged or closed with a recorded
+reason.
+
+#### WI-0.4 — Multi-platform CI matrix
 **File**: `.github/workflows/ci.yml`
 
 Currently Linux-only; Windows/macOS are exercised only at release time, which
@@ -150,12 +424,12 @@ validated on all three targets as it lands.
 
 ---
 
-## Phase 1 — VFS-aware mutation path *(the unlock)*
+### Phase 1 — VFS-aware mutation path *(the unlock)*
 
 This is the plan's keystone. Everything in Phases 2, 3 and part of 5 is blocked
 on it.
 
-### WI-1.1 — Introduce a `SyncTarget` write handle
+#### WI-1.1 — Introduce a `SyncTarget` write handle
 **Files**: `rcompare_cli/src/commands/support.rs` (new module recommended:
 `commands/target.rs`)
 
@@ -171,7 +445,7 @@ Trash semantics are local-only by definition. `DeleteMode::Trash` against a
 non-local target must fail with an explicit error naming the reason — not fall
 back to permanent deletion. This is a data-loss-shaped decision; make it loud.
 
-### WI-1.2 — Capability negotiation and preflight
+#### WI-1.2 — Capability negotiation and preflight
 **Files**: `commands/target.rs`, `commands/sync.rs`, `commands/copy.rs`
 
 `Vfs::capabilities()` and `is_writable()` already exist and are unused by the
@@ -180,14 +454,14 @@ plan needs, and fail with a single actionable message listing the unsupported
 operations — rather than discovering it halfway through a 40 GB sync. Surface
 the same information through `rcompare capabilities`.
 
-### WI-1.3 — Replace the `is_dir()` gates
+#### WI-1.3 — Replace the `is_dir()` gates
 **Files**: `sync.rs:64`, `copy.rs:44`
 
 Swap the hard local-dir precondition for source/target resolution. Keep the
 error message quality: an unreachable `s3://` bucket should say so, not
 degrade to "not a directory".
 
-### WI-1.4 — Test scaffolding for VFS mutation
+#### WI-1.4 — Test scaffolding for VFS mutation
 **Files**: `rcompare_cli/tests/`
 
 `cli_scan.rs` already constructs `WritableZipVfs`/`WritableTarVfs`/
@@ -201,11 +475,11 @@ legal, tested sync destination.
 
 ---
 
-## Phase 2 — Backend wiring
+### Phase 2 — Backend wiring
 
 Each item is now small because Phase 1 did the structural work.
 
-### WI-2.1 — URL-scheme path parsing
+#### WI-2.1 — URL-scheme path parsing
 **File**: `support.rs:451` (`build_scan_source`)
 
 Today the resolver handles local dirs and archives-by-extension only. Add
@@ -217,7 +491,7 @@ works without per-command special-casing.
 Credentials: environment/config-file only. Do not accept secrets as CLI
 arguments — they leak into shell history and process listings.
 
-### WI-2.2 — Archive write targets
+#### WI-2.2 — Archive write targets
 `WritableZipVfs::create`/`WritableTarVfs::create`/`Writable7zVfs::create` are
 tested and callerless. Wire into target resolution: an archive path as sync
 destination creates or updates in place. Note the atomicity constraint —
@@ -225,12 +499,12 @@ destination creates or updates in place. Note the atomicity constraint —
 sync leaves the original intact (verify this holds, and if it doesn't, write
 via temp-file-plus-rename).
 
-### WI-2.3 — Cloud targets (S3 → SFTP → WebDAV)
+#### WI-2.3 — Cloud targets (S3 → SFTP → WebDAV)
 Land in that order: S3 has the most tests (`tests_cloud.rs`, 1785 lines), SFTP
 is simplest, WebDAV goes last and only after WI-0.1. Each gets an integration
 test against a local mock/container.
 
-### WI-2.4 — Connection pooling, retry, backoff
+#### WI-2.4 — Connection pooling, retry, backoff
 **Files**: `rcompare_core/src/vfs/{s3,sftp,webdav}.rs`
 
 Per-operation connection setup is fine at test scale and pathological at tree
@@ -238,15 +512,15 @@ scale. Add a shared pool plus exponential backoff with jitter on retryable
 errors. Roadmap correctly marks this as a prerequisite for calling WI-2.3
 production-ready — treat it as part of Phase 2, not a follow-up.
 
-### WI-2.5 — Union/Filtered VFS reach
+#### WI-2.5 — Union/Filtered VFS reach
 Expose `UnionVfs`/`FilteredVfs` via repeatable `--overlay <path>` on `scan`.
 Smallest item here; medium value; do it last in the phase.
 
 ---
 
-## Phase 3 — Resumable sync/copy
+### Phase 3 — Resumable sync/copy
 
-### WI-3.1 — Wire `ResumableCopy` into `copy`
+#### WI-3.1 — Wire `ResumableCopy` into `copy`
 **Files**: `rcompare_core/src/resumable_copy.rs` (554 lines, tested, zero
 callers), `commands/copy.rs`
 
@@ -255,18 +529,18 @@ callers), `commands/copy.rs`
 `--checkpoint-dir`, default checkpointing on for transfers above a size
 threshold.
 
-### WI-3.2 — Extend to `sync`
+#### WI-3.2 — Extend to `sync`
 Sync needs a plan-level checkpoint (which actions completed), not just a
 per-file one. Persist the action list at plan time, mark entries complete as
 they execute, and on `--resume` re-validate that the source hasn't changed
 underneath before continuing.
 
-### WI-3.3 — Ctrl+C → checkpoint
+#### WI-3.3 — Ctrl+C → checkpoint
 Cancellation currently works at scan level only (`ctrlc` → `AtomicBool` →
 `scan_vfs_with_cancel`). Extend the same flag into the mutation loop so
 interrupts flush a checkpoint instead of dropping progress.
 
-### WI-3.4 — Checkpoint GC
+#### WI-3.4 — Checkpoint GC
 `cleanup_checkpoints` (resumable_copy.rs:383) exists and is uncalled. Run it on
 successful completion and expose `rcompare sync --clean-checkpoints`.
 
@@ -276,30 +550,30 @@ FEATURE_COMPARISON.md's sync table where Beyond Compare currently wins.
 
 ---
 
-## Phase 4 — CLI automation surface
+### Phase 4 — CLI automation surface
 
 Independent of Phases 1–3; this is where RCompare's stated differentiator
 (machine-readable output) is extended.
 
-### WI-4.1 — JSON schema v2
+#### WI-4.1 — JSON schema v2
 Each command versions its own `1.x` schema independently today. Define one
 envelope — `{schema_version, command, status, summary, data, warnings}` — and
 publish JSON Schema files under `docs/schemas/`. Keep v1 emitting under
 `--schema-version 1` for one release cycle, then deprecate.
 
-### WI-4.2 — Structured progress streaming
+#### WI-4.2 — Structured progress streaming
 `--progress-json` / `--ndjson` emitting scan/compare/sync events to stderr
 while results go to stdout. This is the prerequisite for teczka driving the CLI
 without screen-scraping, and for CI progress reporting.
 
-### WI-4.3 — Report export
+#### WI-4.3 — Report export
 HTML, Markdown, and JUnit XML writers for scan/sync results. JUnit XML is the
 highest-value of the three: it makes `rcompare scan` a first-class CI gate.
 teczka already has CSV export — reuse its column model for consistency.
 
 ---
 
-## Phases 5–7 — teczka
+### Phases 5–7 — teczka
 
 Derived from
 [history/TECZKA_DESIGN_REVIEW.md](history/TECZKA_DESIGN_REVIEW.md) (2026-07-25),
@@ -317,7 +591,7 @@ Phase 5 is small and safe, Phase 6 is invasive and needs the test net built
 first, and Phase 7 contains presentation/accessibility work that can mostly be
 parallelised once Phase 5 has made the visible controls authoritative.
 
-### Runtime design-review addendum (2026-07-25)
+#### Runtime design-review addendum (2026-07-25)
 
 A second, full product-design pass rendered Home, Folder, Text, Image, Table,
 Splash, Settings and Merge at desktop size, with the Home view repeated at the
@@ -335,7 +609,7 @@ operation feedback disagree. The recent visual redesign is ahead of the
 application state architecture: the visible shell coexists with hidden
 compatibility widgets that still own behaviour.
 
-### Measured design baseline
+#### Measured design baseline
 
 These numbers are point-in-time regression markers, not targets:
 
@@ -382,7 +656,7 @@ breadcrumb paths, independent selectable columns and persisted header layouts
 are the reference quality bar. Preserve those behaviours while consolidating
 the shell around them.
 
-### Surface-by-surface target state
+#### Surface-by-surface target state
 
 This matrix carries the complete screen review into implementation rather than
 leaving it as general “polish”:
@@ -400,7 +674,7 @@ leaving it as general “polish”:
 | Settings | Understandable category structure | Persist and apply every exposed field, validate CLI path, make theme live, remove controls with no consumer, remain readable under scale/localisation |
 | Dialogs/feedback | Errors are consistently surfaced | Replace routine modal alerts with visible non-modal feedback; use specific destructive labels; make Sync Preview a structured plan with an unambiguous confirmation boundary |
 
-### Product-wide design principles established by the review
+#### Product-wide design principles established by the review
 
 1. **Visible state is authoritative.** No hidden widget may own navigation,
    filters, progress, persistence or command state.
@@ -417,7 +691,7 @@ leaving it as general “polish”:
 6. **The supported minimum is real.** 800×600 and 125–200% scaling are release
    checks, not aspirational dimensions.
 
-### Beyond Compare configuration-surface study (2026-07-26)
+#### Beyond Compare configuration-surface study (2026-07-26)
 
 A third pass, distinct from the two above: rather than benchmarking teczka's
 *rendered screens*, it enumerated **what Beyond Compare lets a user configure**.
@@ -464,7 +738,7 @@ regression items are carried forward.
 
 ---
 
-## Phase 5 — teczka correctness and contract
+### Phase 5 — teczka correctness and contract
 
 **Status: complete (2026-07-26).** All eleven work items landed with tests;
 see `CHANGELOG.md` `[Unreleased]`. The suite grew from 38 to 205 `pytest-qt`
@@ -493,7 +767,7 @@ Original scope follows.
 
 Small, independent, each verifiable. Nothing here needs the refactor.
 
-### WI-5.1 — Fix the keyboard surface (§2.6) ✅
+#### WI-5.1 — Fix the keyboard surface (§2.6) ✅
 Three separate defects, all verified by walking the live menu tree:
 
 1. **`Ctrl+Q` does not quit.** `main_window.py:227` uses
@@ -516,7 +790,7 @@ About shortcut table matches the actions. This test is the point of the item —
 without it the collisions recur. Update the Collision-Free row in
 `KDE_COMPLIANCE.md` when it passes.
 
-### WI-5.2 — Validate the CLI schema contract (§2.4) ✅
+#### WI-5.2 — Validate the CLI schema contract (§2.4) ✅
 `rcompare_cli` emits `{"schema_version":"1.1.0", …}`; `utils/cli_bridge.py`
 never reads it and parses by direct subscripting (`data["summary"]["total"]`),
 so drift surfaces as a `KeyError` inside a worker thread.
@@ -528,7 +802,7 @@ a message naming both the expected and received versions.
 Landing schema v2 first breaks the GUI with a stack trace. Do this one before
 Phase 4 reaches WI-4.1, regardless of the phase numbering.
 
-### WI-5.3 — Key-based CSV row alignment (§1, "Algorithmic limitation") ✅
+#### WI-5.3 — Key-based CSV row alignment (§1, "Algorithmic limitation") ✅
 `rcompare_core/src/csv_diff.rs:201-204` aligns rows positionally
 (`for i in 0..max_rows`), so a left-only and a right-only row get paired and
 reported as "different", and the summary reports "0 left-only, 0 right-only" —
@@ -544,22 +818,22 @@ and `:466`.
 Impact: this is the only item in Phase 5 that fixes *incorrect output* rather
 than an ergonomic defect. Rank it first if time is short.
 
-### WI-5.4 — Cancellation for `FunctionWorker` (§2.8) ✅
+#### WI-5.4 — Cancellation for `FunctionWorker` (§2.8) ✅
 `workers/function_worker.py` subclasses `QThread` with no cancellation path —
 long parses can only be orphaned, not interrupted. Add a cooperative cancel
 flag checked between work units, and call it from the existing cancel action.
 
-### WI-5.5 — Wire EXIF comparison into the image view (§1) ✅
+#### WI-5.5 — Wire EXIF comparison into the image view (§1) ✅
 `rcompare_core::image_diff` implements `ExifMetadata`/`exif_differences` and
 the CLI exposes `--image-exif`, but `views/image_view.py` never requests or
 displays it. Wire the existing flag through and render the differences table.
 Then restore the `FEATURE_COMPARISON.md` EXIF row to ✅.
 
-### WI-5.6 — Drag-and-drop >2-path truncation ✅
+#### WI-5.6 — Drag-and-drop >2-path truncation ✅
 Previously WI-0.3. `dropEvent` keeps the first two dropped paths and discards
 the rest silently; use the first two **and** say so in the status bar.
 
-### WI-5.7 — Make the visible shell authoritative ✅
+#### WI-5.7 — Make the visible shell authoritative ✅
 **Files**: `teczka/main_window.py`,
 `teczka/widgets/integrated_status_bar.py`
 
@@ -591,7 +865,7 @@ are acceptable during migration; temporary hidden widgets are not.
 4. No hidden widget owns user-visible state.
 5. A source check or unit test rejects new `statusBar().showMessage()` calls.
 
-### WI-5.8 — Repair session/document lifecycle and Merge reachability ✅
+#### WI-5.8 — Repair session/document lifecycle and Merge reachability ✅
 **Files**: `teczka/main_window.py`, `teczka/widgets/session_tab_bar.py`,
 `teczka/widgets/sidebar.py`, `teczka/views/home_view.py`,
 `teczka/models/settings.py`
@@ -626,7 +900,7 @@ leaving Merge. Selecting a profile opens the persisted pair and completing a
 session adds a usable recent entry. No navigation destination or Home item may
 be inert.
 
-### WI-5.9 — Replace split filter/search state with one contract ✅
+#### WI-5.9 — Replace split filter/search state with one contract ✅
 **Files**: `teczka/main_window.py`, `teczka/models/tree_model.py`,
 `teczka/widgets/integrated_status_bar.py`; remove or repurpose
 `teczka/widgets/filter_bar.py`
@@ -656,7 +930,7 @@ not the applied state.
 proxy, menu, footer and persisted session agree; `Ctrl+F` focuses the visible
 contextual search; view changes cannot silently change files-only mode.
 
-### WI-5.10 — Complete Settings/theme/CLI round-trip ✅
+#### WI-5.10 — Complete Settings/theme/CLI round-trip ✅
 **Files**: `teczka/app.py`, `teczka/main_window.py`,
 `teczka/dialogs/settings_dialog.py`, `teczka/resources/themes.py`,
 `teczka/views/text_view.py`
@@ -690,7 +964,7 @@ smoke test proves Light and Dark render differently; an invalid CLI path is
 rejected actionably; every exposed appearance, Diff Options and Files value
 has a reader and a behavioural test.
 
-### WI-5.11 — Fix path-command ownership and contextual action state ✅
+#### WI-5.11 — Fix path-command ownership and contextual action state ✅
 **Files**: `teczka/widgets/compact_path_bar.py`, `teczka/main_window.py`
 
 `CompactPathBar._on_swap_clicked()` swaps locally and emits
@@ -710,7 +984,7 @@ Folder, Text, Image, Hex, Table and Merge.
 
 ---
 
-## Phase 6 — teczka structural refactor
+### Phase 6 — teczka structural refactor
 
 **Status: not started.** Phase 5 deliberately left `MainWindow` large; what it
 changed is that the boundaries the extraction needs now exist and are tested.
@@ -735,7 +1009,7 @@ documents; the typed `FolderFilterState` introduced in WI-5.9; then
 work items below may land in smaller commits, but must preserve this dependency
 order so that refactoring does not recreate hidden state owners.
 
-### WI-6.1 — Characterisation tests before any extraction (§2.8)
+#### WI-6.1 — Characterisation tests before any extraction (§2.8)
 Write tests against current observable behaviour of the logic about to move:
 sync planning, copy/delete paths, session capture/restore, profile save/load.
 These are throwaway scaffolding in the sense that they assert today's
@@ -746,7 +1020,7 @@ document, session count, path/filter state, action enablement, visible status
 message and progress. These are the boundaries most likely to regress when
 the compatibility widgets and `MainWindow` fields disappear.
 
-### WI-6.2 — Extract `SyncController` / `FileOpsController` (§2.2)
+#### WI-6.2 — Extract `SyncController` / `FileOpsController` (§2.2)
 `_plan_sync_actions`, `_sync_local_fallback`, `_copy_paths_local_fallback` and
 `_sync_copy_path` implement file-operation semantics inside a widget class,
 duplicating logic `rcompare_core` already owns and the CLI already exposes.
@@ -760,17 +1034,17 @@ and risk can differ from the plan the user approved. Keep any fallback thin,
 single-purpose and explicitly consented rather than a parallel implementation
 that can drift.
 
-### WI-6.3 — Extract `SessionManager` (§2.2)
+#### WI-6.3 — Extract `SessionManager` (§2.2)
 Tab/session lifecycle: `SessionState`, `_capture_session_state`,
 `_apply_session_state`, `_on_session_changed`, the `_sessions` list and
 `_active_session_index`. Self-contained and highly testable once out.
 
-### WI-6.4 — Extract `MenuBuilder` (§2.2)
+#### WI-6.4 — Extract `MenuBuilder` (§2.2)
 ~600 lines of action construction. Mechanical. Do it last of the three — it
 is the lowest-risk and benefits from the shortcut test from WI-5.1 already
 being in place.
 
-### WI-6.5 — Resolve `AppState` (§2.3)
+#### WI-6.5 — Resolve `AppState` (§2.3)
 204 lines, 10 signals, **0 connections**; paths written at two sites and never
 read while `MainWindow` uses its own `_left_path` in 29 places. Two parallel
 state models, one inert.
@@ -793,7 +1067,7 @@ runtime state. Views consume it but do not persist shadow copies.
 **Acceptance**: no write-only state remains — every `AppState` setter has a
 reader or a connected signal, enforced by a test.
 
-### WI-6.6 — Coverage backfill on the extracted units
+#### WI-6.6 — Coverage backfill on the extracted units
 The real coverage win. Merge view first (youngest, most complex, least
 verified), then the dialogs, then drag-and-drop. Previously WI-5.2.
 
@@ -808,13 +1082,13 @@ Add design-regression coverage alongside functional coverage:
 
 ---
 
-## Phase 7 — teczka presentation and KDE compliance
+### Phase 7 — teczka presentation and KDE compliance
 
 Presentation and accessibility tier. Palette and icon work can begin in
 parallel, but navigation and contextual-chrome items depend on Phase 5 making
 visible state authoritative. Absorbs the former Phase 6.
 
-### WI-7.1 — Palette-derived theming (§2.5)
+#### WI-7.1 — Palette-derived theming (§2.5)
 `resources/themes.py` is 1,531 lines with **390 hardcoded hex colours** and
 **zero** `palette(...)` references; diff colours elsewhere are literals too
 (`hex_view.py:41`). Plasma dark mode, accent colour and high-contrast
@@ -834,20 +1108,20 @@ status.
 
 This is the bulk of KDE **WS2 Theming (1/14)**.
 
-### WI-7.2 — Colour the merge view's source panes (§2.9)
+#### WI-7.2 — Colour the merge view's source panes (§2.9)
 Only the merged output pane is tinted, so the user cannot see which regions
 conflict in Left/Base/Right. The review calls this the single biggest
 usability gap in the app's youngest feature. The diff data is already computed
 (`_merge_lines`, `_opcodes_to_changes`) — this is a rendering gap, not an
 algorithm one.
 
-### WI-7.3 — Syntax highlighting (§1)
+#### WI-7.3 — Syntax highlighting (§1)
 No `QSyntaxHighlighter` exists. Pygments is already a declared dependency via
 PySide6's tooling. Add a highlighter to `widgets/diff_text_edit.py`, composed
 *under* the existing intra-line diff tinting so both render together. Then
 restore the `FEATURE_COMPARISON.md` row.
 
-### WI-7.4 — Complete icon system and fallbacks (§2.6)
+#### WI-7.4 — Complete icon system and fallbacks (§2.6)
 Main menu actions now use `_themed_icon()` in many places, but Home, Sidebar,
 Settings and several secondary controls still call `QIcon.fromTheme()` with
 no fallback. On a platform/session without a complete FreeDesktop theme the
@@ -859,7 +1133,7 @@ an embedded semantic fallback. Audit remaining menu actions, button-only
 controls and application/window icons. Test with an intentionally empty icon
 theme on Linux and on the Windows/macOS CI jobs from WI-0.4.
 
-### WI-7.5 — Unify the navigation model (§2.9)
+#### WI-7.5 — Unify the navigation model (§2.9)
 WI-5.8 restores correct lifecycle mechanics. This item completes the product
 model: one visible tab represents one comparison document/session; its type is
 Folder, Text, Hex, Image, Table or Merge. Home creates those documents and a
@@ -872,7 +1146,7 @@ close affordances consistent, persist open documents deliberately, and expose
 the sidebar's existing expanded mode through a visible control if the rail
 remains.
 
-### WI-7.6 — Folder-view presentation parity (§2.9)
+#### WI-7.6 — Folder-view presentation parity (§2.9)
 - Blank aligned gap for orphan rows instead of rendering the name on both
   sides in the same "different" tint.
 - Per-pane file metadata strip (type, encoding, EOL, size, mtime) as BC has.
@@ -884,12 +1158,12 @@ independent, persisted column visibility/order/width with Name, Size,
 Modified, Status, Extension, Type and Relative Path. Preserve this as the
 reference component while adding the remaining parity items above.
 
-### WI-7.7 — Route strings through the localizer, or remove it (§2.7)
+#### WI-7.7 — Route strings through the localizer, or remove it (§2.7)
 `localizer.py` wraps `fluent.runtime` and `i18n/en/teczka.ftl` holds 152 lines
 of messages, with **zero call sites**. Same failure mode as `AppState`.
 Either adopt it across the UI or delete both. This is KDE **WS6 (1/12)**.
 
-### WI-7.8 — Remaining KDE workstreams
+#### WI-7.8 — Remaining KDE workstreams
 Tracked in [KDE_COMPLIANCE.md](KDE_COMPLIANCE.md); ~35% against a ≥90% target.
 After the items above, sequence the remainder by gap size:
 
@@ -901,7 +1175,7 @@ After the items above, sequence the remainder by gap size:
 Update the score table in `KDE_COMPLIANCE.md` as each workstream lands — that
 doc's numbers are the acceptance criteria.
 
-### WI-7.9 — Remote/archive sources in the GUI
+#### WI-7.9 — Remote/archive sources in the GUI
 Depends on **WI-2.1**. Accept the URL syntax in teczka's path bar and file
 dialogs, with credentials from the platform keyring. Resolution runs off the
 GUI thread.
@@ -911,12 +1185,12 @@ portal/native chooser (`utils/path_picker.py`), so desktop-mounted network
 locations (kio-fuse, GVfs) already work. What remains is rcompare's *own* VFS
 schemes — `s3://`, `dav://` — which the desktop cannot mount.
 
-### WI-7.10 — Sync preview against remote targets
+#### WI-7.10 — Sync preview against remote targets
 Previously WI-5.3. Extend the sync-preview dialog to render the capability
 warnings from WI-1.2 (e.g. "target does not support trash; deletes will be
 permanent").
 
-### WI-7.11 — Responsive Home and purposeful empty states
+#### WI-7.11 — Responsive Home and purposeful empty states
 **Files**: `teczka/views/home_view.py`, all comparison views
 
 The declared 800×600 minimum clips the Home cards: fixed 180×140 cards,
@@ -942,7 +1216,7 @@ Text, Hex, Image and Table currently open as large blank surfaces with small
 **Acceptance**: no clipping or horizontal control overlap at the supported
 minimum and scaling factors; every empty view tells the user what to do next.
 
-### WI-7.12 — Accessibility baseline
+#### WI-7.12 — Accessibility baseline
 **Files**: all visible teczka widgets/dialogs; add `tests/test_accessibility.py`
 
 Establish a keyboard, screen-reader and contrast baseline:
@@ -966,7 +1240,7 @@ Establish a keyboard, screen-reader and contrast baseline:
 accessible-name/focus-order checks; documented manual screen-reader pass on
 one Linux AT-SPI environment plus Windows or macOS.
 
-### WI-7.13 — Contextual chrome and shared comparison components
+#### WI-7.13 — Contextual chrome and shared comparison components
 **Files**: `teczka/main_window.py`, `teczka/views/*`, new reusable widgets
 
 The folder breadcrumb row and folder-only footer filters sit outside the view
@@ -990,7 +1264,7 @@ rows. The Image statistics strip must wrap/collapse instead of placing seven
 metrics in one fixed horizontal row; the Merge conflict toolbar must expose
 overflow at narrow widths rather than clipping.
 
-### WI-7.14 — Action hierarchy, destructive safety and feedback language
+#### WI-7.14 — Action hierarchy, destructive safety and feedback language
 Define one action hierarchy across menus, toolbars and dialogs:
 
 - one primary action per state (`Compare`, `Run Dry Run`, `Execute Sync`,
@@ -1020,7 +1294,7 @@ exactly one unambiguous final consent boundary; permanent deletion requires a
 separate explicit confirmation naming the target and count; CLI failure cannot
 trigger local mutation without a new preview and consent.
 
-### WI-7.15 — Settings/dialog and product-language polish
+#### WI-7.15 — Settings/dialog and product-language polish
 Finish the secondary surfaces after the state and theme work:
 
 - remove “Configure Toolbars…” while no configurable toolbar exists, or ship
@@ -1041,7 +1315,7 @@ dialogs pass the responsive/accessibility checks from WI-7.11/WI-7.12.
 
 ---
 
-## Phase 8 — Scale and net-new core
+### Phase 8 — Scale and net-new core
 
 Opportunistic; none of it blocks parity.
 
@@ -1055,11 +1329,11 @@ Opportunistic; none of it blocks parity.
 | `proptest` / fuzzing for parsers | Good first-contributor work; patch and CSV parsers first |
 
 **Explicitly out of scope**: plugin system, REST/gRPC server, shell-extension
-integrations. Unchanged from `roadmap.md`.
+integrations. Unchanged from the scope ledger (§A).
 
 ---
 
-## Phase 9 — Beyond Compare configuration parity
+### Phase 9 — Beyond Compare configuration parity
 
 Derived entirely from the 2026-07-26 configuration-surface study. Unlike
 Phases 5–7, **this phase is not GUI-only**: over half the items need
@@ -1070,7 +1344,7 @@ these are capabilities teczka does not have.
 Sequence by leverage: WI-9.1 first (it is the container the rest configure),
 then WI-9.2/9.3 (the settings users hit first), then the engine-heavy items.
 
-### WI-9.1 — Per-session settings dialog with a scope selector
+#### WI-9.1 — Per-session settings dialog with a scope selector
 **Side**: GUI. **Files**: new `teczka/dialogs/session_settings_dialog.py`,
 `teczka/main_window.py`, `teczka/models/settings.py`
 
@@ -1088,7 +1362,7 @@ to live; without it every new setting added below becomes another global.
 session and the persisted defaults untouched; promoting to default affects
 newly created sessions and not existing ones; a round-trip test per scope.
 
-### WI-9.2 — Comparison criteria parity
+#### WI-9.2 — Comparison criteria parity
 **Side**: core + CLI, then GUI. **Files**:
 `rcompare_core/src/scanner.rs`, `rcompare_cli/src/main.rs`,
 `teczka/models/settings.py`
@@ -1113,7 +1387,7 @@ offset compare equal under the relevant flag and different without it; a
 permissions-only difference is reported when enabled and ignored when not; NFC
 and NFD spellings of the same filename align under the flag.
 
-### WI-9.3 — Structured name filters and rule-based filters
+#### WI-9.3 — Structured name filters and rule-based filters
 **Side**: core + CLI, then GUI.
 
 Replace the single `ignore_patterns` list with BC's four independent mask
@@ -1129,7 +1403,7 @@ differentiator BC lacks.
 matching files elsewhere; presets survive restart; existing `--ignore`
 invocations behave unchanged.
 
-### WI-9.4 — Workspaces
+#### WI-9.4 — Workspaces
 **Side**: GUI. **Files**: `teczka/models/settings.py`, `teczka/main_window.py`
 
 A workspace is a named set of open sessions, loadable and saveable as a unit
@@ -1141,7 +1415,7 @@ exit").
 Land after WI-7.5 settles the document/session model, or the workspace will
 serialise a model that is about to change.
 
-### WI-9.5 — File-format rules engine and "ignore unimportant differences"
+#### WI-9.5 — File-format rules engine and "ignore unimportant differences"
 **Side**: core, then CLI, then GUI. **Files**: new
 `rcompare_core/src/grammar.rs`, `rcompare_core/src/text_diff.rs`
 
@@ -1172,7 +1446,7 @@ Scope this deliberately; it is a multi-week item:
 whitespace-only and case-only changes per the importance mask; grammar
 definitions round-trip through the rules file.
 
-### WI-9.6 — Configurable text alignment, replacements and overrides
+#### WI-9.6 — Configurable text alignment, replacements and overrides
 **Side**: core + CLI, then GUI. **Files**: `rcompare_core/src/text_diff.rs`
 
 BC exposes four alignment algorithms — **Unaligned**, **Standard**, **Myers
@@ -1190,7 +1464,7 @@ left-name↔right-name pairings, for renamed files).
 Patience than Standard; skew tolerance bounds the search as documented; an
 alignment override pairs two differently-named files.
 
-### WI-9.7 — Table/CSV parsing controls
+#### WI-9.7 — Table/CSV parsing controls
 **Side**: core + CLI, then GUI. **Files**: `rcompare_core/src/csv_diff.rs`,
 `teczka/views/table_view.py`
 
@@ -1209,7 +1483,7 @@ assumptions.
 parses correctly; fixed-width input aligns by column; consecutive-delimiter
 handling is covered both ways.
 
-### WI-9.8 — Remote connection profiles and credential storage
+#### WI-9.8 — Remote connection profiles and credential storage
 **Side**: GUI, depends on **WI-2.1**. **Files**: new
 `teczka/dialogs/connection_profiles_dialog.py`
 
@@ -1221,7 +1495,7 @@ WI-7.9 gives teczka's path bar URL syntax but no place to store credentials.
 This is that place. **Credentials go in the platform keyring, never in
 `pyside.json`** — and never in captured screenshots or logs.
 
-### WI-9.9 — Global preferences parity
+#### WI-9.9 — Global preferences parity
 **Side**: GUI. **Files**: `teczka/dialogs/settings_dialog.py`,
 `teczka/utils/config.py`
 
@@ -1249,7 +1523,7 @@ value order, not the order BC lists them:
 Each toggle must have a consumer before it ships. The Phase 5 lesson stands:
 a preference that does nothing is worse than an absent one.
 
-### WI-9.10 — Command customisation beyond shortcuts
+#### WI-9.10 — Command customisation beyond shortcuts
 **Side**: GUI. **Files**: `teczka/dialogs/shortcuts_dialog.py`
 
 BC's Commands page is a per-view table with **Menu**, **Toolbar** and
@@ -1261,7 +1535,7 @@ toolbar itself.
 Gate this on WI-7.5 deciding whether a toolbar exists at all. If it does not,
 close this item as "won't do" rather than leaving it open indefinitely.
 
-### WI-9.11 — Settings portability
+#### WI-9.11 — Settings portability
 **Side**: GUI. **Files**: `teczka/main_window.py`, `teczka/utils/config.py`
 
 `Tools > Export Settings…` / `Import Settings…` / `Restore Factory Defaults…`.
@@ -1272,7 +1546,7 @@ between machines. Must exclude anything credential-shaped once WI-9.8 lands.
 file from a newer schema version fails with a message naming both versions,
 matching the WI-5.2 contract.
 
-### WI-9.12 — Complete the View menu
+#### WI-9.12 — Complete the View menu
 **Side**: GUI. **Files**: `teczka/main_window.py`,
 `teczka/widgets/color_legend.py`, `teczka/views/folder_view.py`
 
@@ -1293,7 +1567,7 @@ alongside any other folder-view work.
 
 ---
 
-## Sequencing summary
+### Sequencing summary
 
 ```
 RUST / ENGINE TRACK                    TECZKA / GUI TRACK
@@ -1342,14 +1616,30 @@ takes teczka (5 → 6 → 7). They meet at WI-2.1/WI-7.9 and at the
 WI-5.2/WI-4.1 gate. This is the natural split — the tracks share almost no
 files.
 
-## Definition of done for each work item
+---
+
+## D. Outstanding, not yet scheduled
+
+Small items raised during the 2026-07-26 working session that do not belong to
+a phase. Kept here rather than lost in a chat log; promote to a WI or delete
+them, but do not let the list grow silently.
+
+| Item | Detail |
+|---|---|
+| Comparison-document corrections | [BCOMPARE_GUI_CONFIG_COMPARISON.md](BCOMPARE_GUI_CONFIG_COMPARISON.md) still overstates two things a review caught: §6.1's inert-controls inventory was written before the Phase 5 fixes landed and now describes fixed defects, and §7 claims full undo/redo of file operations when only **deletion** records an undo entry and redo merely tells the user to repeat the operation manually (`_on_redo`). The `Tools > Profiles` and File Formats corrections are already carried into §A.7 and Phase 9 |
+| teczka test suite not run | The suite (11 files, ~205 `pytest-qt` tests) was not executed during the session in which `main_window.py`, `settings_dialog.py`, `themes.py`, `scanner.rs` and the CLI all changed. Run it before trusting the Phase 5 ✅ marks |
+| Beyond Compare capture gaps | Session Settings for Folder Merge, Folder Sync, Text Merge, Hex, Media and Picture Compare, and the contents of Table Compare's Sheets/Columns/Rows tabs. They reuse structures already captured, so this is completeness rather than new information |
+
+---
+
+## E. Definition of done
 
 1. Source change plus tests at the level the change lives (unit for core,
    integration for CLI, `pytest-qt` for teczka).
 2. `cargo clippy` clean under the workspace lint config; no new `unsafe`.
 3. Cross-platform: no new Linux-only assumptions (enforced by WI-0.4).
-4. `roadmap.md` status flag updated — and only after checking against source,
-   per that document's own standing rule.
+4. The scope-ledger (§A) status flag updated — and only after checking against
+   source, per this document's own maintenance rule.
 5. `FEATURE_COMPARISON.md` row updated when a 🔌/❌ becomes ✅.
 6. `CHANGELOG.md` `[Unreleased]` entry for anything user-visible.
 7. GUI changes are exercised at 800×600 and 1440×900 in the relevant light,

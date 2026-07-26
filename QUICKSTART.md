@@ -552,7 +552,7 @@ Future enhancements planned:
 - 📋 Semantic diff (AST-based)
 - 📋 Plugin/extension system
 
-See [docs/roadmap.md](docs/roadmap.md) for the current, source-verified remaining-work list.
+See [docs/PLAN.md](docs/PLAN.md) for the current, source-verified remaining-work list.
 
 ---
 

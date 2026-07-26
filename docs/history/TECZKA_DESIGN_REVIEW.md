@@ -179,7 +179,7 @@ teczka's entire data model comes from `rcompare_cli --json`. The CLI emits
 schema change surfaces as a `KeyError` raised inside a worker thread rather
 than a diagnosable "unsupported CLI version" message.
 
-This matters more than it looks: `docs/roadmap.md` §3 plans a **unified JSON
+This matters more than it looks: `docs/PLAN.md` §3 plans a **unified JSON
 schema v2** across commands. On the day that lands, teczka breaks with a stack
 trace unless it is version-aware first.
 
@@ -325,5 +325,5 @@ what this review touched: EXIF comparison and key-based CSV alignment both
 exist in `rcompare_core`, are reachable from the CLI, and are invisible in the
 GUI — joining archive-write, cloud VFS, resumable copy and union VFS on the
 list of built-but-unwired capabilities that
-[docs/development-plan.md](../development-plan.md) is organised around. The
+[docs/PLAN.md](../PLAN.md) is organised around. The
 cheapest wins in this codebase continue to be wiring, not building.

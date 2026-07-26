@@ -5,7 +5,7 @@ Last updated: 2026-07-26
 Compares the **configuration surface** of Beyond Compare 5.2.4 (build 32425, Linux/Qt)
 against teczka (PySide6/Qt6 GUI in this repo). Feature-level parity is tracked in
 [FEATURE_COMPARISON.md](../FEATURE_COMPARISON.md) and remaining work in
-[roadmap.md](roadmap.md); this document is narrower — it asks *what can a user configure,
+[PLAN.md](PLAN.md); this document is narrower — it asks *what can a user configure,
 where does that setting live, and does it persist*.
 
 ## Method

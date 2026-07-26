@@ -21,8 +21,7 @@ One doc per workspace crate/component, each source-verified and cross-linked:
 ## Status and Roadmap
 
 - [Project Status](status.md): Current state, test counts, known weak spots.
-- [Roadmap](roadmap.md): **Source-verified**, prioritized list of remaining work for parity with Beyond Compare/WinMerge/Meld/KDiff3. The maintained source of truth — keep this current instead of adding new standalone roadmap docs.
-- [Development Plan](development-plan.md): Execution plan — how the roadmap's remaining work is sequenced into phases and shippable work items, with acceptance criteria. Scope lives in `roadmap.md`; sequencing lives here.
+- [Work Plan](PLAN.md): **The single source of truth for remaining work.** Consolidates the former `roadmap.md` (scope, with source-verified status flags) and `development-plan.md` (phases, work items, acceptance criteria), plus the open GitHub issues and pull requests. Keep this current instead of adding new standalone roadmap docs.
 - [Feature Comparison](../FEATURE_COMPARISON.md): Comparison with competing tools.
 - [Beyond Compare GUI Config Comparison](BCOMPARE_GUI_CONFIG_COMPARISON.md): teczka's configuration surface (menus, Options, per-session settings) against Beyond Compare 5.2.4, transcribed from a live inspection on 2026-07-26.
 - [Architecture](../ARCHITECTURE.md): Original design handbook (largely historical — see the notice at its top; current module boundaries are documented in `docs/modules/` instead).
@@ -56,14 +55,14 @@ One doc per workspace crate/component, each source-verified and cross-linked:
   `ARCHITECTURE.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `FEATURE_COMPARISON.md`.
 - Keep **per-module docs** in `docs/modules/` — one file per workspace crate
   (`rcompare_common`/`rcompare_core`/`rcompare_cli`/`rcompare_ffi`) plus `teczka`.
-- Keep **status/roadmap** in `docs/status.md` and `docs/roadmap.md` — these are
+- Keep **status/roadmap** in `docs/status.md` and `docs/PLAN.md` — these are
   the living, source-verified documents. Don't create a new standalone
-  roadmap/gaps doc; add to `docs/roadmap.md` instead.
+  roadmap/gaps doc; add to `docs/PLAN.md` instead.
 - Keep **deep-dive guides** (cloud, KDE compliance) in `docs/`.
 - Keep **dated, point-in-time reports** (PR summaries, phase reports, past
   reviews) in `docs/history/` — never rewrite these to match later reality;
   add a new doc instead if something needs re-reporting.
-- Every status claim in `docs/modules/`, `docs/status.md`, and `docs/roadmap.md`
+- Every status claim in `docs/modules/`, `docs/status.md`, and `docs/PLAN.md`
   should trace to something checked against actual source, not carried forward
   from an older doc — this repo has a history of docs drifting from source in
   both directions (claiming things are missing that are actually done, and

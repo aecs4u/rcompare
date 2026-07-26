@@ -50,7 +50,7 @@ appears accurate on spot-check — e.g. `QIcon.fromTheme()` usage and an "About
 KDE" action are both present as claimed). Baseline was a **5% pass rate**;
 after one work session of menu restructuring, shortcut fixes, and partial
 theming it moved to **~35%**. Target is **≥90%**. This is the single largest
-open GUI-quality gap — see [docs/roadmap.md](../roadmap.md).
+open GUI-quality gap — see [docs/PLAN.md](../PLAN.md).
 
 ## Testing
 

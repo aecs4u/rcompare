@@ -33,7 +33,7 @@ commands yet.
 - **JSON schema v2** — not started; each command's schema is independently
   versioned at `1.x`.
 - **Resumable sync/copy** — the engine exists in `rcompare_core` but isn't
-  called from `sync.rs`/`copy.rs`. See [docs/roadmap.md](../roadmap.md).
+  called from `sync.rs`/`copy.rs`. See [docs/PLAN.md](../PLAN.md).
 - **Report export formats** — only JSON + human text. No HTML/Markdown/JUnit
   XML anywhere in `rcompare_cli` or `rcompare_core`. (teczka's GUI-side export
   dialog does support CSV — see [docs/modules/teczka.md](teczka.md) — but

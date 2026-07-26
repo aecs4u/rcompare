@@ -5,7 +5,7 @@ RCompare v2.0+ provides native support for cloud storage backends through its Vi
 > **Wiring status (2026-07-25):** these VFS backends are real, tested `rcompare_core`
 > APIs, used here directly as a Rust library. They are **not yet reachable from
 > `rcompare_cli` or teczka** — no CLI path syntax (e.g. `s3://...`) or GUI path-bar
-> support exists yet. See [docs/roadmap.md](roadmap.md) and
+> support exists yet. See [docs/PLAN.md](PLAN.md) and
 > [docs/modules/rcompare_core.md](modules/rcompare_core.md).
 
 ## Table of Contents

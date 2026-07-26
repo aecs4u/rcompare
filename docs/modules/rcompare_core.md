@@ -4,7 +4,7 @@ Last verified against source: 2026-07-25 (comparison.rs, merge_engine.rs,
 patch_engine.rs, vfs/{archive,s3,sftp,webdav,virtual_vfs}.rs read directly;
 status below reflects actual code, not prior docs — several older docs in this
 repo had this module's status wrong in both directions, see
-[docs/roadmap.md](../roadmap.md) intro).
+[docs/PLAN.md](../PLAN.md) intro).
 
 The engine. UI-agnostic business logic — no GUI or CLI dependencies. ~17,500
 lines across `src/`. Cargo features (all on by default): `cloud` (S3/SFTP/
@@ -55,7 +55,7 @@ All implement the `Vfs` trait from `rcompare_common` ([docs/modules/rcompare_com
 | WebDAV (`vfs/webdav.rs`, 587 lines) | ✅ | ✅ | See bugs below | **No — core API only** |
 | Git repository VFS | — | — | **Missing** | — |
 
-**WebDAV known bugs** (real, not just gaps — see [docs/roadmap.md](../roadmap.md)):
+**WebDAV known bugs** (real, not just gaps — see [docs/PLAN.md](../PLAN.md)):
 1. "Digest" auth silently falls back to Basic (`webdav.rs:117-121,545-548`, the
    fallback is an explicit comment, not an oversight-shaped bug).
 2. PROPFIND response parsing is substring search, not a real XML parser
@@ -86,7 +86,7 @@ absent from `s3.rs`/`sftp.rs`/`webdav.rs`).
   with JSON checkpoints, 4MB chunks, 100MB checkpoint interval, partial-hash
   resume validation. Fully built and tested — **but has zero callers** outside
   its own tests; `rcompare_cli`'s `sync`/`copy` commands don't use it yet. See
-  [docs/roadmap.md](../roadmap.md) — this is one of the highest-value/lowest-effort
+  [docs/PLAN.md](../PLAN.md) — this is one of the highest-value/lowest-effort
   wiring gaps in the project.
 - **Scanner** (`scanner.rs`, 745 lines): parallel traversal via `jwalk`, nested
   `.gitignore` loading.

@@ -66,7 +66,7 @@ After the first work session (menu restructure, shortcut fixes, desktop integrat
 
 ### Progress After Phase 5 (2026-07-26)
 
-Rows changed by `docs/development-plan.md` WI-5.1, WI-5.10 and the
+Rows changed by `docs/PLAN.md` WI-5.1, WI-5.10 and the
 accessibility slices of WI-7.12. Everything else is unchanged.
 
 | Category | Previous | Now | Change | Evidence |

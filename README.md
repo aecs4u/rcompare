@@ -416,7 +416,7 @@ Documentation is consolidated in:
 
 ### User Guides
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide and examples
-- [docs/roadmap.md](docs/roadmap.md) - Source-verified, prioritized roadmap for competitive parity
+- [docs/PLAN.md](docs/PLAN.md) - Source-verified, prioritized roadmap for competitive parity
 
 ### Testing & CI/CD
 - [docs/status.md](docs/status.md) - Current test counts per crate

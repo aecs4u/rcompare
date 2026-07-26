@@ -55,7 +55,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Regex rules | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No |
 | Patience diff | ✅ Yes | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies |
 | 3-way merge workflow | ✅ Yes (teczka `merge_view.py`, line-level `difflib` diff) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Conflict-resolution UI | ✅ Yes (young/undertested — see [docs/roadmap.md](docs/roadmap.md)) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| Conflict-resolution UI | ✅ Yes (young/undertested — see [docs/PLAN.md](docs/PLAN.md)) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Binary and Image Comparison
 
@@ -93,7 +93,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Dry-run sync planning | ✅ Yes | ✅ Yes | PySide also shows sync preview |
 | Conflict policy controls | ✅ Yes (`newest/left/right/skip/error`) | ✅ Yes | |
 | Selected-path copy | ✅ Yes (`copy --path/--paths-file`) | ✅ Yes | |
-| Resume interrupted sync | 🔌 Engine exists (`ResumableCopy`), not wired into CLI | ✅ Yes | Wiring gap, not a missing feature — see [docs/roadmap.md](docs/roadmap.md) |
+| Resume interrupted sync | 🔌 Engine exists (`ResumableCopy`), not wired into CLI | ✅ Yes | Wiring gap, not a missing feature — see [docs/PLAN.md](docs/PLAN.md) |
 
 ---
 
@@ -181,11 +181,11 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 3-way merge UX and drag-and-drop, both listed here as "in progress" as
 recently as this document's last revision, turned out to already be
-implemented — see [docs/roadmap.md](docs/roadmap.md) for the current,
+implemented — see [docs/PLAN.md](docs/PLAN.md) for the current,
 source-verified list. That document is the maintained source of truth for
 what's actually left; the summary below is kept only as a quick pointer.
 
-### Near-term focus (see docs/roadmap.md for detail)
+### Near-term focus (see docs/PLAN.md for detail)
 - Wire already-built `rcompare_core` APIs (archive write, cloud VFS,
   resumable copy, union/filtered VFS) into `rcompare_cli` and teczka.
 - Fix WebDAV's auth/parsing/mtime bugs.
@@ -203,7 +203,7 @@ what's actually left; the summary below is kept only as a quick pointer.
 
 - [README.md](README.md)
 - [docs/README.md](docs/README.md)
-- [docs/roadmap.md](docs/roadmap.md) — maintained, source-verified remaining-work list
+- [docs/PLAN.md](docs/PLAN.md) — maintained, source-verified remaining-work list (scope, phases, issues)
 - [docs/modules/](docs/modules/) — per-crate/module reference docs
 - [Beyond Compare](https://www.scootersoftware.com/)
 - [WinMerge](https://winmerge.org/)
