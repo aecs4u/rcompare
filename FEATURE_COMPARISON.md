@@ -64,7 +64,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Hex view | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | Hex diff highlighting | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | Pixel-level image diff | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes |
-| EXIF metadata comparison | ⚠️ CLI only (`rcompare_core::image_diff` + `--image-exif`; teczka's image view never requests or displays it) | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
+| EXIF metadata comparison | ✅ Yes (`rcompare_core::image_diff` + `--image-exif`; teczka's image view renders the differences table) | ✅ Yes | ❌ No | ❌ No | ❌ No | ❌ No |
 | Image tolerance controls | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No | ⚠️ Limited |
 | Perceptual image hashing | ✅ Yes | ⚠️ Limited/indirect | ❌ No | ❌ No | ❌ No | ❌ No |
 
@@ -74,7 +74,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 
 | Feature | RCompare | Beyond Compare | Notes |
 |---------|----------|----------------|-------|
-| CSV structural comparison | ✅ Yes | ✅ Yes | Row/column-aware comparison |
+| CSV structural comparison | ✅ Yes | ✅ Yes | Row/column-aware. Rows align by position by default, or by key column via `--csv-key` / teczka's key selector — without a key an inserted row shifts every following row and reports as a cascade of differences |
 | Excel comparison (`.xlsx`, `.xls`) | ✅ Yes | ⚠️ Varies by edition/rules | Sheet/cell-aware in RCompare |
 | JSON structural comparison | ✅ Yes | ✅ Yes | Path-based structural diff |
 | YAML structural comparison | ✅ Yes | ⚠️ Via text/rules | |

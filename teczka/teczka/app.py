@@ -7,9 +7,10 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from . import icons
 from .dialogs.splash_dialog import SplashDialog
 from .main_window import MainWindow
-from .resources.themes import apply_theme
+from .resources.themes import apply_theme, normalize_theme
 from .utils.config import AppConfig
 from .logger import setup_logging, get_logger
 
@@ -53,10 +54,12 @@ def launch(
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("aecs4u")
     app.setDesktopFileName("org.aecs4u.rcompare")
+    # Falls back to an embedded SVG, so the window/taskbar entry is never blank
+    # on a session without a complete FreeDesktop icon theme.
+    app.setWindowIcon(icons.app_icon())
 
     config = AppConfig.load()
     log.info("configuration loaded", theme=config.theme)
-    apply_theme(app, config.theme)
 
     # Pre-populate paths from CLI args
     if left:
@@ -64,7 +67,16 @@ def launch(
     if right:
         config.last_paths["right"] = right
 
-    # KDE Compliance: Respect system theme (Breeze Light/Dark on KDE Plasma)
+    # Apply the configured theme before the first window is constructed.
+    #
+    # The Light/Dark selector was exposed in Settings but neither stylesheet
+    # was ever loaded, at startup or on change, so the choice did nothing. The
+    # "system" default applies no stylesheet at all, which is what lets Plasma
+    # dark mode, the user's accent colour and high-contrast schemes through.
+    config.theme = normalize_theme(config.theme)
+    apply_theme(app, config.theme)
+    log.info("theme applied", theme=config.theme)
+
 
     # The splash is a courtesy, not a gate: it is skipped when the caller
     # already said what to compare, and the "don't show again" choice is

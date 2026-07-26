@@ -8,7 +8,7 @@ theme is incomplete.
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QSize
-from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QGuiApplication, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 # ---------------------------------------------------------------------------
@@ -162,8 +162,15 @@ _APP_ICON_SVG = (
 # ---------------------------------------------------------------------------
 
 def _svg_to_icon(svg_data: str) -> QIcon:
-    """Render an SVG string into a *QIcon* at multiple standard sizes."""
+    """Render an SVG string into a *QIcon* at multiple standard sizes.
+
+    Returns an empty icon when no ``QGuiApplication`` exists: QPixmap requires
+    one, and creating pixmaps without it aborts the process rather than
+    raising.
+    """
     icon = QIcon()
+    if QGuiApplication.instance() is None:
+        return icon
     data = QByteArray(svg_data.encode("utf-8"))
     renderer = QSvgRenderer(data)
     if not renderer.isValid():

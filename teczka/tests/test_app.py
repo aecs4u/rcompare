@@ -25,6 +25,13 @@ class _FakeApplication:
     def setStyle(self, _style):
         pass
 
+    def setWindowIcon(self, _icon):
+        pass
+
+    def setStyleSheet(self, stylesheet):
+        # Recorded so a test can assert the configured theme was applied.
+        self.stylesheet = stylesheet
+
     def exec(self):
         return self.exit_code
 
@@ -97,3 +104,21 @@ def test_dont_show_again_is_persisted(monkeypatch):
     assert saved == [False]
     assert themes == [config.theme]
     assert exit_codes == [0]
+
+
+def test_configured_theme_is_applied_at_startup(monkeypatch):
+    """The Light/Dark selector never applied a stylesheet, at launch or later."""
+    config = AppConfig(show_splash=False, theme="dark")
+    _exit_codes, themes = _prepare_launch(monkeypatch, config)
+    app_module.launch(left="/tmp/a", right="/tmp/b")
+    assert themes == ["dark"]
+
+
+def test_an_unknown_theme_falls_back_to_the_system_palette(monkeypatch):
+    """So a stale or hand-edited config cannot leave the app unstyled."""
+    config = AppConfig(show_splash=False, theme="chartreuse")
+    _exit_codes, themes = _prepare_launch(monkeypatch, config)
+    app_module.launch(left="/tmp/a", right="/tmp/b")
+    assert themes == ["system"]
+    assert config.theme == "system"
+

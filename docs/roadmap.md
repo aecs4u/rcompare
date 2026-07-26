@@ -47,9 +47,9 @@ and are tested; they're just not reachable from the CLI or GUI.
 5. **Wire Union/Filtered VFS** (`rcompare_core::vfs::virtual_vfs`) into CLI or
    GUI — real, tested, currently reachable only via direct core API use.
    Impact: medium.
-6. **Fix teczka's drag-and-drop >2-path truncation** (`main_window.py`
-   silently keeps only the first two dropped paths). Impact: low effort,
-   real papercut.
+6. ~~**Fix teczka's drag-and-drop >2-path truncation**~~ ✅ Done 2026-07-26
+   (WI-5.6): the first two paths are still the ones compared, but the
+   discarded ones are now named in the status bar.
 
 ## 2. rcompare_core (net-new)
 
@@ -80,10 +80,18 @@ and are tested; they're just not reachable from the CLI or GUI.
 
 | Item | Status | Impact |
 |---|---|---|
-| KDE/Plasma compliance | 🚧 ~35% (baseline was 5%, target ≥90%) | High — see [docs/KDE_COMPLIANCE.md](KDE_COMPLIANCE.md), single largest open GUI-quality gap |
-| Automated GUI test coverage | 🚧 thin (4 files, ~250 lines, `pytest-qt`) | Medium — merge view, sync/export/profile dialogs, drag-and-drop all currently untested |
-| Drag-and-drop >2-path handling | 🚧 bug | See §1.6 |
+| KDE/Plasma compliance | 🚧 ~40% (baseline was 5%, target ≥90%) | High — see [docs/KDE_COMPLIANCE.md](KDE_COMPLIANCE.md), single largest open GUI-quality gap. WS3 Shortcuts is now test-enforced; WS5 Desktop (0/17) and WS4 Dialogs (0/12) are untouched |
+| Automated GUI test coverage | 🚧 improving (11 files, ~205 tests, `pytest-qt`) | Medium — shortcut collisions, filter state, visible shell, session/document lifecycle, Settings round-trip and contrast are covered. Merge view, sync/export/profile dialogs and screenshot regression are not (WI-6.6) |
+| `MainWindow` structural refactor | ❌ 3,400 lines, 139 methods | High — Phase 6 of the development plan; the Phase 5 contracts above are the seams it should be extracted along |
+| Palette-derived theming | 🚧 partial | High — the theme selector now works and applies at startup, but `resources/themes.py` still holds 390 hardcoded hex colours and zero `palette(...)` references (WI-7.1) |
+| Syntax highlighting | ❌ no `QSyntaxHighlighter` | Medium (WI-7.3) |
+| Merge-view source-pane colouring | ❌ only the output pane is tinted | Medium — the diff data is already computed; this is a rendering gap (WI-7.2) |
+| Localizer adoption | ❌ `localizer.py` + 152 `.ftl` lines, zero call sites | Medium — adopt or delete (WI-7.7) |
 | Cloud/archive-write sources reachable from GUI | 🔌 depends on §1.1/§1.3 | High |
+| ~~Drag-and-drop >2-path handling~~ | ✅ Done 2026-07-26 | — |
+| ~~EXIF differences shown in the image view~~ | ✅ Done 2026-07-26 (WI-5.5) | — |
+| ~~Key-based CSV row alignment~~ | ✅ Done 2026-07-26 (WI-5.3) — `--csv-key` plus a GUI key selector | — |
+| ~~Hidden widgets owning visible state~~ | ✅ Done 2026-07-26 (WI-5.7/5.9) | — |
 
 Already done and should **not** be re-added to future gap lists without
 re-verifying against source first: multi-tab sessions, session profiles,

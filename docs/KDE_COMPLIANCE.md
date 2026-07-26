@@ -64,13 +64,35 @@ After the first work session (menu restructure, shortcut fixes, desktop integrat
 | AppStream | 0% | 100% | +100% |
 | **Overall** | **5%** | **~35%** | **+30%** |
 
+### Progress After Phase 5 (2026-07-26)
+
+Rows changed by `docs/development-plan.md` WI-5.1, WI-5.10 and the
+accessibility slices of WI-7.12. Everything else is unchanged.
+
+| Category | Previous | Now | Change | Evidence |
+|----------|---------|-----|--------|----------|
+| Collision-Free | 33% | 100% | +67% | `tests/test_shortcuts.py` walks the live menu tree and asserts no chord — including `StandardKey` alternates — is bound twice. `Ctrl+P` (Print/Profiles) and `Ctrl+Y` (Redo/Synchronize) are resolved |
+| Standard Shortcuts | 75% | 90% | +15% | `StandardKey.Quit` and `StandardKey.Preferences` resolved to the `Exit`/`Settings` *multimedia* keys on Linux, so neither action had a usable binding. `teczka/shortcuts.py` validates the platform binding and falls back to an explicit chord |
+| Keyboard Navigation | 50% | 65% | +15% | `NoFocus` removed from the status filter pills and difference-navigation buttons; visible focus ring added. Full traversal of every dialog is still outstanding |
+| Theming - Colors | 50% | 60% | +10% | The theme selector now applies a stylesheet at startup and live on change; a new "Follow system" default applies none, so the Plasma palette, accent colour and high-contrast schemes show through. `resources/themes.py` still holds 390 hardcoded hex values (WI-7.1) |
+| A11y - Contrast | — | partial | — | The four folder-status pills measured 2.78:1, 3.63:1, 3.59:1 and 3.76:1 against white text, all below the 4.5:1 AA minimum, and were invisible when unchecked. Recoloured above 4.5:1 with the ratios pinned in `tests/test_accessibility.py`. Text, Hex, Table and Merge are not yet audited |
+| A11y - Non-colour status | — | partial | — | Each status pill carries a distinct non-colour marker. The comparison views still signal status by colour alone (WI-7.1) |
+| A11y - Accessible names | 2 (both in Splash) | ~20 | — | Added to the status bar, path-bar swap/browse, session controls and Home cards. Most icon-only controls elsewhere remain unnamed (WI-7.12) |
+| QA automation | 0% | partial | — | 205 pytest-qt tests, including shortcut-collision, filter-state-matrix, visible-shell and accessibility suites. Screenshot and keyboard-traversal coverage is still outstanding (WI-6.6) |
+
+**WS3 Shortcuts** is the workstream most affected; the collision and
+standard-key rows are now enforced by tests rather than by review, which is
+what stops them regressing.
+
 ### Priority Gaps (P0)
 
 These must be addressed before claiming KDE compliance:
 
 1. **Remaining hardcoded styles** - Dialogs and widgets still override KDE palette
 2. **Application icons** - No SVG/PNG icon assets packaged
-3. **Automated compliance tests** - No pytest-qt test suite yet
+3. **Automated compliance tests** - Partially addressed: shortcut-collision,
+   filter-state, visible-shell and contrast suites exist; screenshot and
+   full keyboard-traversal coverage do not (WI-6.6)
 4. **Dialog button order** - Not standardized to KDE conventions
 5. **Destructive action confirmations** - Safety gap for sync operations
 6. **Accessible names missing** - Screen reader incompatible

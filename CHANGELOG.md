@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-07-26) — teczka Phase 5: correctness and contract
+
+Implements `docs/development-plan.md` WI-5.1 through WI-5.11. Every item below
+was a *verified* runtime defect, not a refinement; each now has a test.
+
+**Visible state is authoritative (WI-5.7).** The redesigned shell created a
+visible session bar, path bar and status bar, then kept hidden `FilterBar`,
+`ColorLegend`, `QTabBar`, status-label and progress widgets as compatibility
+shims that still owned the behaviour:
+
+- 49 operations wrote to `statusBar().showMessage()` after the native status
+  bar had been hidden, so copy, delete, rename, sync, bookmark and drag/drop
+  produced no visible feedback at all. All of them now route through
+  `IntegratedStatusBar.show_message()`.
+- Structured progress updated a detached `QProgressBar`/`QLabel` pair, leaving
+  the visible bar at 0%. It now drives the real bar and stage label.
+- `IntegratedStatusBar.set_diff_position()` had no caller, so the difference
+  counter read `0/0` permanently. Next/Previous now updates it.
+- Every compatibility shim is deleted. A test rejects new `statusBar()` writes.
+
+**Sessions, documents and 3-Way Merge (WI-5.8).**
+
+- `_on_close_tab()` compared a visible session index against the number of
+  *view* tabs (6), so the first six session tabs could not be closed and any
+  close that did happen deleted the wrong session. Session indices are now
+  their own space.
+- Comparisons opened by double-clicking a file were registered in a *hidden*
+  tab bar: the document appeared in the view stack with no visible tab, no
+  close action and no return path. New `DocumentTabBar` makes them real.
+- The sidebar offered a "3-Way Merge" destination the view stack did not
+  have, so selecting it did nothing. The merge view is now built at a fixed
+  stack index and the destination works.
+- Home emitted `profile_selected` into nothing, and read its profile list from
+  `comparison_settings["profiles"]` — a key `ProfileManager` never writes. Both
+  sides now go through `ProfileManager`.
+- Home rendered a Recent Sessions section that no production code populated. A
+  completed comparison now records the pair.
+
+**Filters agreed with results (WI-5.9).** Filter state lived in four places at
+once and they disagreed:
+
+- the proxy defaulted to `show_differences` while all four status pills showed
+  as enabled, so "Identical" read *on* while identical rows were hidden;
+- View-menu toggles wrote only into the hidden `FilterBar`, whose signals were
+  never connected, so they changed nothing;
+- clicking a visible status pill passed `show_files_only=True`, silently hiding
+  every folder row;
+- session capture later read the stale hidden values;
+- `Ctrl+F` focused the hidden search field, so typing went nowhere;
+- Find Next/Previous always targeted Folder view even from Text/Hex/Image/Table.
+
+One typed `FolderFilterState` is now the single source of truth, and a
+state-matrix test drives each input surface and asserts the proxy, menu, footer
+and persisted session agree.
+
+**Settings round-trip (WI-5.10).** Two Settings handlers existed: the connected
+one discarded `get_config_updates()`, so Theme and CLI Path were silently
+dropped, while the more complete one was wired to nothing. They are now one
+handler, and:
+
+- the Diff Options page (whitespace, case, specialised comparisons, regex) and
+  the Files page (encoding, EOL, binary patterns) are persisted and reach the
+  scan as real `rcompare_cli` flags — previously none of them were even read
+  back from the dialog;
+- the theme is applied at startup and live on change. Neither stylesheet had
+  ever been loaded. A new "Follow system" default applies no stylesheet, so
+  Plasma dark mode, the user's accent colour and high-contrast schemes show
+  through;
+- an unusable CLI path is rejected with a reason instead of surfacing later as
+  a failed comparison, and the error message names Settings rather than the
+  nonexistent "Tools > Options".
+
+**Path commands and action state (WI-5.11).** `CompactPathBar` swapped its own
+breadcrumbs *and* emitted `swap_requested`, whose handler swapped again — two
+swaps, no visible change. The widget now only signals intent. Compare is
+disabled until both paths and a working CLI are present, and copy/sync/apply/
+save/print are enabled only where the active document supports them, each with
+a tooltip explaining any block.
+
+**Keyboard (WI-5.1).** `QKeySequence.StandardKey.Quit` resolves to the `Exit`
+*multimedia* key on Linux, so `Ctrl+Q` did not quit; `StandardKey.Preferences`
+hit the same trap. `Ctrl+P` was bound to both Print and Profiles, and `Ctrl+Y`
+to both Redo and Synchronize. Bindings are validated, the two collisions are
+rebound, and the About dialog's keyboard table is generated from the live
+action registry instead of a hand-maintained second copy that had drifted.
+
+**CLI contract (WI-5.2).** `rcompare_cli` emits `schema_version`; teczka never
+read it and parsed by direct subscripting, so drift surfaced as a `KeyError`
+inside a worker thread. The version is checked at the boundary and a mismatch
+names both the expected and received versions.
+
+**CSV row alignment (WI-5.3).** Rows were aligned positionally, so a left-only
+and a right-only row were paired and reported as "different" while the summary
+claimed zero left-only and zero right-only — wrong output, not just a
+limitation. One inserted row cascaded through the whole file. Added
+`--csv-key` to `rcompare_cli scan`, plus a key-column selector and a "first row
+is a header" toggle in teczka's table view (which also retires the hardcoded
+`Col 1/2/3` labels that left no column name to select).
+
+**Worker cancellation (WI-5.4).** `FunctionWorker` had no cancellation path, so
+a long parse could only be orphaned — and would still deliver its result. Added
+a cooperative `CancelToken`; a cancelled worker can never update the GUI.
+
+**EXIF comparison (WI-5.5).** `rcompare_core` implements EXIF comparison and
+the CLI exposes `--image-exif`, but the image view never requested or displayed
+it. The image view now shows a differences table, fed either locally via Pillow
+or from the CLI report.
+
+**Drag and drop (WI-5.6).** Dropping more than two paths kept the first two and
+discarded the rest in silence; the discarded paths are now named.
+
+### Changed (2026-07-26) — teczka accessibility and presentation
+
+Opportunistic slices of Phase 7 that the Phase 5 work touched directly:
+
+- The four folder-status pills failed WCAG AA for normal text — measured at
+  2.78:1 (green), 3.63:1 (red), 3.59:1 (blue) and 3.76:1 (right-only red)
+  against white. Recoloured above 4.5:1, with the measured ratios pinned as
+  test fixtures. In the unchecked state foreground and background both resolved
+  to `palette(mid)`, making the label invisible; fixed.
+- Status is no longer communicated by colour alone: each pill carries a
+  distinct non-colour marker that survives monochrome and common colour-vision
+  deficiencies.
+- `NoFocus` removed from the status pills and the difference-navigation
+  buttons, which had made the whole filter row unreachable without a mouse.
+- Accessible names added to the icon-only swap, browse and navigation controls;
+  Home cards expose their title as the button's own accessible name rather than
+  only as a child label.
+- Icon lookup for the path bar and Home now falls back to embedded SVGs, so a
+  session without a complete FreeDesktop theme no longer renders blank controls.
+- Home is a responsive scrollable grid instead of a fixed 2x2 of 180x140 cards
+  that clipped at the declared 800x600 minimum, and it now covers every
+  reachable comparison type including Table and 3-Way Merge.
+- Folder-only chrome (status pills, name filter, folder paths) is disabled or
+  hidden outside Folder Compare, where it controlled nothing.
+- Removed the "Configure Toolbars..." placeholder, which had no configurable
+  toolbar behind it since the toolbar was removed. "About KDE" appears only in
+  a KDE session.
+
+
 ### Changed (2026-07-26) — teczka renders comparisons while they run
 
 - teczka now drives `rcompare_cli --jsonl` and builds the folder tree

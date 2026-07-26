@@ -42,6 +42,12 @@ comparison** and **key-based CSV row alignment** both implemented in
 the built-but-unwired count to six. Treat "wire what exists" as this
 project's default posture rather than a one-off phase.
 
+Both GUI instances are now closed (Phase 5, 2026-07-26): the image view renders
+EXIF differences, and `--csv-key` plus a GUI key selector expose
+`CsvDiffEngine::with_key_columns`. The four engine-side items (archive write,
+cloud VFS, resumable copy, union VFS) remain, and Phase 1 is still their
+single blocker.
+
 ## Already completed (2026-07-25)
 
 Fixed while reviewing, so they are not scheduled below: teczka's permanently
@@ -66,7 +72,7 @@ migrated into the visible shell under WI-5.7.
 | 2 | Backend wiring on top of Phase 1 | P1 | 7–11 d |
 | 3 | Resumable sync/copy | P1 | 4–6 d |
 | 4 | CLI automation surface (v2) | P1 (loosely) | 8–12 d |
-| 5 | teczka: correctness & contract | — | 10–16 d |
+| 5 | teczka: correctness & contract | — | ✅ done 2026-07-26 |
 | 6 | teczka: structural refactor | P5 (test net) | 15–20 d |
 | 7 | teczka: presentation, accessibility & KDE compliance | — | 22–30 d |
 | 8 | Scale & net-new core | P2 | opportunistic |
@@ -406,9 +412,34 @@ leaving it as general “polish”:
 
 ## Phase 5 — teczka correctness and contract
 
+**Status: complete (2026-07-26).** All eleven work items landed with tests;
+see `CHANGELOG.md` `[Unreleased]`. The suite grew from 38 to 205 `pytest-qt`
+tests, and the contracts below are now enforced rather than reviewed:
+
+| Item | Enforcing test |
+|---|---|
+| WI-5.1 shortcuts | `tests/test_shortcuts.py` — collision walk, standard-key resolution, generated About table |
+| WI-5.2 schema contract | `tests/test_settings_roundtrip.py` — version mismatch names both versions |
+| WI-5.3 CSV key alignment | `tests/test_workers_and_views.py` — positional vs. keyed summaries differ as documented |
+| WI-5.4 worker cancel | `tests/test_workers_and_views.py` — a cancelled worker never delivers a result |
+| WI-5.5 EXIF | `tests/test_workers_and_views.py` — local and CLI-fed difference tables |
+| WI-5.6 drag-drop | `tests/test_workers_and_views.py` — discarded paths are named |
+| WI-5.7 visible shell | `tests/test_visible_shell.py` — includes an AST check rejecting new `statusBar()` writes |
+| WI-5.8 lifecycle | `tests/test_session_lifecycle.py` — sessions, documents, Merge reachability, Home |
+| WI-5.9 filter state | `tests/test_filter_state.py` — state matrix across proxy, menu, footer, session |
+| WI-5.10 Settings | `tests/test_settings_roundtrip.py` — restart round-trip for every field |
+| WI-5.11 swap/actions | `tests/test_session_lifecycle.py` — one swap per click, enablement matrix |
+
+Two Phase 7 items were absorbed opportunistically because Phase 5 touched the
+same code: the status-pill contrast/focus/marker fixes from **WI-7.12** and the
+responsive Home layout from **WI-7.11**. Both remain open overall — only the
+folder-status pills and Home have been audited.
+
+Original scope follows.
+
 Small, independent, each verifiable. Nothing here needs the refactor.
 
-### WI-5.1 — Fix the keyboard surface (§2.6)
+### WI-5.1 — Fix the keyboard surface (§2.6) ✅
 Three separate defects, all verified by walking the live menu tree:
 
 1. **`Ctrl+Q` does not quit.** `main_window.py:227` uses
@@ -431,7 +462,7 @@ About shortcut table matches the actions. This test is the point of the item —
 without it the collisions recur. Update the Collision-Free row in
 `KDE_COMPLIANCE.md` when it passes.
 
-### WI-5.2 — Validate the CLI schema contract (§2.4)
+### WI-5.2 — Validate the CLI schema contract (§2.4) ✅
 `rcompare_cli` emits `{"schema_version":"1.1.0", …}`; `utils/cli_bridge.py`
 never reads it and parses by direct subscripting (`data["summary"]["total"]`),
 so drift surfaces as a `KeyError` inside a worker thread.
@@ -443,7 +474,7 @@ a message naming both the expected and received versions.
 Landing schema v2 first breaks the GUI with a stack trace. Do this one before
 Phase 4 reaches WI-4.1, regardless of the phase numbering.
 
-### WI-5.3 — Key-based CSV row alignment (§1, "Algorithmic limitation")
+### WI-5.3 — Key-based CSV row alignment (§1, "Algorithmic limitation") ✅
 `rcompare_core/src/csv_diff.rs:201-204` aligns rows positionally
 (`for i in 0..max_rows`), so a left-only and a right-only row get paired and
 reported as "different", and the summary reports "0 left-only, 0 right-only" —
@@ -459,22 +490,22 @@ and `:466`.
 Impact: this is the only item in Phase 5 that fixes *incorrect output* rather
 than an ergonomic defect. Rank it first if time is short.
 
-### WI-5.4 — Cancellation for `FunctionWorker` (§2.8)
+### WI-5.4 — Cancellation for `FunctionWorker` (§2.8) ✅
 `workers/function_worker.py` subclasses `QThread` with no cancellation path —
 long parses can only be orphaned, not interrupted. Add a cooperative cancel
 flag checked between work units, and call it from the existing cancel action.
 
-### WI-5.5 — Wire EXIF comparison into the image view (§1)
+### WI-5.5 — Wire EXIF comparison into the image view (§1) ✅
 `rcompare_core::image_diff` implements `ExifMetadata`/`exif_differences` and
 the CLI exposes `--image-exif`, but `views/image_view.py` never requests or
 displays it. Wire the existing flag through and render the differences table.
 Then restore the `FEATURE_COMPARISON.md` EXIF row to ✅.
 
-### WI-5.6 — Drag-and-drop >2-path truncation
+### WI-5.6 — Drag-and-drop >2-path truncation ✅
 Previously WI-0.3. `dropEvent` keeps the first two dropped paths and discards
 the rest silently; use the first two **and** say so in the status bar.
 
-### WI-5.7 — Make the visible shell authoritative
+### WI-5.7 — Make the visible shell authoritative ✅
 **Files**: `teczka/main_window.py`,
 `teczka/widgets/integrated_status_bar.py`
 
@@ -506,7 +537,7 @@ are acceptable during migration; temporary hidden widgets are not.
 4. No hidden widget owns user-visible state.
 5. A source check or unit test rejects new `statusBar().showMessage()` calls.
 
-### WI-5.8 — Repair session/document lifecycle and Merge reachability
+### WI-5.8 — Repair session/document lifecycle and Merge reachability ✅
 **Files**: `teczka/main_window.py`, `teczka/widgets/session_tab_bar.py`,
 `teczka/widgets/sidebar.py`, `teczka/views/home_view.py`,
 `teczka/models/settings.py`
@@ -541,7 +572,7 @@ leaving Merge. Selecting a profile opens the persisted pair and completing a
 session adds a usable recent entry. No navigation destination or Home item may
 be inert.
 
-### WI-5.9 — Replace split filter/search state with one contract
+### WI-5.9 — Replace split filter/search state with one contract ✅
 **Files**: `teczka/main_window.py`, `teczka/models/tree_model.py`,
 `teczka/widgets/integrated_status_bar.py`; remove or repurpose
 `teczka/widgets/filter_bar.py`
@@ -571,7 +602,7 @@ not the applied state.
 proxy, menu, footer and persisted session agree; `Ctrl+F` focuses the visible
 contextual search; view changes cannot silently change files-only mode.
 
-### WI-5.10 — Complete Settings/theme/CLI round-trip
+### WI-5.10 — Complete Settings/theme/CLI round-trip ✅
 **Files**: `teczka/app.py`, `teczka/main_window.py`,
 `teczka/dialogs/settings_dialog.py`, `teczka/resources/themes.py`,
 `teczka/views/text_view.py`
@@ -605,7 +636,7 @@ smoke test proves Light and Dark render differently; an invalid CLI path is
 rejected actionably; every exposed appearance, Diff Options and Files value
 has a reader and a behavioural test.
 
-### WI-5.11 — Fix path-command ownership and contextual action state
+### WI-5.11 — Fix path-command ownership and contextual action state ✅
 **Files**: `teczka/widgets/compact_path_bar.py`, `teczka/main_window.py`
 
 `CompactPathBar._on_swap_clicked()` swaps locally and emits
@@ -626,6 +657,16 @@ Folder, Text, Image, Hex, Table and Merge.
 ---
 
 ## Phase 6 — teczka structural refactor
+
+**Status: not started.** Phase 5 deliberately left `MainWindow` large; what it
+changed is that the boundaries the extraction needs now exist and are tested.
+`_apply_filter_state()`, `_notify()`/`_set_progress()`/
+`_set_navigation_position()`, `_switch_view()`/`_on_close_document()`,
+`_close_session()` and `_update_action_states()` are the seams a
+`NotificationController`, `NavigationController`, `SessionManager` and the
+controllers below should be extracted along — and `tests/test_visible_shell.py`,
+`tests/test_filter_state.py` and `tests/test_session_lifecycle.py` already
+assert their observable behaviour, which is a meaningful part of WI-6.1.
 
 The invasive tier. **Build the test net before moving code** — the current
 suite covers `config`/`models`/`utils`/`widgets`, i.e. precisely the areas
