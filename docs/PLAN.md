@@ -15,6 +15,7 @@ study. Competitor baseline is
 
 | You want to know | Read |
 |---|---|
+| **What to work on next, starting now** | [**Now — four-week schedule**](#now--four-week-execution-schedule) |
 | What is still missing, and how much it matters | [§A Scope ledger](#a-scope-ledger--what-is-left) |
 | What is being worked on now, in what order | [§C Execution plan](#c-execution-plan) |
 | What is tracked on GitHub | [§B Issues and pull requests](#b-github-issues-and-pull-requests) |
@@ -31,6 +32,154 @@ source.
 
 Status legend: ✅ Done · 🔌 Built but unwired · 🚧 Partial · ❌ Missing.
 
+---
+
+## Now — four-week execution schedule
+
+Added 2026-07-26. §C is a ~150-day backlog across ten phases; this is the part
+you start on Monday. Everything here is drawn from §A–§C — it adds no new
+scope, it just picks an order and states the first command.
+
+The shape of it: **week 1 clears cheap debt that is blocking or embarrassing,
+week 2 pays down dependencies, weeks 3–4 start Phase 1**, which is the single
+change that unblocks four of the five "engine exists, not wired" items.
+
+### Verified baseline (2026-07-26)
+
+Measured, not assumed — re-run these before trusting anything below:
+
+| Check | Result | Command |
+|---|---|---|
+| teczka suite | **203 passed**, 0 failed, 5.9 s | `cd teczka && QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q` |
+| Rust workspace | **310 passed**, 0 failed, **45 ignored** | `cargo test --workspace -q` |
+| Working tree | clean, `perf/streaming-scan-progress` in sync with origin | `git status -sb` |
+
+This retires the "Phase 5 marks are inherited, not re-verified" caveat: the
+suite that enforces WI-5.1 … WI-5.11 passes. Two observations worth acting on:
+
+- **45 ignored Rust tests.** Nobody has stated why. Some are certainly
+  network/cloud tests needing credentials, but an unexplained ignore is
+  indistinguishable from a disabled failing test. Audit them during week 1 and
+  annotate each with a reason — cheap, and it makes the 310 meaningful.
+- **`rcompare_gui/` is already gone**, so **WI-0.2 is done**; mark it in §C
+  rather than rediscovering it.
+
+### Week 1 — clear the desk
+
+Nothing here is hard; all of it is either user-visible or blocking week 2.
+
+**1. WI-0.5 — make the examples runnable (issue #26).** Half a day.
+The only user-filed issue, open since May, from someone who said the app works
+well for them. Reproduce, then fix by moving the examples under a real package:
+
+```
+cargo run --example specialized_formats          # reproduce the failure
+git mv examples rcompare_core/examples
+cargo run -p rcompare_core --example specialized_formats -- text a.rs b.rs
+```
+
+Then update README.md:506–525 to the `-p rcompare_core` form and add
+`cargo build --examples` to CI so it cannot regress. Close #26 quoting the
+working command.
+
+**2. Audit the 45 ignored tests.** Half a day. Add a reason to every
+`#[ignore]` (`#[ignore = "needs S3 credentials"]`), and open a work item for
+any that turn out to be hiding a real failure.
+
+**3. Doc corrections from §D.** One to two hours.
+[BCOMPARE_GUI_CONFIG_COMPARISON.md](BCOMPARE_GUI_CONFIG_COMPARISON.md) §6.1
+still describes defects that Phase 5 fixed, and §7 claims full undo/redo when
+only deletion records an undo entry and redo tells the user to repeat the
+operation by hand. Both are now wrong in a document being used as evidence.
+
+**4. Decide PR #2.** Fifteen minutes of judgement, not engineering.
+`feature/winmerge-parity` has been open five months and predates the current
+branch structure. Rebase it or close it; leaving it open misrepresents what
+has shipped.
+
+**Week 1 exit criteria**: issue #26 closed; every `#[ignore]` carries a
+reason; the comparison document matches the code; PR #2 resolved.
+
+### Week 2 — dependencies, and the CI question they depend on
+
+**5. Resolve WI-0.4 before touching WI-0.6.** Half a day of decision plus
+setup.
+
+⚠️ **WI-0.4 as written in §C contradicts a deliberate decision.** `ci.yml`
+carries an explicit comment — *"Cross-platform coverage happens in
+release.yml; CI runs Linux-only to keep Actions minutes down (macOS bills at
+10x, Windows at 2x)"* — and `release.yml` already builds on
+`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest` and `macos-13`. So the
+gap is not "no cross-platform coverage", it is **coverage that arrives too
+late to protect a dependency bump or a VFS path rewrite**.
+
+Recommended compromise rather than the blanket matrix in §C:
+
+- a **nightly** cross-platform run on `main`;
+- **plus** Windows/macOS on any PR touching `rcompare_core/src/vfs/**`,
+  `Cargo.lock`, or `*/Cargo.toml`.
+
+That covers exactly the two risks (path handling, dependency churn) without
+paying 10x on every documentation push. Update WI-0.4's text when you decide,
+so the next reader does not re-litigate it.
+
+**6. WI-0.6 — drain the dependency backlog.** Two to three days.
+Fifteen open Dependabot PRs, oldest from 2026-01-30. Order matters:
+
+```
+gh pr list --author app/dependabot --json number,title
+```
+
+1. Batch the patch/minor bumps, run both suites, merge as one.
+2. Then the four majors **individually**, each with a full run:
+   `zip 0.6 → 2.4` and `polars 0.46 → 0.52` first (load-bearing for archive
+   and Parquet comparison, so most likely to break real behaviour), then
+   `bincode 1.3 → 2.0`, then `reqwest 0.12 → 0.13`.
+3. Close the grouped 17-update PR #25 — after the above it is stale.
+
+**Week 2 exit criteria**: CI policy decided and implemented; no Dependabot PR
+older than one release cycle; both suites still green at the numbers above.
+
+### Weeks 3–4 — Phase 1, the unlock
+
+The reason Phase 1 outranks everything else: `scan` already reads through a
+`Vfs`, but `sync`/`copy` **write** through bare `std::fs`, and every unwired
+backend (archive write, S3, SFTP, WebDAV, union) is a *write* target. Fix the
+mutation path and those become configuration rather than features.
+
+Do it in this order — the test net first, or there is nothing to catch a
+regression in the most dangerous code in the repository:
+
+| Step | Item | Est. |
+|---|---|---|
+| 7 | **WI-1.4** — extend the `WritableZipVfs`/`WritableTarVfs` fixture pattern from `cli_scan.rs` into sync/copy integration tests: local→archive, archive→local, local→local regression, read-only-target rejection | 2–3 d |
+| 8 | **WI-1.1** — introduce the `SyncTarget` write handle; route `apply_copy`, `copy_dir_recursive` and `apply_delete` through it. `DeleteMode::Trash` against a non-local target must fail loudly, never silently fall back to permanent deletion | 3–5 d |
+| 9 | **WI-1.2** — capability preflight using the existing, currently-unused `Vfs::capabilities()`/`is_writable()`; fail before executing with one message listing every unsupported operation | 2–3 d |
+| 10 | **WI-1.3** — replace the `is_dir()` gates at `sync.rs:64` and `copy.rs:44` with source/target resolution, preserving error-message quality | 1–2 d |
+
+**Phase 1 exit criteria** (unchanged from §C): local↔local `sync`/`copy`
+behave identically to today with no regressions in the existing suite, and a
+ZIP target is a legal, tested sync destination.
+
+### Explicitly not now
+
+Stated so they are declined deliberately rather than forgotten:
+
+- **Phase 9** (Beyond Compare configuration parity) — newest and largest tier,
+  and roughly half of it needs core/CLI work that Phase 1 makes cheaper.
+- **Phase 6** (teczka structural refactor) — the 3,400-line `MainWindow` is
+  not on fire; Phase 5 already installed the seams and the tests.
+- **WI-0.1** (WebDAV correctness) — real bugs, but they only need to land
+  before **WI-2.3** wires WebDAV up. Doing them now fixes nothing a user can
+  reach.
+- Completing the Beyond Compare captures — the remaining session types reuse
+  structures already captured, so it is completeness, not information.
+
+### If you only have one week
+
+Do items 1, 3 and 4, then start WI-1.4. Issue #26 is the only thing here a
+user has actually complained about, and the Phase 1 test net is the work that
+makes every later week safer.
 ---
 
 ## A. Scope ledger — what is left
@@ -358,10 +507,10 @@ servers with differing namespace prefixes; a test asserting a Digest-configured
 client never emits a `Basic` header; a test asserting mtime round-trips from
 a fixture body rather than tracking wall-clock.
 
-#### WI-0.2 — Remove the empty `rcompare_gui/` directory
-It is not a workspace member (`Cargo.toml` lists four crates) and contains
-nothing, but its presence contradicts the docs that say the Slint GUI was
-removed. One-line cleanup; prevents recurring "is this still a thing?" churn.
+#### WI-0.2 — Remove the empty `rcompare_gui/` directory ✅
+**Done** (verified 2026-07-26: the directory is absent). It was not a
+workspace member and contained nothing, but its presence contradicted the docs
+saying the Slint GUI was removed.
 
 #### WI-0.3 — *(moved)*
 teczka's drag-and-drop truncation is now **WI-5.6**, with the rest of the GUI
@@ -417,10 +566,19 @@ reason.
 **File**: `.github/workflows/ci.yml`
 
 Currently Linux-only; Windows/macOS are exercised only at release time, which
-means cross-platform breakage is discovered at the worst possible moment. Add
-`windows-latest` and `macos-latest` to the core/CLI test matrix. Do this before
-Phase 1 so the VFS path-handling rewrite (separators, UNC, case sensitivity) is
-validated on all three targets as it lands.
+means cross-platform breakage is discovered at the worst possible moment.
+
+⚠️ **Linux-only is a deliberate, documented choice**, not an oversight:
+`ci.yml` says *"Cross-platform coverage happens in release.yml; CI runs
+Linux-only to keep Actions minutes down (macOS bills at 10x, Windows at 2x)"*,
+and `release.yml` already covers `ubuntu-latest`, `ubuntu-24.04-arm`,
+`windows-latest` and `macos-13`. So the real gap is **timing** — that coverage
+arrives too late to protect a dependency bump or the Phase 1 path rewrite.
+
+Do not simply add the two runners to every job. Prefer a nightly
+cross-platform run on `main`, plus Windows/macOS on any PR touching
+`rcompare_core/src/vfs/**`, `Cargo.lock` or `*/Cargo.toml` — which covers both
+risks without paying 10x on documentation pushes. Settle this before WI-0.6.
 
 ---
 
