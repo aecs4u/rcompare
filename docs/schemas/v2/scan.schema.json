@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare scan JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "scan" },
+        "summary": {
+          "type": "object",
+          "required": ["total", "same", "different", "orphan_left", "orphan_right", "unchecked"],
+          "properties": {
+            "total": { "type": "integer", "minimum": 0 },
+            "same": { "type": "integer", "minimum": 0 },
+            "different": { "type": "integer", "minimum": 0 },
+            "orphan_left": { "type": "integer", "minimum": 0 },
+            "orphan_right": { "type": "integer", "minimum": 0 },
+            "unchecked": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["left", "right", "entries"],
+          "properties": {
+            "left": { "type": "string" },
+            "right": { "type": "string" },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "status"],
+                "properties": {
+                  "path": { "type": "string" },
+                  "status": { "enum": ["Same", "Different", "OrphanLeft", "OrphanRight", "Unchecked"] },
+                  "left": { "$ref": "#/$defs/fileSide" },
+                  "right": { "$ref": "#/$defs/fileSide" }
+                },
+                "additionalProperties": true
+              }
+            },
+            "text_diffs": { "type": "array" },
+            "image_diffs": { "type": "array" },
+            "csv_diffs": { "type": "array" },
+            "excel_diffs": { "type": "array" },
+            "json_diffs": { "type": "array" },
+            "yaml_diffs": { "type": "array" },
+            "parquet_diffs": { "type": "array" }
+          },
+          "additionalProperties": true
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "fileSide": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["size", "is_dir"],
+          "properties": {
+            "size": { "type": "integer", "minimum": 0 },
+            "modified_unix": { "type": ["integer", "null"] },
+            "is_dir": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  }
+}

@@ -2,6 +2,8 @@
 pub mod archive;
 pub mod local;
 #[cfg(feature = "cloud")]
+mod remote_reader;
+#[cfg(feature = "cloud")]
 pub mod s3;
 #[cfg(feature = "cloud")]
 pub mod sftp;

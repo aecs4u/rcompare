@@ -31,6 +31,10 @@ use commands::sync::*;
 #[command(version = "0.1.0")]
 #[command(about = "High-performance file and directory comparison utility", long_about = None)]
 struct Cli {
+    /// Machine-readable JSON schema version (1 is the legacy command-specific shape; 2 is the stable envelope).
+    #[arg(long, global = true, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=2))]
+    schema_version: u8,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -48,6 +52,18 @@ enum Commands {
         /// Ignore patterns (can be specified multiple times)
         #[arg(short, long)]
         ignore: Vec<String>,
+
+        /// Add a directory, archive, or cloud endpoint as a later union layer
+        #[arg(long, value_name = "PATH_OR_URL")]
+        overlay: Vec<PathBuf>,
+
+        /// Include paths matching this glob (repeatable)
+        #[arg(long, value_name = "GLOB")]
+        include: Vec<String>,
+
+        /// Exclude paths matching this glob (repeatable)
+        #[arg(long, value_name = "GLOB")]
+        exclude: Vec<String>,
 
         /// Follow symbolic links
         #[arg(short = 'L', long)]
@@ -217,7 +233,7 @@ enum Commands {
         /// Right directory path
         right: PathBuf,
 
-        /// Sync direction
+        /// Sync mode: legacy directions plus update_left/right/both or mirror_left/right
         #[arg(long, default_value = "left_to_right")]
         direction: SyncDirection,
 
@@ -253,6 +269,18 @@ enum Commands {
         #[arg(short, long)]
         cache_dir: Option<PathBuf>,
 
+        /// Directory for resumable-copy checkpoints (local files only)
+        #[arg(long)]
+        checkpoint_dir: Option<PathBuf>,
+
+        /// Resume a cancelled or interrupted sync using its checkpoint id
+        #[arg(long, requires = "checkpoint_dir", conflicts_with = "dry_run")]
+        resume_checkpoint: Option<String>,
+
+        /// Append durable JSONL action lifecycle events to this file
+        #[arg(long)]
+        transaction_log: Option<PathBuf>,
+
         /// Fail immediately on filesystem races/permission errors instead of
         /// collecting them as warnings and continuing
         #[arg(long)]
@@ -280,6 +308,21 @@ enum Commands {
         json: bool,
     },
 
+    /// List resumable sync checkpoints in a checkpoint directory
+    SyncCheckpoints {
+        /// Directory containing sync and copy checkpoints
+        checkpoint_dir: PathBuf,
+    },
+
+    /// Discard a saved sync checkpoint and its partial-copy metadata
+    SyncDiscard {
+        /// Directory containing sync and copy checkpoints
+        checkpoint_dir: PathBuf,
+
+        /// Checkpoint id returned by `sync-checkpoints`
+        id: String,
+    },
+
     /// Copy selected relative paths between left and right directories
     Copy {
         /// Left directory path
@@ -300,6 +343,14 @@ enum Commands {
         #[arg(long)]
         paths_file: Option<PathBuf>,
 
+        /// Directory for resumable-copy checkpoints (local files only)
+        #[arg(long)]
+        checkpoint_dir: Option<PathBuf>,
+
+        /// Append durable JSONL action lifecycle events to this file
+        #[arg(long)]
+        transaction_log: Option<PathBuf>,
+
         /// Dry-run mode (plan only, no filesystem changes)
         #[arg(long)]
         dry_run: bool,
@@ -309,17 +360,17 @@ enum Commands {
         json: bool,
     },
 
-    /// Compute an on-demand diff for one relative file path
+    /// Compute a file diff directly, or for a shared path in two sources
     DiffFile {
-        /// Left source path (directory or supported archive)
+        /// Left file or source path (directory, supported archive, or endpoint)
         left: PathBuf,
 
-        /// Right source path (directory or supported archive)
+        /// Right file or source path (directory, supported archive, or endpoint)
         right: PathBuf,
 
-        /// Relative path inside left/right source
+        /// Shared relative path inside source roots; omit when LEFT and RIGHT are files
         #[arg(long)]
-        path: String,
+        path: Option<String>,
 
         /// Diff mode
         #[arg(long, default_value = "auto")]
@@ -437,11 +488,15 @@ fn main() {
 
     let cli = Cli::parse();
 
+    let schema_version = cli.schema_version;
     match cli.command {
         Commands::Scan {
             left,
             right,
             ignore,
+            overlay,
+            include,
+            exclude,
             follow_symlinks,
             verify_hashes,
             no_verify_hashes,
@@ -481,6 +536,7 @@ fn main() {
             output,
         } => {
             let output_opts = OutputOptions {
+                schema_version,
                 pretty,
                 jsonl,
                 summary_only,
@@ -492,6 +548,9 @@ fn main() {
                 left,
                 right,
                 ignore,
+                overlay,
+                include,
+                exclude,
                 follow_symlinks,
                 verify_hashes,
                 no_verify_hashes,
@@ -533,13 +592,21 @@ fn main() {
                     std::process::exit(scan_result.exit_code());
                 }
                 Err(e) => {
+                    let cancelled = stop_flag.load(Ordering::SeqCst);
+                    if structured_progress_enabled(json, jsonl, progress) {
+                        emit_scan_terminal_event(if cancelled { "cancelled" } else { "failed" });
+                    }
+                    if cancelled {
+                        info!("Scan cancelled");
+                        std::process::exit(130);
+                    }
                     error!("Scan failed: {}", e);
                     std::process::exit(1);
                 }
             }
         }
         Commands::Capabilities { json } => {
-            if let Err(e) = run_capabilities(json) {
+            if let Err(e) = run_capabilities(json, schema_version) {
                 error!("Capabilities failed: {}", e);
                 std::process::exit(1);
             }
@@ -556,6 +623,9 @@ fn main() {
             verify_hashes,
             no_verify_hashes,
             cache_dir,
+            checkpoint_dir,
+            resume_checkpoint,
+            transaction_log,
             strict,
             no_cache,
             cache_read_only,
@@ -575,15 +645,35 @@ fn main() {
                 verify_hashes,
                 no_verify_hashes,
                 cache_dir,
+                checkpoint_dir,
+                resume_checkpoint,
+                transaction_log,
                 strict,
                 no_cache,
                 cache_read_only,
                 hash_jobs,
                 scan_jobs,
                 json,
+                schema_version,
                 &stop_flag,
             ) {
+                if stop_flag.load(Ordering::SeqCst) {
+                    info!("Sync cancelled");
+                    std::process::exit(130);
+                }
                 error!("Sync failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::SyncCheckpoints { checkpoint_dir } => {
+            if let Err(e) = list_sync_checkpoints(&checkpoint_dir, schema_version) {
+                error!("Unable to list sync checkpoints: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::SyncDiscard { checkpoint_dir, id } => {
+            if let Err(e) = discard_sync_checkpoint(&checkpoint_dir, &id, schema_version) {
+                error!("Unable to discard sync checkpoint: {}", e);
                 std::process::exit(1);
             }
         }
@@ -593,10 +683,23 @@ fn main() {
             direction,
             paths,
             paths_file,
+            checkpoint_dir,
+            transaction_log,
             dry_run,
             json,
         } => {
-            if let Err(e) = run_copy(left, right, direction, paths, paths_file, dry_run, json) {
+            if let Err(e) = run_copy(
+                left,
+                right,
+                direction,
+                paths,
+                paths_file,
+                checkpoint_dir,
+                transaction_log,
+                dry_run,
+                json,
+                schema_version,
+            ) {
                 error!("Copy failed: {}", e);
                 std::process::exit(1);
             }
@@ -626,6 +729,7 @@ fn main() {
                 image_exif,
                 image_tolerance,
                 max_binary_ranges,
+                schema_version,
             ) {
                 error!("diff-file failed: {}", e);
                 std::process::exit(1);
@@ -646,6 +750,25 @@ fn main() {
     }
 }
 
+fn structured_progress_enabled(json: bool, jsonl: bool, policy: ProgressPolicy) -> bool {
+    policy == ProgressPolicy::Json || (policy == ProgressPolicy::Auto && (json || jsonl))
+}
+
+fn scan_terminal_event(stage: &str) -> serde_json::Value {
+    serde_json::json!({
+        "stage": stage,
+        "stage_index": 6,
+        "stage_count": 7,
+        "entries_done": 0,
+        "entries_total": 0,
+        "status": stage,
+    })
+}
+
+fn emit_scan_terminal_event(stage: &str) {
+    eprintln!("PROGRESS:{}", scan_terminal_event(stage));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -653,6 +776,50 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, UNIX_EPOCH};
 
+    #[test]
+    fn structured_scan_progress_policy_matches_json_modes() {
+        assert!(structured_progress_enabled(
+            true,
+            false,
+            ProgressPolicy::Auto
+        ));
+        assert!(structured_progress_enabled(
+            false,
+            true,
+            ProgressPolicy::Auto
+        ));
+        assert!(structured_progress_enabled(
+            false,
+            false,
+            ProgressPolicy::Json
+        ));
+        assert!(!structured_progress_enabled(
+            true,
+            false,
+            ProgressPolicy::Never
+        ));
+        assert!(!structured_progress_enabled(
+            false,
+            false,
+            ProgressPolicy::Auto
+        ));
+    }
+
+    #[test]
+    fn scan_terminal_progress_reports_cancelled_and_failed_states() {
+        let cancelled = scan_terminal_event("cancelled");
+        assert_eq!(cancelled["stage"], "cancelled");
+        assert_eq!(cancelled["status"], "cancelled");
+        assert_eq!(cancelled["stage_index"], 6);
+        assert_eq!(cancelled["stage_count"], 7);
+        assert_eq!(cancelled["entries_total"], 0);
+
+        let failed = scan_terminal_event("failed");
+        assert_eq!(failed["stage"], "failed");
+        assert_eq!(failed["status"], "failed");
+    }
+
+    #[cfg(feature = "archives")]
     #[test]
     fn test_detect_archive_kind_zip() {
         assert!(matches!(
@@ -669,6 +836,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "archives")]
     #[test]
     fn test_detect_archive_kind_tar() {
         assert!(matches!(
@@ -689,6 +857,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "archives")]
     #[test]
     fn test_detect_archive_kind_7z() {
         assert!(matches!(
@@ -701,6 +870,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "archives")]
     #[test]
     fn test_detect_archive_kind_none() {
         assert!(detect_archive_kind(Path::new("file.txt")).is_none());
@@ -799,11 +969,17 @@ mod tests {
             false,
             false,
             None,
+            #[cfg(feature = "image-diff")]
             None,
+            #[cfg(feature = "csv-diff")]
             None,
+            #[cfg(feature = "excel-diff")]
             None,
+            #[cfg(feature = "json-diff")]
             None,
+            #[cfg(feature = "json-diff")]
             None,
+            #[cfg(feature = "parquet-diff")]
             None,
         );
 
@@ -862,11 +1038,17 @@ mod tests {
             false,
             false,
             None,
+            #[cfg(feature = "image-diff")]
             None,
+            #[cfg(feature = "csv-diff")]
             None,
+            #[cfg(feature = "excel-diff")]
             None,
+            #[cfg(feature = "json-diff")]
             None,
+            #[cfg(feature = "json-diff")]
             None,
+            #[cfg(feature = "parquet-diff")]
             None,
         );
 
@@ -898,15 +1080,24 @@ mod tests {
     fn test_build_capabilities_report_has_core_commands() {
         let report = build_capabilities_report();
 
-        assert_eq!(report.schema_version, "1.0.0");
+        assert_eq!(report.schema_version, "1.2.0");
         assert_eq!(report.scan_json_schema_versions, vec!["1.1.0".to_string()]);
+        #[cfg(feature = "cloud")]
+        assert_eq!(report.source_schemes, vec!["s3", "sftp", "dav", "davs"]);
+        #[cfg(not(feature = "cloud"))]
+        assert!(report.source_schemes.is_empty());
         assert!(report.commands.iter().any(|c| c.name == "scan"));
         assert!(report.commands.iter().any(|c| c.name == "sync"));
         assert!(report.commands.iter().any(|c| c.name == "copy"));
         assert!(report.commands.iter().any(|c| c.name == "diff-file"));
         assert!(report.commands.iter().any(|c| c.name == "read"));
         assert!(report.commands.iter().any(|c| c.name == "capabilities"));
+        assert!(report
+            .commands
+            .iter()
+            .all(|command| command.flags.iter().any(|flag| flag == "--schema-version")));
         assert!(report.exit_codes.iter().any(|e| e.code == 2));
+        assert!(report.exit_codes.iter().any(|e| e.code == 130));
     }
 
     #[test]
@@ -919,6 +1110,32 @@ mod tests {
             .expect("scan command must exist");
         assert!(scan.flags.iter().any(|f| f == "--json"));
         assert!(scan.supports_json);
+        for flag in [
+            "--include",
+            "--exclude",
+            "--progress",
+            "--regex-rule",
+            "--image-exif",
+            "--image-tolerance",
+        ] {
+            assert!(scan.flags.iter().any(|reported| reported == flag), "{flag}");
+        }
+        assert!(scan.supports_progress);
+        assert_eq!(
+            scan.progress_formats,
+            vec![
+                "terminal-spinner".to_string(),
+                "json-stderr-lines".to_string()
+            ]
+        );
+        for command in report
+            .commands
+            .iter()
+            .filter(|command| command.name != "scan")
+        {
+            assert!(!command.supports_progress, "{}", command.name);
+            assert!(command.progress_formats.is_empty(), "{}", command.name);
+        }
     }
 
     fn sync_test_entry(

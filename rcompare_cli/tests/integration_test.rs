@@ -11,7 +11,11 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Helper struct to manage test directories
@@ -243,6 +247,7 @@ fn test_diff_only_flag() {
         fixture.left().to_str().unwrap(),
         fixture.right().to_str().unwrap(),
         "--diff-only",
+        "--verify-hashes",
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -287,10 +292,12 @@ fn test_json_output() {
         serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
     // Verify structure
-    assert!(json.get("left").is_some());
-    assert!(json.get("right").is_some());
+    assert_eq!(json["schema_version"], "2.0.0");
+    assert_eq!(json["command"], "scan");
+    assert!(json["data"].get("left").is_some());
+    assert!(json["data"].get("right").is_some());
     assert!(json.get("summary").is_some());
-    assert!(json.get("entries").is_some());
+    assert!(json["data"].get("entries").is_some());
 
     // Verify summary contains counts
     let summary = json.get("summary").unwrap();
@@ -315,16 +322,17 @@ fn test_json_output_with_diff_only() {
         fixture.right().to_str().unwrap(),
         "--json",
         "--diff-only",
+        "--verify-hashes",
     ]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value =
         serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
-    let entries = json.get("entries").unwrap().as_array().unwrap();
+    let entries = json["data"]["entries"].as_array().unwrap();
 
     // Should only contain the different file
-    assert_eq!(entries.len(), 1);
+    assert_eq!(entries.len(), 1, "diff-only entries: {entries:#?}");
     assert!(entries[0]
         .get("path")
         .unwrap()
@@ -510,6 +518,7 @@ fn test_cache_dir_option() {
         fixture.right().to_str().unwrap(),
         "--cache-dir",
         cache_dir.path().to_str().unwrap(),
+        "--verify-hashes",
     ]);
 
     assert!(output.status.success());
@@ -770,10 +779,10 @@ fn test_json_structure_complete() {
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Valid JSON");
 
     // Verify all required fields exist
-    assert!(json.get("left").is_some());
-    assert!(json.get("right").is_some());
+    assert!(json["data"].get("left").is_some());
+    assert!(json["data"].get("right").is_some());
     assert!(json.get("summary").is_some());
-    assert!(json.get("entries").is_some());
+    assert!(json["data"].get("entries").is_some());
 
     let summary = json.get("summary").unwrap();
     assert!(summary.get("total").is_some());
@@ -784,7 +793,7 @@ fn test_json_structure_complete() {
     assert!(summary.get("unchecked").is_some());
 
     // Check entry structure
-    let entries = json.get("entries").unwrap().as_array().unwrap();
+    let entries = json["data"]["entries"].as_array().unwrap();
     assert!(!entries.is_empty());
 
     let entry = &entries[0];
@@ -809,7 +818,7 @@ fn test_json_entry_details() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("Valid JSON");
 
-    let entries = json.get("entries").unwrap().as_array().unwrap();
+    let entries = json["data"]["entries"].as_array().unwrap();
 
     // Find the file entry
     let file_entry = entries.iter().find(|e| {
@@ -913,4 +922,488 @@ fn test_right_gitignore_ignored() {
 
     // Should show only 1 right-only file (.gitignore)
     assert!(stdout.contains("Right only:") && stdout.contains("1"));
+}
+
+#[test]
+fn test_copy_command_mutates_selected_file() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("nested/file.txt", "copied");
+
+    let output = run_cli(&[
+        "copy",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--path",
+        "nested/file.txt",
+        "--json",
+    ]);
+
+    assert!(output.status.success(), "copy failed: {:?}", output);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid copy JSON report");
+    assert_eq!(report["summary"]["copied"], 1);
+    assert_eq!(report["schema_version"], "2.0.0");
+    assert_eq!(report["command"], "copy");
+    assert_eq!(report["data"]["items"][0]["status"], "copied");
+    assert_eq!(
+        fs::read_to_string(fixture.right().join("nested/file.txt")).unwrap(),
+        "copied"
+    );
+}
+
+#[test]
+fn test_copy_command_keeps_v1_shape_when_requested() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("legacy.txt", "legacy copy");
+
+    let output = run_cli_success(&[
+        "copy",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--path",
+        "legacy.txt",
+        "--json",
+        "--schema-version",
+        "1",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid legacy copy report");
+
+    assert_eq!(report["schema_version"], "1.0.0");
+    assert_eq!(report["items"][0]["status"], "copied");
+    assert!(report.get("data").is_none());
+}
+
+#[test]
+fn test_copy_command_writes_transaction_log() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("journaled.txt", "journal me");
+    let log_path = fixture.left().parent().unwrap().join("transactions.jsonl");
+
+    let output = run_cli(&[
+        "copy",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--path",
+        "journaled.txt",
+        "--transaction-log",
+        log_path.to_str().unwrap(),
+    ]);
+
+    assert!(output.status.success(), "copy failed: {:?}", output);
+    let log = fs::read_to_string(log_path).unwrap();
+    assert!(log.contains("run_started"));
+    assert!(log.contains("action_started"));
+    assert!(log.contains("action_completed"));
+    assert!(log.contains("run_completed"));
+}
+
+#[test]
+fn test_copy_command_returns_failure_for_missing_source() {
+    let fixture = TestFixture::new();
+    let output = run_cli(&[
+        "copy",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--path",
+        "missing.txt",
+        "--json",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid partial copy report");
+    assert_eq!(report["summary"]["missing"], 1);
+    assert_eq!(report["summary"]["failed"], 0);
+    assert_eq!(report["status"], "partial");
+    assert_eq!(report["data"]["items"][0]["status"], "missing");
+}
+
+#[test]
+fn test_sync_command_mutates_and_reports_actions() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("sync.txt", "sync me");
+
+    let output = run_cli(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--delete-mode",
+        "permanent",
+        "--json",
+    ]);
+
+    assert!(output.status.success(), "sync failed: {:?}", output);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid sync JSON report");
+    assert_eq!(report["summary"]["copied"], 1);
+    assert_eq!(report["schema_version"], "2.0.0");
+    assert_eq!(report["command"], "sync");
+    assert_eq!(report["data"]["actions"][0]["code"], "COPY_LR");
+    assert_eq!(
+        fs::read_to_string(fixture.right().join("sync.txt")).unwrap(),
+        "sync me"
+    );
+}
+
+#[test]
+fn sync_checkpoint_can_be_listed_resumed_and_discarded() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("sync.txt", "sync me");
+    let checkpoint_dir = TempDir::new().expect("checkpoint dir");
+    let checkpoint_dir_arg = checkpoint_dir.path().to_str().unwrap();
+
+    let first = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--delete-mode",
+        "permanent",
+        "--checkpoint-dir",
+        checkpoint_dir_arg,
+        "--json",
+    ]);
+    let report: serde_json::Value = serde_json::from_slice(&first.stdout).expect("sync report");
+    let id = report["data"]["checkpoint_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing checkpoint id in report: {report}"));
+    let manifest_path = checkpoint_dir.path().join(format!("{id}.json"));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).expect("checkpoint manifest");
+    manifest["status"] = serde_json::Value::String("cancelled".to_string());
+    fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+
+    let resumed = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--delete-mode",
+        "permanent",
+        "--checkpoint-dir",
+        checkpoint_dir_arg,
+        "--resume-checkpoint",
+        id,
+        "--json",
+    ]);
+    let resumed_report: serde_json::Value =
+        serde_json::from_slice(&resumed.stdout).expect("resumed report");
+    assert_eq!(resumed_report["data"]["resumed"], true);
+    assert_eq!(resumed_report["data"]["checkpoint_id"], id);
+    assert_eq!(resumed_report["summary"]["total_actions"], 0);
+
+    let checkpoints = run_cli_success(&["sync-checkpoints", checkpoint_dir_arg]);
+    let listed: serde_json::Value =
+        serde_json::from_slice(&checkpoints.stdout).expect("checkpoint list");
+    assert_eq!(listed["command"], "sync-checkpoints");
+    assert_eq!(listed["summary"]["checkpoint_count"], 1);
+    assert_eq!(listed["data"]["checkpoints"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["data"]["checkpoints"][0]["id"], id);
+
+    let discarded = run_cli_success(&["sync-discard", checkpoint_dir_arg, id]);
+    let discard_report: serde_json::Value =
+        serde_json::from_slice(&discarded.stdout).expect("discard report");
+    assert_eq!(discard_report["command"], "sync-discard");
+    assert_eq!(discard_report["data"]["discarded_id"], id);
+    let after_discard = run_cli_success(&["sync-checkpoints", checkpoint_dir_arg]);
+    let empty: serde_json::Value =
+        serde_json::from_slice(&after_discard.stdout).expect("empty checkpoint list");
+    assert_eq!(empty["summary"]["checkpoint_count"], 0);
+    assert_eq!(empty["data"]["checkpoints"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn sync_update_and_mirror_modes_handle_target_orphans_differently() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("left-only.txt", "left");
+    fixture.create_right_file("right-only.txt", "right");
+
+    let update_right = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "update_right",
+        "--dry-run",
+        "--json",
+    ]);
+    let update_right_report: serde_json::Value =
+        serde_json::from_slice(&update_right.stdout).expect("update-right report");
+    assert_eq!(update_right_report["data"]["direction"], "update_right");
+    assert_eq!(update_right_report["summary"]["total_actions"], 1);
+    assert_eq!(update_right_report["data"]["actions"][0]["code"], "COPY_LR");
+    assert_eq!(
+        update_right_report["data"]["actions"][0]["path"],
+        "left-only.txt"
+    );
+
+    let mirror_right = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "mirror_right",
+        "--dry-run",
+        "--json",
+    ]);
+    let mirror_right_report: serde_json::Value =
+        serde_json::from_slice(&mirror_right.stdout).expect("mirror-right report");
+    assert_eq!(mirror_right_report["summary"]["total_actions"], 2);
+    assert_eq!(
+        mirror_right_report["data"]["actions"][1]["code"],
+        "DELETE_R"
+    );
+    assert_eq!(
+        mirror_right_report["data"]["actions"][1]["path"],
+        "right-only.txt"
+    );
+
+    let update_left = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "update_left",
+        "--dry-run",
+        "--json",
+    ]);
+    let update_left_report: serde_json::Value =
+        serde_json::from_slice(&update_left.stdout).expect("update-left report");
+    assert_eq!(update_left_report["summary"]["total_actions"], 1);
+    assert_eq!(update_left_report["data"]["actions"][0]["code"], "COPY_RL");
+    assert_eq!(
+        update_left_report["data"]["actions"][0]["path"],
+        "right-only.txt"
+    );
+
+    let mirror_left = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "mirror_left",
+        "--dry-run",
+        "--json",
+    ]);
+    let mirror_left_report: serde_json::Value =
+        serde_json::from_slice(&mirror_left.stdout).expect("mirror-left report");
+    assert_eq!(mirror_left_report["summary"]["total_actions"], 2);
+    assert_eq!(mirror_left_report["data"]["actions"][0]["code"], "DELETE_L");
+    assert_eq!(mirror_left_report["data"]["actions"][1]["code"], "COPY_RL");
+
+    let update_both = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "update_both",
+        "--dry-run",
+        "--json",
+    ]);
+    let update_both_report: serde_json::Value =
+        serde_json::from_slice(&update_both.stdout).expect("update-both report");
+    assert_eq!(update_both_report["summary"]["total_actions"], 2);
+    assert_eq!(update_both_report["data"]["actions"][0]["code"], "COPY_LR");
+    assert_eq!(update_both_report["data"]["actions"][1]["code"], "COPY_RL");
+
+    // Preserve the older one-way mode's mirror behavior for existing CLI users.
+    let legacy_left_to_right = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "left_to_right",
+        "--dry-run",
+        "--json",
+    ]);
+    let legacy_report: serde_json::Value =
+        serde_json::from_slice(&legacy_left_to_right.stdout).expect("legacy sync report");
+    assert_eq!(legacy_report["summary"]["total_actions"], 2);
+    assert_eq!(legacy_report["data"]["actions"][1]["code"], "DELETE_R");
+
+    let update_result = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "update_right",
+        "--delete-mode",
+        "permanent",
+        "--json",
+    ]);
+    let update_report: serde_json::Value =
+        serde_json::from_slice(&update_result.stdout).expect("update execution report");
+    assert_eq!(update_report["summary"]["deleted"], 0);
+    assert!(fixture.right().join("right-only.txt").exists());
+    assert_eq!(
+        fs::read_to_string(fixture.right().join("left-only.txt")).unwrap(),
+        "left"
+    );
+
+    let mirror_result = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--direction",
+        "mirror_right",
+        "--delete-mode",
+        "permanent",
+        "--json",
+    ]);
+    let mirror_report: serde_json::Value =
+        serde_json::from_slice(&mirror_result.stdout).expect("mirror execution report");
+    assert_eq!(mirror_report["summary"]["deleted"], 1);
+    assert!(!fixture.right().join("right-only.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn sync_sigterm_returns_partial_json_and_journals_cancelled_action() {
+    let fixture = TestFixture::new();
+    let large_file = fs::File::create(fixture.left().join("large.bin")).expect("large source file");
+    large_file
+        .set_len(64 * 1024 * 1024)
+        .expect("large sparse source");
+
+    let checkpoint_dir = TempDir::new().expect("checkpoint dir");
+    let config_dir = TempDir::new().expect("config dir");
+    let cache_dir = TempDir::new().expect("cache dir");
+    let transaction_log = fixture._temp_dir.path().join("sync.jsonl");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rcompare_cli"))
+        .args([
+            "sync",
+            fixture.left().to_str().unwrap(),
+            fixture.right().to_str().unwrap(),
+            "--delete-mode",
+            "permanent",
+            "--checkpoint-dir",
+            checkpoint_dir.path().to_str().unwrap(),
+            "--transaction-log",
+            transaction_log.to_str().unwrap(),
+            "--json",
+            "--no-cache",
+        ])
+        .env("XDG_CONFIG_HOME", config_dir.path())
+        .env("XDG_CACHE_HOME", cache_dir.path())
+        .env("APPDATA", config_dir.path())
+        .env("LOCALAPPDATA", cache_dir.path())
+        .env("HOME", config_dir.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start sync process");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let journal = fs::read_to_string(&transaction_log).unwrap_or_default();
+        if journal.contains("\"event\":\"action_started\"") {
+            break;
+        }
+        if let Some(status) = child.try_wait().expect("poll sync process") {
+            panic!("sync exited before starting an action: {status}");
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("stop timed-out sync process");
+            panic!("sync did not reach its first action in 30 seconds");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let signal_result = unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    assert_eq!(signal_result, 0, "send SIGTERM to sync process");
+    let output = child.wait_with_output().expect("collect sync output");
+
+    assert_eq!(output.status.code(), Some(130));
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cancelled sync JSON report");
+    assert_eq!(report["status"], "cancelled");
+    assert_eq!(report["summary"]["cancelled"], true);
+    assert_eq!(report["summary"]["completed"], 0);
+    assert_eq!(report["summary"]["remaining"], 1);
+    assert_eq!(report["summary"]["failed"], 0);
+    let checkpoint_id = report["data"]["checkpoint_id"]
+        .as_str()
+        .expect("cancelled sync checkpoint id");
+    let manifest_path = checkpoint_dir.path().join(format!("{checkpoint_id}.json"));
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("read cancelled manifest"))
+            .expect("parse cancelled manifest");
+    assert_eq!(manifest["status"], "cancelled");
+
+    let resumed = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--delete-mode",
+        "permanent",
+        "--checkpoint-dir",
+        checkpoint_dir.path().to_str().unwrap(),
+        "--resume-checkpoint",
+        checkpoint_id,
+        "--json",
+        "--no-cache",
+    ]);
+    let resumed_report: serde_json::Value =
+        serde_json::from_slice(&resumed.stdout).expect("resumed sync JSON report");
+    assert_eq!(resumed_report["data"]["resumed"], true);
+    assert_eq!(resumed_report["data"]["checkpoint_id"], checkpoint_id);
+    assert_eq!(resumed_report["summary"]["copied"], 1);
+    assert_eq!(
+        fs::metadata(fixture.right().join("large.bin"))
+            .expect("resumed destination file")
+            .len(),
+        64 * 1024 * 1024
+    );
+
+    let journal = fs::read_to_string(transaction_log).expect("read transaction log");
+    assert!(journal.contains("\"event\":\"action_cancelled\""));
+    assert!(journal.contains("\"event\":\"run_cancelled\""));
+}
+
+#[test]
+fn test_sync_command_keeps_v1_shape_when_requested() {
+    let fixture = TestFixture::new();
+    fixture.create_left_file("legacy-sync.txt", "legacy sync");
+
+    let output = run_cli_success(&[
+        "sync",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--dry-run",
+        "--json",
+        "--schema-version",
+        "1",
+    ]);
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid legacy sync report");
+
+    assert_eq!(report["schema_version"], "1.0.0");
+    assert_eq!(report["actions"][0]["code"], "COPY_LR");
+    assert!(report.get("data").is_none());
+}
+
+#[test]
+fn test_scan_overlay_and_glob_filter() {
+    let fixture = TestFixture::new();
+    let overlay = fixture.left().parent().unwrap().join("overlay");
+    fs::create_dir(&overlay).unwrap();
+    fs::write(overlay.join("shared.txt"), "shared").unwrap();
+    fs::write(overlay.join("ignored.log"), "ignored").unwrap();
+    fixture.create_left_file("base.txt", "base");
+
+    let output = run_cli(&[
+        "scan",
+        fixture.left().to_str().unwrap(),
+        fixture.right().to_str().unwrap(),
+        "--overlay",
+        overlay.to_str().unwrap(),
+        "--include",
+        "*.txt",
+        "--json",
+    ]);
+
+    assert!(output.status.success() || output.status.code() == Some(2));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("base.txt"));
+    assert!(stdout.contains("shared.txt"));
+    assert!(!stdout.contains("ignored.log"));
 }

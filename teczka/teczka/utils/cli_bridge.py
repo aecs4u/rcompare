@@ -5,12 +5,28 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+
 from .telemetry import log_exception
+
+
+def unwrap_json_envelope(report: dict) -> dict:
+    """Return a command report with common v2 fields alongside its data."""
+    if (
+        report.get("schema_version") != "2.0.0"
+        or not isinstance(report.get("data"), dict)
+    ):
+        return report
+
+    result = dict(report["data"])
+    for key in ("schema_version", "command", "status", "summary", "warnings"):
+        if key in report:
+            result[key] = report[key]
+    return result
 
 
 class DiffStatus(str, Enum):
     """Mirror of rcompare_common::DiffStatus."""
+
     SAME = "Same"
     DIFFERENT = "Different"
     ORPHAN_LEFT = "OrphanLeft"
@@ -21,23 +37,26 @@ class DiffStatus(str, Enum):
 @dataclass
 class FileSide:
     """One side of a file comparison entry."""
+
     size: int
-    modified_unix: Optional[int]
+    modified_unix: int | None
     is_dir: bool
 
 
 @dataclass
 class DiffEntry:
     """A single comparison entry from CLI JSON output."""
+
     path: str
     status: DiffStatus
-    left: Optional[FileSide]
-    right: Optional[FileSide]
+    left: FileSide | None
+    right: FileSide | None
 
 
 @dataclass
 class ScanSummary:
     """Summary statistics from a scan."""
+
     total: int
     same: int
     different: int
@@ -49,8 +68,9 @@ class ScanSummary:
 @dataclass
 class TextDiffLine:
     """A line from text diff output."""
-    line_number_left: Optional[int]
-    line_number_right: Optional[int]
+
+    line_number_left: int | None
+    line_number_right: int | None
     content: str
     change_type: str  # "Equal", "Insert", "Delete"
     highlighted_segments: list[dict] = field(default_factory=list)
@@ -59,6 +79,7 @@ class TextDiffLine:
 @dataclass
 class TextDiffReport:
     """Text diff result for a single file."""
+
     path: str
     total_lines: int
     equal_lines: int
@@ -70,6 +91,7 @@ class TextDiffReport:
 @dataclass
 class ImageDiffReport:
     """Image diff result for a single file pair."""
+
     path: str
     result: dict  # Raw JSON dict of ImageDiffResult
 
@@ -77,6 +99,7 @@ class ImageDiffReport:
 @dataclass
 class ScanReport:
     """Complete scan result from CLI JSON output."""
+
     left: str
     right: str
     summary: ScanSummary
@@ -96,6 +119,11 @@ class CliBridge:
     def __init__(self, cli_path: str):
         self._cli_path = cli_path
 
+    @property
+    def executable(self) -> str:
+        """Path to the configured CLI executable."""
+        return self._cli_path
+
     def build_command(self, args: list[str]) -> list[str]:
         """Build a command list for QProcess usage."""
         return [self._cli_path] + args
@@ -107,6 +135,7 @@ class CliBridge:
         except Exception:
             log_exception("failed to decode scan JSON")
             raise
+        data = unwrap_json_envelope(data)
         summary = ScanSummary(
             total=data["summary"]["total"],
             same=data["summary"]["same"],
@@ -132,39 +161,47 @@ class CliBridge:
                     modified_unix=e["right"].get("modified_unix"),
                     is_dir=e["right"]["is_dir"],
                 )
-            entries.append(DiffEntry(
-                path=e["path"],
-                status=DiffStatus(e["status"]),
-                left=left,
-                right=right,
-            ))
+            entries.append(
+                DiffEntry(
+                    path=e["path"],
+                    status=DiffStatus(e["status"]),
+                    left=left,
+                    right=right,
+                )
+            )
 
         text_diffs = []
         for td in data.get("text_diffs") or []:
             lines = []
             for line in td.get("lines", []):
-                lines.append(TextDiffLine(
-                    line_number_left=line.get("line_number_left"),
-                    line_number_right=line.get("line_number_right"),
-                    content=line.get("content", ""),
-                    change_type=line.get("change_type", "Equal"),
-                    highlighted_segments=line.get("highlighted_segments", []),
-                ))
-            text_diffs.append(TextDiffReport(
-                path=td["path"],
-                total_lines=td.get("total_lines", 0),
-                equal_lines=td.get("equal_lines", 0),
-                inserted_lines=td.get("inserted_lines", 0),
-                deleted_lines=td.get("deleted_lines", 0),
-                lines=lines,
-            ))
+                lines.append(
+                    TextDiffLine(
+                        line_number_left=line.get("line_number_left"),
+                        line_number_right=line.get("line_number_right"),
+                        content=line.get("content", ""),
+                        change_type=line.get("change_type", "Equal"),
+                        highlighted_segments=line.get("highlighted_segments", []),
+                    )
+                )
+            text_diffs.append(
+                TextDiffReport(
+                    path=td["path"],
+                    total_lines=td.get("total_lines", 0),
+                    equal_lines=td.get("equal_lines", 0),
+                    inserted_lines=td.get("inserted_lines", 0),
+                    deleted_lines=td.get("deleted_lines", 0),
+                    lines=lines,
+                )
+            )
 
         image_diffs = []
         for img in data.get("image_diffs") or []:
-            image_diffs.append(ImageDiffReport(
-                path=img["path"],
-                result=img.get("result", {}),
-            ))
+            image_diffs.append(
+                ImageDiffReport(
+                    path=img["path"],
+                    result=img.get("result", {}),
+                )
+            )
 
         return ScanReport(
             left=data["left"],
@@ -190,7 +227,11 @@ class CliBridge:
         ignore_patterns: list[str] | None = None,
         follow_symlinks: bool = False,
         verify_hashes: bool = False,
+        no_verify_hashes: bool = False,
+        strict: bool = False,
         conflict: str = "newest",
+        checkpoint_dir: str | None = None,
+        resume_checkpoint: str | None = None,
     ) -> list[str]:
         """Build the argument list for a `sync` invocation (no execution)."""
         args = [
@@ -211,9 +252,25 @@ class CliBridge:
             args.append("--follow-symlinks")
         if verify_hashes:
             args.append("--verify-hashes")
+        if no_verify_hashes:
+            args.append("--no-verify-hashes")
+        if strict:
+            args.append("--strict")
+        if checkpoint_dir:
+            args.extend(["--checkpoint-dir", checkpoint_dir])
+        if resume_checkpoint:
+            args.extend(["--resume-checkpoint", resume_checkpoint])
         for pattern in ignore_patterns or []:
             args.extend(["--ignore", pattern])
         return args
+
+    def build_sync_checkpoints_args(self, checkpoint_dir: str) -> list[str]:
+        """Build arguments to list saved sync runs."""
+        return ["sync-checkpoints", checkpoint_dir]
+
+    def build_sync_discard_args(self, checkpoint_dir: str, checkpoint_id: str) -> list[str]:
+        """Build arguments to discard one saved sync run."""
+        return ["sync-discard", checkpoint_dir, checkpoint_id]
 
     def build_copy_args(
         self,
@@ -237,4 +294,3 @@ class CliBridge:
         if dry_run:
             args.append("--dry-run")
         return args
-

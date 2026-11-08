@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare diff-file JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "diff-file" },
+        "summary": {
+          "type": "object",
+          "required": ["path", "mode"],
+          "properties": {
+            "path": { "type": "string" },
+            "mode": { "type": "string" }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["left", "right", "path", "mode", "result"],
+          "properties": {
+            "left": { "type": "string" },
+            "right": { "type": "string" },
+            "path": { "type": "string" },
+            "mode": { "type": "string" },
+            "result": { "type": "object" }
+          }
+        }
+      }
+    }
+  ]
+}

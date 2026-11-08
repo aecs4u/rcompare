@@ -10,7 +10,7 @@ repository.workspace = true
 default = ["cloud", "archives", "specialized"]
 
 # Cloud storage support (S3, SSH/SFTP, WebDAV)
-cloud = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:ssh2", "dep:reqwest", "dep:bytes", "dep:async-trait", "dep:tokio", "dep:url"]
+cloud = ["dep:aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:ssh2", "dep:reqwest", "dep:bytes", "dep:async-trait", "dep:tokio", "dep:url", "dep:quick-xml", "dep:httpdate"]
 
 # Archive format support (ZIP, TAR, 7Z, RAR)
 archives = ["dep:zip", "dep:tar", "dep:flate2", "dep:sevenz-rust", "dep:bzip2", "dep:xz2", "dep:unrar", "dep:tempfile"]
@@ -108,6 +108,8 @@ bytes = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+httpdate = { workspace = true, optional = true }
 
 [lints]
 workspace = true

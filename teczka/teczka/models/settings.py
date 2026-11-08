@@ -17,6 +17,7 @@ class ComparisonSettings:
     follow_symlinks: bool = False
     use_hash_verification: bool = True
     cache_dir: Optional[str] = None
+    auto_refresh: bool = False
 
 
 @dataclass

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-08) — Remote file-pair viewing
+
+- Open a selected remote comparison row in the existing text, table, image, or
+  hex viewer by staging both sides through the CLI.
+- Accept supported remote file URLs in the standalone file-pair dialog and
+  compare remote or mixed local/remote pairs with different names.
+- Accept explicit remote file URLs in `rcompare_cli diff-file`; capability
+  output documents those schemes for scan, read, and file diff.
+- Convert `dav`/`davs` endpoints to their HTTP(S) transport URLs before
+  connecting, and cover direct remote file diffs with a local WebDAV fixture.
+- Stream CLI `read --out` data to a sibling temporary file, preserve existing
+  destinations when a read fails, and replace the destination after success.
+
+### Added (2026-11-08) — Side-by-side file properties
+
+- Replace the basic Attributes alert with a Properties dialog that compares
+  both sides and shows missing items, type, size, permissions, owner/group,
+  timestamps, symlink targets, and copyable paths.
+
+### Added (2026-11-08) — Open With application picker
+
+- Choose an external application for a file, pass its path as a separate
+  argument, and optionally save the handler for that file extension. Keep the
+  operating-system default and saved handler as separate Open With actions.
+
+### Added (2026-11-08) — Criteria-based bulk selection
+
+- Add Edit → Smart Select on LHS for visible rows by status, path glob, and
+  left-side size, with All, None, Invert, select, and deselect actions.
+
+### Fixed (2026-11-08) — Three-way merge conflict grouping
+
+- Merge overlapping edits by their complete base-line region, so edits that
+  start on different lines are shown as one unresolved conflict instead of
+  being silently combined.
+- Route background worker exception logging to its owning Qt thread to avoid
+  concurrent Rich/structlog rendering from worker threads.
+
+### Fixed (2026-11-08) — Text diff worker lifetime
+
+- Keep file-diff workers alive until their threads finish, route results through
+  the owning TextView, and avoid destroying a view-owned QThread mid-run.
+
+### Added (2026-11-08) — Graceful sync cancellation
+
+- Stop sync between actions or during chunked file transfers, report completed
+  and remaining work, and journal cancelled actions. Local file copies persist
+  resumable checkpoints and verify source hashes before continuing.
+- Route the GUI Stop button through graceful CLI termination and show the
+  partial sync outcome; checkpoint discovery and explicit resume controls are
+  still in progress.
+
+### Added (2026-11-08) — Merge-view regression coverage
+
+- Add focused GUI tests for independent and identical edits, overlapping and
+  same-point conflicts, conflict resolution and line offsets, asynchronous
+  loading, stale results, read errors, and saving.
+
 ### Changed (2026-07-25) — Documentation consolidation
 
 - Replaced five overlapping/stale roadmap docs (`GAPS.md`, `ROADMAP.md`,

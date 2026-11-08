@@ -76,6 +76,12 @@ impl Vfs for LocalVfs {
         Ok(())
     }
 
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        let full_path = self.root.join(path);
+        fs::remove_dir(&full_path)?;
+        Ok(())
+    }
+
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
         let src_path = self.root.join(src);
         let dest_path = self.root.join(dest);

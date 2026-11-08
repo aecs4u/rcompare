@@ -64,8 +64,147 @@ fn scan_jsonl_streams_summary_and_bounded_entries_with_parallel_scans() {
 
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0]["type"], "summary");
+    assert_eq!(lines[0]["schema_version"], "2.0.0");
+    assert_eq!(lines[0]["command"], "scan");
     assert_eq!(lines[0]["summary"]["total"], 2);
     assert_eq!(lines[1]["type"], "entry");
+    assert_eq!(lines[1]["status"], "entry");
+    assert!(lines[1]["data"]["path"].is_string());
+}
+
+#[test]
+fn scan_json_keeps_v1_shape_when_requested() {
+    let left = TempDir::new().expect("left dir");
+    let right = TempDir::new().expect("right dir");
+    fs::write(left.path().join("a.txt"), "same").unwrap();
+    fs::write(right.path().join("a.txt"), "same").unwrap();
+
+    let stdout = run_cli_stdout(&[
+        "scan",
+        left.path().to_str().unwrap(),
+        right.path().to_str().unwrap(),
+        "--json",
+        "--schema-version",
+        "1",
+    ]);
+    let report: Value = serde_json::from_str(&stdout).expect("scan v1 JSON");
+
+    assert_eq!(report["schema_version"], "1.1.0");
+    assert!(report["entries"].is_array());
+    assert!(report.get("data").is_none());
+}
+
+#[test]
+fn scan_jsonl_keeps_v1_record_shape_when_requested() {
+    let left = TempDir::new().expect("left dir");
+    let right = TempDir::new().expect("right dir");
+    fs::write(left.path().join("a.txt"), "left").unwrap();
+    fs::write(right.path().join("a.txt"), "right").unwrap();
+
+    let stdout = run_cli_stdout(&[
+        "scan",
+        left.path().to_str().unwrap(),
+        right.path().to_str().unwrap(),
+        "--jsonl",
+        "--schema-version",
+        "1",
+        "--progress",
+        "never",
+    ]);
+    let records: Vec<Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid legacy JSONL record"))
+        .collect();
+
+    assert_eq!(records[0]["schema_version"], "1.1.0");
+    assert_eq!(records[0]["type"], "summary");
+    assert_eq!(records[1]["type"], "entry");
+    assert!(records[1]["path"].is_string());
+    assert!(records[1].get("data").is_none());
+}
+
+#[test]
+fn json_scan_emits_structured_progress_on_stderr() {
+    let left = TempDir::new().expect("left dir");
+    let right = TempDir::new().expect("right dir");
+    fs::write(left.path().join("a.txt"), "left").unwrap();
+    fs::write(right.path().join("a.txt"), "right").unwrap();
+
+    let config_dir = TempDir::new().expect("config dir");
+    let cache_dir = TempDir::new().expect("cache dir");
+    let output = Command::new(env!("CARGO_BIN_EXE_rcompare_cli"))
+        .args([
+            "scan",
+            left.path().to_str().unwrap(),
+            right.path().to_str().unwrap(),
+            "--json",
+            "--progress",
+            "json",
+        ])
+        .env("XDG_CONFIG_HOME", config_dir.path())
+        .env("XDG_CACHE_HOME", cache_dir.path())
+        .env("APPDATA", config_dir.path())
+        .env("LOCALAPPDATA", cache_dir.path())
+        .env("HOME", config_dir.path())
+        .output()
+        .expect("failed to run rcompare_cli");
+
+    assert_eq!(output.status.code(), Some(2));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON stdout report");
+    assert_eq!(report["summary"]["different"], 1);
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    let events: Vec<Value> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("PROGRESS:"))
+        .map(|payload| serde_json::from_str(payload).expect("valid progress event"))
+        .collect();
+    assert!(!events.is_empty(), "expected progress events on stderr");
+    assert!(events.iter().all(|event| event["stage_count"] == 6));
+    assert!(events.iter().any(|event| event["stage"] == "done"));
+}
+
+#[test]
+fn json_scan_emits_terminal_failure_event_for_unavailable_source() {
+    let root = TempDir::new().expect("root dir");
+    let right = TempDir::new().expect("right dir");
+    let missing = root.path().join("missing");
+    let config_dir = TempDir::new().expect("config dir");
+    let cache_dir = TempDir::new().expect("cache dir");
+    let output = Command::new(env!("CARGO_BIN_EXE_rcompare_cli"))
+        .args([
+            "scan",
+            missing.to_str().unwrap(),
+            right.path().to_str().unwrap(),
+            "--json",
+            "--progress",
+            "json",
+            "--no-cache",
+        ])
+        .env("XDG_CONFIG_HOME", config_dir.path())
+        .env("XDG_CACHE_HOME", cache_dir.path())
+        .env("APPDATA", config_dir.path())
+        .env("LOCALAPPDATA", cache_dir.path())
+        .env("HOME", config_dir.path())
+        .output()
+        .expect("failed to run rcompare_cli");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("stderr is utf-8");
+    let events: Vec<Value> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("PROGRESS:"))
+        .map(|payload| serde_json::from_str(payload).expect("valid progress event"))
+        .collect();
+    assert_eq!(
+        events.last().expect("terminal progress event")["stage"],
+        "failed"
+    );
+    assert_eq!(
+        events.last().expect("terminal progress event")["status"],
+        "failed"
+    );
 }
 
 fn run_cli_stdout(args: &[&str]) -> String {
@@ -83,6 +222,60 @@ fn run_cli_stdout(args: &[&str]) -> String {
         .expect("failed to run rcompare_cli");
     assert!(matches!(output.status.code(), Some(0 | 2)));
     String::from_utf8(output.stdout).expect("stdout not utf-8")
+}
+
+#[test]
+fn capabilities_json_lists_remote_schemes_available_in_this_build() {
+    let stdout = run_cli_stdout(&["capabilities", "--json"]);
+    let report: Value = serde_json::from_str(&stdout).expect("capabilities JSON");
+
+    assert_eq!(report["schema_version"], "2.0.0");
+    assert_eq!(report["command"], "capabilities");
+    let data = &report["data"];
+    assert_eq!(data["schema_version"], "1.2.0");
+    assert_eq!(data["default_json_schema_version"], 2);
+    assert_eq!(
+        data["supported_json_schema_versions"],
+        serde_json::json!([1, 2])
+    );
+    let scan = data["commands"]
+        .as_array()
+        .expect("commands array")
+        .iter()
+        .find(|command| command["name"] == "scan")
+        .expect("scan command");
+    assert_eq!(scan["supports_progress"], true);
+    assert_eq!(
+        scan["progress_formats"],
+        serde_json::json!(["terminal-spinner", "json-stderr-lines"])
+    );
+    assert!(scan["flags"]
+        .as_array()
+        .unwrap()
+        .contains(&Value::from("--schema-version")));
+    let schemes = data["source_schemes"]
+        .as_array()
+        .expect("source_schemes array");
+    #[cfg(feature = "cloud")]
+    assert_eq!(
+        schemes,
+        &["s3", "sftp", "dav", "davs"]
+            .into_iter()
+            .map(Value::from)
+            .collect::<Vec<_>>()
+    );
+    #[cfg(not(feature = "cloud"))]
+    assert!(schemes.is_empty());
+
+    let legacy: Value = serde_json::from_str(&run_cli_stdout(&[
+        "capabilities",
+        "--json",
+        "--schema-version",
+        "1",
+    ]))
+    .expect("legacy capabilities JSON");
+    assert_eq!(legacy["schema_version"], "1.2.0");
+    assert!(legacy.get("data").is_none());
 }
 
 fn write_archive_files(vfs: &dyn Vfs, files: &[(&str, &str)]) {
@@ -110,7 +303,10 @@ fn create_7z_archive(path: &Path, files: &[(&str, &str)]) {
 
 fn entries_by_path(report: &Value) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let entries = report["entries"].as_array().expect("entries array missing");
+    let report_data = report.get("data").unwrap_or(report);
+    let entries = report_data["entries"]
+        .as_array()
+        .expect("entries array missing");
     for entry in entries {
         let path = entry["path"].as_str().unwrap_or("").to_string();
         let status = entry["status"].as_str().unwrap_or("").to_string();
@@ -457,7 +653,9 @@ fn scan_json_entry_schema_and_unchecked_status() {
         "--json",
     ]);
 
-    let entries = report["entries"].as_array().expect("entries array missing");
+    let entries = report["data"]["entries"]
+        .as_array()
+        .expect("entries array missing");
     for entry in entries {
         assert_entry_schema(entry);
     }

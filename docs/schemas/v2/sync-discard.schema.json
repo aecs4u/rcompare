@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare sync checkpoint discard JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "sync-discard" },
+        "summary": {
+          "type": "object",
+          "required": ["discarded"],
+          "properties": {
+            "discarded": { "const": 1 }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["discarded_id"],
+          "properties": {
+            "discarded_id": { "type": "string" }
+          }
+        }
+      }
+    }
+  ]
+}

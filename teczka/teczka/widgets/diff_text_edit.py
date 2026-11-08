@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QRect, QSize, Signal
+from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QResizeEvent, QTextOption
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
+
+from .syntax_highlighter import SyntaxHighlighter
 
 # Type alias: list of (start_col, end_col, color) per line
 CharHighlights = list[list[tuple[int, int, QColor]]]
@@ -45,6 +47,8 @@ class DiffTextEdit(QPlainTextEdit):
         self._char_highlights: CharHighlights = []  # Per-line character-level highlights
         self._editable: bool = False
         self._dirty: bool = False
+        self._syntax_language: str | None = None
+        self._syntax_highlighter: SyntaxHighlighter | None = None
 
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
@@ -68,12 +72,42 @@ class DiffTextEdit(QPlainTextEdit):
         self.setPlainText("\n".join(lines))
         self.viewport().update()
 
+    def set_word_wrap(self, enabled: bool) -> None:
+        """Toggle visual line wrapping without changing the diff content."""
+        if enabled:
+            self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        else:
+            self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+
     def clear_content(self) -> None:
         """Clear all content."""
         self._line_colors = []
         self._line_numbers = []
         self._char_highlights = []
         self.clear()
+
+    def set_syntax_language(self, language: str | None) -> None:
+        """Apply or remove syntax formatting for the editor's current content."""
+        if language == self._syntax_language:
+            return
+        if language is None:
+            if self._syntax_highlighter is not None:
+                highlighter = self._syntax_highlighter
+                highlighter.setDocument(None)
+                highlighter.deleteLater()
+                self._syntax_highlighter = None
+            self._syntax_language = None
+            return
+
+        if self._syntax_highlighter is None:
+            self._syntax_highlighter = SyntaxHighlighter(
+                self.document(), language, self
+            )
+        else:
+            self._syntax_highlighter.set_language(language)
+        self._syntax_language = language
 
     def line_number_area_width(self) -> int:
         digits = max(1, len(str(self.blockCount())))

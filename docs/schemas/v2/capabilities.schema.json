@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare capabilities JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "capabilities" },
+        "summary": {
+          "type": "object",
+          "required": ["command_count"],
+          "properties": { "command_count": { "type": "integer", "minimum": 0 } }
+        },
+        "data": {
+          "type": "object",
+          "required": ["schema_version", "cli_version", "scan_json_schema_versions", "source_schemes", "commands", "exit_codes", "notes", "supported_json_schema_versions", "default_json_schema_version"],
+          "properties": {
+            "schema_version": { "type": "string" },
+            "cli_version": { "type": "string" },
+            "scan_json_schema_versions": { "type": "array", "items": { "type": "string" } },
+            "source_schemes": { "type": "array", "items": { "type": "string" } },
+            "commands": { "type": "array", "items": { "type": "object" } },
+            "exit_codes": { "type": "array", "items": { "type": "object" } },
+            "notes": { "type": "array", "items": { "type": "string" } },
+            "supported_json_schema_versions": { "type": "array", "items": { "type": "integer" } },
+            "default_json_schema_version": { "const": 2 }
+          }
+        }
+      }
+    }
+  ]
+}

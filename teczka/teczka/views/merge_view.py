@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 import difflib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
-    QPushButton, QToolBar, QFileDialog, QMessageBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..widgets.diff_text_edit import DiffTextEdit
 from ..workers.function_worker import FunctionWorker
-
 
 # Highlight colors for merge regions
 COLOR_LEFT = QColor("#bbdefb")       # blue tint - lines from left
@@ -36,7 +42,7 @@ class _MergeComputation:
     left_lines: list[str] = field(default_factory=list)
     base_lines: list[str] = field(default_factory=list)
     right_lines: list[str] = field(default_factory=list)
-    conflicts: list["ConflictRegion"] = field(default_factory=list)
+    conflicts: list[ConflictRegion] = field(default_factory=list)
     output_lines: list[str] = field(default_factory=list)
     output_colors: list[QColor] = field(default_factory=list)
 
@@ -74,9 +80,13 @@ class ConflictRegion:
     """Tracks a single conflict in the merge output."""
 
     __slots__ = (
-        "start_line", "end_line", "conflict_type",
-        "left_lines", "right_lines", "base_lines",
+        "base_lines",
+        "conflict_type",
+        "end_line",
+        "left_lines",
         "resolved",
+        "right_lines",
+        "start_line",
     )
 
     def __init__(
@@ -307,11 +317,12 @@ class MergeView(QWidget):
         self._conflicts = result.conflicts
         nums = [str(i + 1) for i in range(len(result.output_lines))]
         self._output_editor.set_content(result.output_lines, result.output_colors, nums)
-        self._update_conflict_label()
-
         if self._conflicts:
             self._current_conflict = 0
             self._scroll_to_conflict(0)
+        else:
+            self._current_conflict = -1
+        self._update_conflict_label()
 
     def _on_merge_error(self, paths: tuple[str, str, str], message: str) -> None:
         if self._pending_merge_paths != paths:
@@ -348,22 +359,17 @@ class MergeView(QWidget):
         left_lines: list[str],
         base_lines: list[str],
         right_lines: list[str],
-    ) -> tuple[list["ConflictRegion"], list[str], list[QColor]]:
+    ) -> tuple[list[ConflictRegion], list[str], list[QColor]]:
         """Simple 3-way merge using difflib. Pure function (no Qt widget
         access) so it can run on a worker thread.
 
-        Algorithm:
-        1. Diff left vs base and right vs base.
-        2. Walk through base lines; auto-merge where only one side changed.
-        3. Mark conflicts where both sides changed the same region.
+        Diff both sides against the base, group overlapping base spans, and
+        compare each side's complete replacement for each span. Independent
+        edits are applied in order; a region conflicts only when both sides
+        changed it and their resulting lines differ.
         """
         left_ops = difflib.SequenceMatcher(None, base_lines, left_lines).get_opcodes()
         right_ops = difflib.SequenceMatcher(None, base_lines, right_lines).get_opcodes()
-
-        # Build per-base-line change maps
-        base_len = len(base_lines)
-        # For each base line, record what left and right want to do
-        # We work in terms of "chunks" aligned to the base
 
         output_lines: list[str] = []
         output_colors: list[QColor] = []
@@ -373,102 +379,129 @@ class MergeView(QWidget):
         left_changes = MergeView._opcodes_to_changes(left_ops, base_lines, left_lines)
         right_changes = MergeView._opcodes_to_changes(right_ops, base_lines, right_lines)
 
-        # Merge the two change lists against the base
-        all_base_regions = sorted(
-            set(left_changes.keys()) | set(right_changes.keys())
-        )
+        edits = [
+            (start, end, replacement, "left")
+            for start, (end, replacement) in left_changes.items()
+        ] + [
+            (start, end, replacement, "right")
+            for start, (end, replacement) in right_changes.items()
+        ]
+        edits.sort(key=lambda edit: (edit[0], edit[1], edit[3]))
 
-        # Track which base regions we have processed
+        def overlaps_region(
+            start: int, end: int, region_start: int, region_end: int
+        ) -> bool:
+            # Insertions at the same point (or at a replacement boundary)
+            # participate in one decision; adjacent non-empty replacements
+            # remain independent and can be combined automatically.
+            if start == end:
+                return region_start <= start <= region_end
+            if region_start == region_end:
+                return start <= region_start <= end
+            return start < region_end and region_start < end
+
+        def apply_region_edits(
+            start: int,
+            end: int,
+            region_edits: list[tuple[int, int, list[str], str]],
+        ) -> list[str]:
+            patched: list[str] = []
+            cursor = start
+            for edit_start, edit_end, replacement, _side in sorted(
+                region_edits, key=lambda edit: (edit[0], edit[1])
+            ):
+                if edit_start < cursor:
+                    # Edits from one side are generated by a single diff and
+                    # should not overlap. Keep this defensive guard explicit.
+                    continue
+                patched.extend(base_lines[cursor:edit_start])
+                patched.extend(replacement)
+                cursor = max(cursor, edit_end)
+            patched.extend(base_lines[cursor:end])
+            return patched
+
+        # Fold edits that touch the same base region before comparing their
+        # outcomes. This catches overlapping replacements with different
+        # start indexes, which a start-index-only merge treated as separate.
+        groups: list[list[tuple[int, int, list[str], str]]] = []
+        group_start = 0
+        group_end = 0
+        for edit in edits:
+            start, end, _replacement, _side = edit
+            if not groups or not overlaps_region(start, end, group_start, group_end):
+                groups.append([edit])
+                group_start, group_end = start, end
+            else:
+                groups[-1].append(edit)
+                group_start = min(group_start, start)
+                group_end = max(group_end, end)
+
         next_base = 0
-
-        for region_start in all_base_regions:
-            l_change = left_changes.get(region_start)
-            r_change = right_changes.get(region_start)
-
-            # Emit any unchanged base lines before this region
+        for group in groups:
+            region_start = min(edit[0] for edit in group)
+            region_end = max(edit[1] for edit in group)
             if region_start > next_base:
-                for i in range(next_base, region_start):
-                    if i < base_len:
-                        output_lines.append(base_lines[i])
-                        output_colors.append(COLOR_WHITE)
-
-            l_end = l_change[0] if l_change else region_start
-            l_new = l_change[1] if l_change else []
-            r_end = r_change[0] if r_change else region_start
-            r_new = r_change[1] if r_change else []
-
-            region_end = max(l_end, r_end)
+                output_lines.extend(base_lines[next_base:region_start])
+                output_colors.extend([COLOR_WHITE] * (region_start - next_base))
 
             base_slice = base_lines[region_start:region_end]
+            left_edits = [edit for edit in group if edit[3] == "left"]
+            right_edits = [edit for edit in group if edit[3] == "right"]
+            left_result = apply_region_edits(region_start, region_end, left_edits)
+            right_result = apply_region_edits(region_start, region_end, right_edits)
 
-            if l_change and not r_change:
-                # Only left changed
-                start = len(output_lines)
-                for line in l_new:
-                    output_lines.append(line)
-                    output_colors.append(COLOR_LEFT)
-                end = len(output_lines)
-                if start < end:
-                    conflicts.append(ConflictRegion(
-                        start, end, ConflictType.LEFT_ONLY,
-                        l_new, base_slice, base_slice,
-                    ))
-                    conflicts[-1].resolved = True
-            elif r_change and not l_change:
-                # Only right changed
-                start = len(output_lines)
-                for line in r_new:
-                    output_lines.append(line)
-                    output_colors.append(COLOR_RIGHT)
-                end = len(output_lines)
-                if start < end:
-                    conflicts.append(ConflictRegion(
-                        start, end, ConflictType.RIGHT_ONLY,
-                        base_slice, base_slice, r_new,
-                    ))
-                    conflicts[-1].resolved = True
-            elif l_change and r_change:
-                # Both sides changed
-                if l_new == r_new:
-                    # Same change on both sides - auto-resolve
-                    start = len(output_lines)
-                    for line in l_new:
-                        output_lines.append(line)
-                        output_colors.append(COLOR_RESOLVED)
-                    end = len(output_lines)
-                    if start < end:
-                        conflicts.append(ConflictRegion(
-                            start, end, ConflictType.BOTH_DIFFER,
-                            l_new, base_slice, r_new,
-                        ))
-                        conflicts[-1].resolved = True
-                else:
-                    # Real conflict
-                    start = len(output_lines)
-                    output_lines.append("<<<< CONFLICT >>>>")
-                    output_colors.append(COLOR_CONFLICT)
-                    for line in l_new:
-                        output_lines.append(line)
-                        output_colors.append(COLOR_CONFLICT)
-                    output_lines.append("====")
-                    output_colors.append(COLOR_CONFLICT)
-                    for line in r_new:
-                        output_lines.append(line)
-                        output_colors.append(COLOR_CONFLICT)
-                    output_lines.append("<<<< END >>>>")
-                    output_colors.append(COLOR_CONFLICT)
-                    end = len(output_lines)
-                    conflicts.append(ConflictRegion(
-                        start, end, ConflictType.BOTH_DIFFER,
-                        l_new, base_slice, r_new,
-                    ))
+            if left_edits and right_edits and left_result != right_result:
+                start_line = len(output_lines)
+                output_lines.append("<<<< CONFLICT >>>>")
+                output_lines.extend(left_result)
+                output_lines.append("====")
+                output_lines.extend(right_result)
+                output_lines.append("<<<< END >>>>")
+                output_colors.extend([COLOR_CONFLICT] * (len(output_lines) - start_line))
+                conflicts.append(
+                    ConflictRegion(
+                        start_line,
+                        len(output_lines),
+                        ConflictType.BOTH_DIFFER,
+                        left_result,
+                        right_result,
+                        base_slice,
+                    )
+                )
+            else:
+                merged = left_result if left_edits else right_result
+                if left_edits and right_edits:
+                    merged = left_result
+                color = (
+                    COLOR_RESOLVED
+                    if left_edits and right_edits
+                    else COLOR_LEFT
+                    if left_edits
+                    else COLOR_RIGHT
+                )
+                start_line = len(output_lines)
+                output_lines.extend(merged)
+                output_colors.extend([color] * len(merged))
+                if merged:
+                    conflict = ConflictRegion(
+                        start_line,
+                        len(output_lines),
+                        ConflictType.BOTH_DIFFER
+                        if left_edits and right_edits
+                        else ConflictType.LEFT_ONLY
+                        if left_edits
+                        else ConflictType.RIGHT_ONLY,
+                        left_result if left_edits else base_slice,
+                        right_result if right_edits else base_slice,
+                        base_slice,
+                    )
+                    conflict.resolved = True
+                    conflicts.append(conflict)
 
-            next_base = region_end
+            next_base = max(next_base, region_end)
 
-        # Emit remaining base lines
-        for i in range(next_base, base_len):
-            output_lines.append(base_lines[i])
-            output_colors.append(COLOR_WHITE)
+        output_lines.extend(base_lines[next_base:])
+        output_colors.extend([COLOR_WHITE] * (len(base_lines) - next_base))
 
         return conflicts, output_lines, output_colors
 

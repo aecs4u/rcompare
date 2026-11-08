@@ -1,5 +1,9 @@
 //! `copy` command: copy selected relative paths between left and right roots.
-use super::support::{apply_copy, is_safe_relative_path, CopyDirection};
+use super::support::{
+    build_mutation_endpoint, copy_endpoint_entry_with_resume, envelope_from_v1_report,
+    is_safe_relative_path, validate_mutation_capabilities, CopyDirection,
+};
+use super::transaction_log::TransactionLog;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
@@ -38,19 +42,31 @@ pub(crate) fn run_copy(
     direction: CopyDirection,
     paths: Vec<String>,
     paths_file: Option<PathBuf>,
+    checkpoint_dir: Option<PathBuf>,
+    transaction_log: Option<PathBuf>,
     dry_run: bool,
     json: bool,
+    schema_version: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !left.is_dir() || !right.is_dir() {
-        return Err("copy currently supports local directory paths only".into());
-    }
-
     // direction is a typed clap enum; clap already rejected bad values.
 
     let selected_paths = collect_copy_paths(&paths, paths_file.as_deref())?;
     if selected_paths.is_empty() {
         return Err("no paths selected. Use --path or --paths-file".into());
     }
+
+    let (source_path, target_path) = match direction {
+        CopyDirection::LeftToRight => (&left, &right),
+        CopyDirection::RightToLeft => (&right, &left),
+    };
+    let source = build_mutation_endpoint(source_path, false)?;
+    let target = build_mutation_endpoint(target_path, true)?;
+    validate_mutation_capabilities(&source, false, false, false)?;
+    validate_mutation_capabilities(&target, true, false, false)?;
+
+    let mut transaction_log = transaction_log
+        .map(|path| TransactionLog::open(path, "copy", source_path, target_path))
+        .transpose()?;
 
     let mut summary = CopySummaryReport {
         total_paths: selected_paths.len(),
@@ -61,6 +77,9 @@ pub(crate) fn run_copy(
     for rel_path in selected_paths {
         let rel = Path::new(&rel_path);
         if !is_safe_relative_path(rel) {
+            if let Some(log) = transaction_log.as_mut() {
+                log.action_planned("SKIP", &rel_path, "Invalid relative path")?;
+            }
             summary.skipped += 1;
             items.push(CopyItemReport {
                 path: rel_path,
@@ -70,12 +89,10 @@ pub(crate) fn run_copy(
             continue;
         }
 
-        let (source, target) = match direction {
-            CopyDirection::LeftToRight => (left.join(rel), right.join(rel)),
-            CopyDirection::RightToLeft => (right.join(rel), left.join(rel)),
-        };
-
-        if !source.exists() {
+        if source.metadata(rel).is_err() {
+            if let Some(log) = transaction_log.as_mut() {
+                log.action_planned("MISSING", &rel_path, "Source path does not exist")?;
+            }
             summary.missing += 1;
             items.push(CopyItemReport {
                 path: rel_path,
@@ -86,17 +103,33 @@ pub(crate) fn run_copy(
         }
 
         if dry_run {
+            if let Some(log) = transaction_log.as_mut() {
+                log.action_planned("COPY", &rel_path, "Dry-run: copy planned")?;
+            }
             summary.copied += 1;
             items.push(CopyItemReport {
                 path: rel_path,
                 status: "planned".to_string(),
-                detail: format!("Would copy {} -> {}", source.display(), target.display()),
+                detail: format!(
+                    "Would copy {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                ),
             });
             continue;
         }
 
-        match apply_copy(&source, &target) {
+        if let Some(log) = transaction_log.as_mut() {
+            log.action_planned("COPY", &rel_path, "Copy planned")?;
+            log.action_started("COPY", &rel_path)?;
+        }
+        let result =
+            copy_endpoint_entry_with_resume(&source, rel, &target, rel, checkpoint_dir.as_deref());
+        match result {
             Ok(()) => {
+                if let Some(log) = transaction_log.as_mut() {
+                    log.action_completed("COPY", &rel_path)?;
+                }
                 summary.copied += 1;
                 items.push(CopyItemReport {
                     path: rel_path,
@@ -105,14 +138,38 @@ pub(crate) fn run_copy(
                 });
             }
             Err(e) => {
+                if let Some(log) = transaction_log.as_mut() {
+                    log.action_failed("COPY", &rel_path, &e.to_string())?;
+                }
                 summary.failed += 1;
                 items.push(CopyItemReport {
                     path: rel_path,
                     status: "failed".to_string(),
-                    detail: e.to_string(),
+                    detail: format!("Copy failed: {e}"),
                 });
             }
         }
+    }
+
+    if !dry_run {
+        if let Err(e) = target.flush() {
+            summary.failed += 1;
+            items.push(CopyItemReport {
+                path: String::new(),
+                status: "failed".to_string(),
+                detail: format!("Finalizing target failed: {e}"),
+            });
+        }
+    }
+
+    if let Some(log) = transaction_log.as_mut() {
+        log.finish(
+            summary.missing == 0 && summary.failed == 0,
+            &format!(
+                "{} copied, {} missing, {} failed",
+                summary.copied, summary.missing, summary.failed
+            ),
+        )?;
     }
 
     let report = CopyReport {
@@ -126,7 +183,21 @@ pub(crate) fn run_copy(
     };
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let report_json = serde_json::to_value(&report)?;
+        let output = if schema_version == 1 {
+            report_json
+        } else {
+            envelope_from_v1_report(
+                "copy",
+                if report.summary.missing > 0 || report.summary.failed > 0 {
+                    "partial"
+                } else {
+                    "completed"
+                },
+                report_json,
+            )
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Copy {}", if dry_run { "(dry-run)" } else { "" });
         println!("Left : {}", report.left);
@@ -139,6 +210,14 @@ pub(crate) fn run_copy(
             report.summary.skipped,
             report.summary.failed
         );
+    }
+
+    if report.summary.missing > 0 || report.summary.failed > 0 {
+        return Err(format!(
+            "copy completed with {} missing and {} failed item(s)",
+            report.summary.missing, report.summary.failed
+        )
+        .into());
     }
 
     Ok(())

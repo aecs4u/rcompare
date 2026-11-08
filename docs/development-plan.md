@@ -227,8 +227,22 @@ Cancellation currently works at scan level only (`ctrlc` → `AtomicBool` →
 interrupts flush a checkpoint instead of dropping progress.
 
 ### WI-3.4 — Checkpoint GC
-`cleanup_checkpoints` (resumable_copy.rs:383) exists and is uncalled. Run it on
-successful completion and expose `rcompare sync --clean-checkpoints`.
+`sync-checkpoints` lists persisted sync manifests; `sync-discard` removes one
+manifest and matching per-file checkpoint metadata. Automatic age-based GC for
+stale or orphaned copy checkpoints remains unimplemented.
+
+**Progress (2026-11-08)**: `ResumableCopy` now validates the full source hash
+before accepting a checkpoint and saves a checkpoint when cancellation arrives
+between chunks. `sync` checks cancellation between actions and during chunked
+transfers, then reports completed/remaining actions and journals cancelled
+states. Teczka sends graceful cancellation and supplies persistent checkpoint
+storage. The CLI now saves sync manifests and supports listing, option-checked
+restart, and discard. An integration test sends SIGTERM to a live sync process
+and successfully resumes its cancelled manifest in a fresh process. Teczka's
+Sync dialog lists runs for the active roots and provides confirmed
+resume/discard actions, with GUI tests for option restore and confirmation.
+Live GUI Stop/Resume validation and automatic stale-checkpoint GC remain to
+complete WI-3.2–3.4.
 
 **Acceptance**: an integration test that kills a copy mid-transfer, resumes,
 and byte-compares the result against a clean run. This closes the last row of
@@ -246,6 +260,16 @@ Each command versions its own `1.x` schema independently today. Define one
 envelope — `{schema_version, command, status, summary, data, warnings}` — and
 publish JSON Schema files under `docs/schemas/`. Keep v1 emitting under
 `--schema-version 1` for one release cycle, then deprecate.
+
+**Implementation state (2026-11-08)**: the CLI now defaults JSON reports to
+the `2.0.0` envelope for scan, copy, sync, diff-file, and capabilities. The
+legacy command-specific reports remain available through `--schema-version 1`.
+Scan JSONL uses the same v2 envelope fields on each summary/entry record and
+retains the previous stream format under schema version 1. teczka accepts both
+scan report shapes and unwraps v2 envelopes for copy, sync, and capability
+checks. Command schemas and the shared envelope schema are published in
+`docs/schemas/v2/`. Source-level contract tests are in place; rebuilding and
+verifying the minimum packaged CLI remains a separate delivery check.
 
 ### WI-4.2 — Structured progress streaming
 `--progress-json` / `--ndjson` emitting scan/compare/sync events to stderr
@@ -270,11 +294,13 @@ thread — the codebase already established that pattern in recent commits
 (`comparison_worker.py`, background CSV/Excel parsing).
 
 ### WI-5.2 — GUI test coverage
-Current state: 4 files, 271 lines total. Untested: merge view, sync/export/
-profile dialogs, drag-and-drop. Target the merge view first — it's the
-youngest, most complex, and least-verified surface in the app, and
-FEATURE_COMPARISON.md already flags its conflict-resolution UI as
-"young/undertested".
+Current state (2026-11-08): 145 GUI tests across 20 test modules run with
+`pytest-qt`, and the required GUI CI job is present. A focused merge-view
+module now covers automatic merging of independent and identical edits,
+overlapping and same-point conflicts, conflict resolution and line offsets,
+background loading, stale results, read errors, and saving. The merge view
+still needs broader interaction coverage; sync actions, profile dialogs, and
+some live drag-and-drop and remote workflows also remain open.
 
 ### WI-5.3 — Sync preview against remote targets
 Extend the existing sync-preview dialog to render capability warnings from

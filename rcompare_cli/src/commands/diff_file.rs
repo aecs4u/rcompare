@@ -1,7 +1,8 @@
 //! `diff-file` command: compute one file-level diff by mode.
 use super::support::{
-    build_text_diff_config, is_safe_relative_path, is_text_file, read_bytes_from_source_path,
-    DiffModeArg, ResolvedDiffMode, WhitespaceModeArg,
+    build_text_diff_config, is_safe_relative_path, is_text_file, json_v2_envelope,
+    read_bytes_from_source_path, split_source_file_operand, DiffModeArg, ResolvedDiffMode,
+    WhitespaceModeArg,
 };
 use rcompare_core::text_diff::DiffChangeType;
 use rcompare_core::TextDiffEngine;
@@ -109,7 +110,7 @@ impl Drop for TempFileGuard {
 pub(crate) fn run_diff_file(
     left: PathBuf,
     right: PathBuf,
-    rel_path: String,
+    rel_path: Option<String>,
     mode: DiffModeArg,
     json: bool,
     ignore_whitespace: Option<WhitespaceModeArg>,
@@ -118,18 +119,46 @@ pub(crate) fn run_diff_file(
     image_exif: bool,
     image_tolerance: u8,
     max_binary_ranges: usize,
+    schema_version: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let rel = PathBuf::from(rel_path.trim());
-    if rel.as_os_str().is_empty() {
-        return Err("--path cannot be empty".into());
-    }
-    if !is_safe_relative_path(&rel) {
-        return Err("--path must be a safe relative path".into());
-    }
+    let (rel, report_path, left_bytes, right_bytes) = match rel_path {
+        Some(rel_path) => {
+            let rel = PathBuf::from(rel_path.trim());
+            if rel.as_os_str().is_empty() {
+                return Err("--path cannot be empty".into());
+            }
+            if !is_safe_relative_path(&rel) {
+                return Err("--path must be a safe relative path".into());
+            }
+            let left_bytes = read_bytes_from_source_path(&left, &rel)?;
+            let right_bytes = read_bytes_from_source_path(&right, &rel)?;
+            let report_path = rel.to_string_lossy().to_string();
+            (rel, report_path, left_bytes, right_bytes)
+        }
+        None => {
+            let (left_root, left_rel) = split_source_file_operand(&left)?;
+            let (right_root, right_rel) = split_source_file_operand(&right)?;
+            let left_bytes = read_bytes_from_source_path(&left_root, &left_rel)?;
+            let right_bytes = read_bytes_from_source_path(&right_root, &right_rel)?;
+            let rel = left_rel;
+            let left_name = rel
+                .file_name()
+                .ok_or("left file operand has no file name")?;
+            let right_name = right_rel
+                .file_name()
+                .ok_or("right file operand has no file name")?;
+            let left_label = left_name.to_string_lossy();
+            let right_label = right_name.to_string_lossy();
+            let report_path = if left_label == right_label {
+                left_label.to_string()
+            } else {
+                format!("{left_label} ↔ {right_label}")
+            };
+            (rel, report_path, left_bytes, right_bytes)
+        }
+    };
 
     let mode = resolve_diff_mode(&rel, mode);
-    let left_bytes = read_bytes_from_source_path(&left, &rel)?;
-    let right_bytes = read_bytes_from_source_path(&right, &rel)?;
 
     let result = match mode {
         ResolvedDiffMode::Text => {
@@ -250,13 +279,28 @@ pub(crate) fn run_diff_file(
         schema_version: "1.0.0".to_string(),
         left: left.to_string_lossy().to_string(),
         right: right.to_string_lossy().to_string(),
-        path: rel.to_string_lossy().to_string(),
+        path: report_path,
         mode: mode.as_str().to_string(),
         result,
     };
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let mut report_json = serde_json::to_value(&report)?;
+        let output = if schema_version == 1 {
+            report_json
+        } else {
+            if let Some(fields) = report_json.as_object_mut() {
+                fields.remove("schema_version");
+            }
+            json_v2_envelope(
+                "diff-file",
+                "completed",
+                serde_json::json!({ "path": report.path, "mode": report.mode }),
+                report_json,
+                Vec::new(),
+            )
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Diff file");
         println!("Left : {}", report.left);

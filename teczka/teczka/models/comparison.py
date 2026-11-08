@@ -12,6 +12,7 @@ from ..utils.cli_bridge import DiffEntry, DiffStatus, ScanReport
 @dataclass
 class TreeNode:
     """A node in the comparison tree."""
+
     name: str
     path: str
     status: DiffStatus
@@ -24,6 +25,11 @@ class TreeNode:
     parent: Optional[TreeNode] = field(default=None, repr=False)
     _row: int = field(default=0, repr=False)
     _child_map: dict[str, TreeNode] = field(default_factory=dict, repr=False)
+    entry: Optional[DiffEntry] = field(default=None, repr=False, compare=False)
+    # Set on the root node only: the scanned folders, used to read extra
+    # file attributes (permissions, owner, ...) on demand.
+    left_root: str = ""
+    right_root: str = ""
 
     @property
     def row(self) -> int:
@@ -54,7 +60,7 @@ def build_tree(report: ScanReport) -> TreeNode:
     return _build_tree_from_entries(report.entries)
 
 
-def build_tree_with_options(
+def _build_tree_with_options_impl(
     report: ScanReport,
     mode: str = "compare_structure",
     *,
@@ -75,7 +81,7 @@ def build_tree_with_options(
     if mode == "files_only":
         filtered: list[DiffEntry] = []
         for entry in report.entries:
-            is_dir = _entry_is_dir(entry)
+            is_dir = entry_is_dir(entry)
             if is_dir and not always_show_folders:
                 continue
             filtered.append(entry)
@@ -114,6 +120,7 @@ def _build_tree_from_entries(entries: Iterable[DiffEntry]) -> TreeNode:
                 current.add_child(child)
             if is_last:
                 child.status = entry.status
+                child.entry = entry
                 if entry.left:
                     child.left_size = entry.left.size
                     child.left_modified = entry.left.modified_unix
@@ -133,7 +140,7 @@ def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:
     seen_paths: set[str] = set()
 
     for entry in sorted(entries, key=lambda e: e.path.lower()):
-        if _entry_is_dir(entry):
+        if entry_is_dir(entry):
             continue
         if entry.path in seen_paths:
             continue
@@ -144,6 +151,7 @@ def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:
             status=entry.status,
             is_dir=False,
             parent=root,
+            entry=entry,
         )
         if entry.left:
             node.left_size = entry.left.size
@@ -158,7 +166,8 @@ def _build_flat_file_tree(entries: Iterable[DiffEntry]) -> TreeNode:
     return root
 
 
-def _entry_is_dir(entry: DiffEntry) -> bool:
+def entry_is_dir(entry: DiffEntry) -> bool:
+    """Return whether either side identifies an entry as a directory."""
     if entry.left and entry.left.is_dir:
         return True
     if entry.right and entry.right.is_dir:
@@ -172,13 +181,20 @@ def _aggregate_status(node: TreeNode) -> None:
         return
     for child in node.children:
         _aggregate_status(child)
+    node.status = aggregate_node_status(node)
+
+
+def aggregate_node_status(node: TreeNode) -> DiffStatus:
+    """Return a folder's status from its direct result and current children."""
+    base_status = node.entry.status if node.entry is not None else DiffStatus.SAME
     statuses = {c.status for c in node.children}
     if DiffStatus.DIFFERENT in statuses:
-        node.status = DiffStatus.DIFFERENT
-    elif DiffStatus.ORPHAN_LEFT in statuses or DiffStatus.ORPHAN_RIGHT in statuses:
-        node.status = DiffStatus.DIFFERENT
-    elif DiffStatus.UNCHECKED in statuses:
-        node.status = DiffStatus.UNCHECKED
+        return DiffStatus.DIFFERENT
+    if DiffStatus.ORPHAN_LEFT in statuses or DiffStatus.ORPHAN_RIGHT in statuses:
+        return DiffStatus.DIFFERENT
+    if DiffStatus.UNCHECKED in statuses:
+        return DiffStatus.UNCHECKED
+    return base_status
 
 
 def _sort_children(node: TreeNode) -> None:
@@ -187,3 +203,18 @@ def _sort_children(node: TreeNode) -> None:
     for i, child in enumerate(node.children):
         child._row = i
         _sort_children(child)
+
+
+def build_tree_with_options(
+    report: ScanReport,
+    mode: str = "compare_structure",
+    *,
+    always_show_folders: bool = True,
+) -> TreeNode:
+    """Build the tree for *report* and record the scanned roots on its root node."""
+    tree = _build_tree_with_options_impl(
+        report, mode, always_show_folders=always_show_folders
+    )
+    tree.left_root = str(getattr(report, "left", "") or "")
+    tree.right_root = str(getattr(report, "right", "") or "")
+    return tree

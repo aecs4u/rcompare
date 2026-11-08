@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, info, warn};
 
 const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB chunks
@@ -111,13 +112,20 @@ impl ResumableCopy {
         Ok(Blake3Hash(*hasher.finalize().as_bytes()))
     }
 
-    /// Full file hash
-    fn full_hash(&self, path: &Path) -> Result<Blake3Hash, RCompareError> {
+    /// Full file hash with optional cancellation checks between chunks.
+    fn full_hash_with_cancel(
+        &self,
+        path: &Path,
+        stop_flag: Option<&AtomicBool>,
+    ) -> Result<Blake3Hash, RCompareError> {
         let mut file = File::open(path)?;
         let mut hasher = blake3::Hasher::new();
         let mut buffer = vec![0u8; CHUNK_SIZE];
 
         loop {
+            if Self::cancelled(stop_flag) {
+                return Err(Self::cancelled_error());
+            }
             let bytes_read = file.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
@@ -135,9 +143,21 @@ impl ResumableCopy {
         dest: &Path,
         progress_callback: Option<Box<dyn Fn(u64, u64) + Send>>,
     ) -> Result<ResumableResult, RCompareError> {
+        self.copy_resumable_with_cancel(source, dest, progress_callback, None)
+    }
+
+    /// Copy a file while saving a resumable checkpoint when cancellation is requested.
+    pub fn copy_resumable_with_cancel(
+        &self,
+        source: &Path,
+        dest: &Path,
+        progress_callback: Option<Box<dyn Fn(u64, u64) + Send>>,
+        stop_flag: Option<&AtomicBool>,
+    ) -> Result<ResumableResult, RCompareError> {
         // Get source file size
         let source_metadata = fs::metadata(source)?;
         let total_size = source_metadata.len();
+        let source_hash = self.full_hash_with_cancel(source, stop_flag)?;
 
         // For small files, just do a regular copy
         if total_size < RESUMABLE_THRESHOLD {
@@ -145,7 +165,18 @@ impl ResumableCopy {
                 "File {} is smaller than threshold, using regular copy",
                 source.display()
             );
-            return self.copy_regular(source, dest);
+            return self.copy_regular(
+                source,
+                dest,
+                total_size,
+                source_hash,
+                progress_callback,
+                stop_flag,
+            );
+        }
+
+        if Self::cancelled(stop_flag) {
+            return Err(Self::cancelled_error());
         }
 
         // Check for existing checkpoint
@@ -154,11 +185,17 @@ impl ResumableCopy {
         // Determine starting position
         let (start_pos, checkpoint_valid) = if let Some(ref cp) = checkpoint {
             // Verify checkpoint is for the same source file
-            if cp.total_size != total_size {
+            if cp.source != source || cp.destination != dest {
+                warn!("Checkpoint paths do not match, starting fresh");
+                (0, false)
+            } else if cp.total_size != total_size || cp.bytes_copied > total_size {
                 warn!(
                     "Checkpoint total size mismatch (checkpoint: {}, actual: {}), starting fresh",
                     cp.total_size, total_size
                 );
+                (0, false)
+            } else if cp.source_hash != source_hash {
+                warn!("Checkpoint source hash mismatch, starting fresh");
                 (0, false)
             } else if !dest.exists() {
                 warn!("Checkpoint exists but destination file missing, starting fresh");
@@ -194,9 +231,6 @@ impl ResumableCopy {
         } else {
             (0, false)
         };
-
-        // Compute source hash
-        let source_hash = self.full_hash(source)?;
 
         // If starting fresh, delete old partial file and checkpoint
         if start_pos == 0 && dest.exists() {
@@ -263,9 +297,18 @@ impl ResumableCopy {
                 callback(bytes_copied, total_size);
             }
 
+            if Self::cancelled(stop_flag) {
+                dest_file.flush()?;
+                dest_file.sync_all()?;
+                drop(dest_file);
+                self.save_checkpoint(source, dest, total_size, bytes_copied, source_hash)?;
+                return Err(Self::cancelled_error());
+            }
+
             // Save checkpoint periodically
             if bytes_copied - last_checkpoint >= CHECKPOINT_INTERVAL {
-                let partial_hash = Blake3Hash(*hasher.finalize().as_bytes());
+                dest_file.flush()?;
+                let partial_hash = self.partial_hash(dest, bytes_copied)?;
                 hasher = blake3::Hasher::new();
 
                 // Re-hash everything up to this point for next checkpoint
@@ -279,19 +322,14 @@ impl ResumableCopy {
                     hasher.update(&temp_buffer[..bytes_read]);
                 }
 
-                let checkpoint = CopyCheckpoint {
-                    source: source.to_path_buf(),
-                    destination: dest.to_path_buf(),
+                self.save_checkpoint_with_hash(
+                    source,
+                    dest,
                     total_size,
                     bytes_copied,
                     source_hash,
                     partial_hash,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .expect("system time before Unix epoch")
-                        .as_secs(),
-                };
-                checkpoint.save(&self.checkpoint_dir)?;
+                )?;
                 last_checkpoint = bytes_copied;
                 debug!("Saved checkpoint at {} bytes", bytes_copied);
             }
@@ -302,7 +340,7 @@ impl ResumableCopy {
         drop(dest_file);
 
         // Verify final hash
-        let dest_hash = self.full_hash(dest)?;
+        let dest_hash = self.full_hash_with_cancel(dest, stop_flag)?;
         let verified = dest_hash == source_hash;
 
         if verified {
@@ -350,15 +388,48 @@ impl ResumableCopy {
     }
 
     /// Regular non-resumable copy for small files
-    fn copy_regular(&self, source: &Path, dest: &Path) -> Result<ResumableResult, RCompareError> {
+    fn copy_regular(
+        &self,
+        source: &Path,
+        dest: &Path,
+        total_size: u64,
+        source_hash: Blake3Hash,
+        progress_callback: Option<Box<dyn Fn(u64, u64) + Send>>,
+        stop_flag: Option<&AtomicBool>,
+    ) -> Result<ResumableResult, RCompareError> {
+        if Self::cancelled(stop_flag) {
+            return Err(Self::cancelled_error());
+        }
+
         // Ensure destination directory exists
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let source_hash = self.full_hash(source)?;
-        let bytes_copied = fs::copy(source, dest)?;
-        let dest_hash = self.full_hash(dest)?;
+        let mut source_file = File::open(source)?;
+        let mut dest_file = File::create(dest)?;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut bytes_copied = 0;
+        loop {
+            let bytes_read = source_file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            dest_file.write_all(&buffer[..bytes_read])?;
+            bytes_copied += bytes_read as u64;
+            if let Some(ref callback) = progress_callback {
+                callback(bytes_copied, total_size);
+            }
+            if Self::cancelled(stop_flag) {
+                dest_file.flush()?;
+                dest_file.sync_all()?;
+                return Err(Self::cancelled_error());
+            }
+        }
+        dest_file.sync_all()?;
+        drop(dest_file);
+        let dest_hash = self.full_hash_with_cancel(dest, stop_flag)?;
+        let verified = source_hash == dest_hash;
 
         // Preserve timestamps
         if let Ok(metadata) = fs::metadata(source) {
@@ -369,14 +440,68 @@ impl ResumableCopy {
         }
 
         Ok(ResumableResult {
-            success: true,
+            success: verified,
             bytes_copied,
             resumed: false,
-            verified: source_hash == dest_hash,
+            verified,
             source_hash,
             dest_hash,
-            error: None,
+            error: (!verified).then(|| "Hash verification failed".to_string()),
         })
+    }
+
+    fn cancelled(stop_flag: Option<&AtomicBool>) -> bool {
+        stop_flag.is_some_and(|flag| flag.load(Ordering::SeqCst))
+    }
+
+    fn cancelled_error() -> RCompareError {
+        RCompareError::Comparison("copy cancelled; partial data is safe to resume".to_string())
+    }
+
+    fn save_checkpoint(
+        &self,
+        source: &Path,
+        dest: &Path,
+        total_size: u64,
+        bytes_copied: u64,
+        source_hash: Blake3Hash,
+    ) -> Result<(), RCompareError> {
+        if bytes_copied == 0 {
+            return Ok(());
+        }
+        let partial_hash = self.partial_hash(dest, bytes_copied)?;
+        self.save_checkpoint_with_hash(
+            source,
+            dest,
+            total_size,
+            bytes_copied,
+            source_hash,
+            partial_hash,
+        )
+    }
+
+    fn save_checkpoint_with_hash(
+        &self,
+        source: &Path,
+        dest: &Path,
+        total_size: u64,
+        bytes_copied: u64,
+        source_hash: Blake3Hash,
+        partial_hash: Blake3Hash,
+    ) -> Result<(), RCompareError> {
+        let checkpoint = CopyCheckpoint {
+            source: source.to_path_buf(),
+            destination: dest.to_path_buf(),
+            total_size,
+            bytes_copied,
+            source_hash,
+            partial_hash,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        checkpoint.save(&self.checkpoint_dir)
     }
 
     /// Clean up all checkpoints in the checkpoint directory
@@ -475,7 +600,7 @@ mod tests {
         let partial_size = 50 * 1024 * 1024;
         fs::write(&dest, &content[..partial_size]).unwrap();
 
-        let source_hash = engine.full_hash(&source).unwrap();
+        let source_hash = engine.full_hash_with_cancel(&source, None).unwrap();
         let partial_hash = engine.partial_hash(&dest, partial_size as u64).unwrap();
 
         let checkpoint = CopyCheckpoint {
@@ -550,5 +675,82 @@ mod tests {
         assert_eq!(result.bytes_copied, size as u64);
         assert!(!result.resumed); // Started fresh
         assert!(result.verified);
+    }
+
+    #[test]
+    fn cancellation_saves_checkpoint_and_copy_can_resume() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source.bin");
+        let dest = temp.path().join("dest.bin");
+        let checkpoint_dir = temp.path().join("checkpoints");
+        let size = 60 * 1024 * 1024;
+        fs::write(&source, vec![0x5a; size]).unwrap();
+
+        let engine = ResumableCopy::new(checkpoint_dir.clone());
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&stop_flag);
+        let error = engine
+            .copy_resumable_with_cancel(
+                &source,
+                &dest,
+                Some(Box::new(move |_, _| {
+                    callback_flag.store(true, Ordering::SeqCst);
+                })),
+                Some(stop_flag.as_ref()),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("cancelled"));
+        let checkpoint = CopyCheckpoint::load(&checkpoint_dir, &source, &dest)
+            .unwrap()
+            .expect("cancellation checkpoint");
+        assert_eq!(fs::metadata(&dest).unwrap().len(), checkpoint.bytes_copied);
+        assert!(checkpoint.bytes_copied > 0);
+
+        stop_flag.store(false, Ordering::SeqCst);
+        let result = engine.copy_resumable(&source, &dest, None).unwrap();
+        assert!(result.success);
+        assert!(result.resumed);
+        assert_eq!(fs::read(&dest).unwrap(), fs::read(&source).unwrap());
+    }
+
+    #[test]
+    fn changed_source_invalidates_existing_checkpoint() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source.bin");
+        let dest = temp.path().join("dest.bin");
+        let checkpoint_dir = temp.path().join("checkpoints");
+        let size = 60 * 1024 * 1024;
+        let content = vec![b'a'; size];
+        fs::write(&source, &content).unwrap();
+
+        let engine = ResumableCopy::new(checkpoint_dir.clone());
+        let partial_size = 55 * 1024 * 1024;
+        fs::write(&dest, &content[..partial_size]).unwrap();
+        let checkpoint = CopyCheckpoint {
+            source: source.clone(),
+            destination: dest.clone(),
+            total_size: size as u64,
+            bytes_copied: partial_size as u64,
+            source_hash: engine.full_hash_with_cancel(&source, None).unwrap(),
+            partial_hash: engine.partial_hash(&dest, partial_size as u64).unwrap(),
+            timestamp: 0,
+        };
+        checkpoint.save(&checkpoint_dir).unwrap();
+
+        let mut changed_source = OpenOptions::new().write(true).open(&source).unwrap();
+        changed_source
+            .seek(SeekFrom::Start(size as u64 - 1))
+            .unwrap();
+        changed_source.write_all(b"b").unwrap();
+        changed_source.sync_all().unwrap();
+
+        let result = engine.copy_resumable(&source, &dest, None).unwrap();
+        assert!(result.success);
+        assert!(!result.resumed);
+        assert_eq!(fs::read(&dest).unwrap(), fs::read(&source).unwrap());
     }
 }

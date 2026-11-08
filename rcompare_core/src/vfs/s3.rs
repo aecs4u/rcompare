@@ -1,3 +1,4 @@
+use super::remote_reader::{create_spool_file, open_spool_reader};
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::Client;
@@ -314,19 +315,27 @@ impl Vfs for S3Vfs {
                     ))
                 })?;
 
-            // Read the entire body into memory
-            let bytes = output
-                .body
-                .collect()
-                .await
-                .map_err(|e| {
+            let (spool_path, mut spool) = create_spool_file().map_err(VfsError::Io)?;
+            let mut body = output.body;
+            let result = async {
+                while let Some(chunk) = body.try_next().await.map_err(|e| {
                     VfsError::Io(std::io::Error::other(format!(
                         "Failed to read S3 object body: {e}"
                     )))
-                })?
-                .into_bytes();
+                })? {
+                    spool.write_all(&chunk).map_err(VfsError::Io)?;
+                }
+                spool.sync_all().map_err(VfsError::Io)
+            }
+            .await;
 
-            Ok(Box::new(std::io::Cursor::new(bytes.to_vec())) as Box<dyn Read + Send>)
+            drop(spool);
+            if let Err(error) = result {
+                let _ = std::fs::remove_file(&spool_path);
+                return Err(error);
+            }
+
+            open_spool_reader(spool_path).map_err(VfsError::Io)
         })
     }
 
@@ -348,6 +357,10 @@ impl Vfs for S3Vfs {
 
             Ok(())
         })
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        self.remove_file(path)
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
@@ -458,6 +471,7 @@ struct S3Writer {
     bucket: String,
     key: String,
     buffer: Vec<u8>,
+    dirty: bool,
 }
 
 impl S3Writer {
@@ -468,6 +482,7 @@ impl S3Writer {
             bucket,
             key,
             buffer: Vec::new(),
+            dirty: true,
         }
     }
 }
@@ -475,10 +490,14 @@ impl S3Writer {
 impl std::io::Write for S3Writer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.buffer.extend_from_slice(buf);
+        self.dirty = true;
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
         // Upload the buffer to S3
         let client = self.client.clone();
         let bucket = self.bucket.clone();
@@ -495,8 +514,11 @@ impl std::io::Write for S3Writer {
                 .await
                 .map_err(|e| std::io::Error::other(format!("Failed to upload to S3: {e}")))?;
 
-            Ok(())
-        })
+            Ok::<(), std::io::Error>(())
+        })?;
+        self.buffer.clear();
+        self.dirty = false;
+        Ok(())
     }
 }
 

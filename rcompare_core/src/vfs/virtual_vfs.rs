@@ -80,10 +80,8 @@ impl FilteredVfs {
         let path_str = path.to_string_lossy();
 
         // Check exclude patterns first
-        for pattern in &self.exclude_patterns {
-            if pattern.matches(&path_str) {
-                return false;
-            }
+        if self.is_excluded(path) {
+            return false;
         }
 
         // If no include patterns, everything is included
@@ -99,6 +97,13 @@ impl FilteredVfs {
         }
 
         false
+    }
+
+    fn is_excluded(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy();
+        self.exclude_patterns
+            .iter()
+            .any(|pattern| pattern.matches(&path_str))
     }
 }
 
@@ -118,7 +123,11 @@ impl Vfs for FilteredVfs {
         let entries = self.inner.read_dir(path)?;
         Ok(entries
             .into_iter()
-            .filter(|e| self.is_visible(&e.path))
+            .filter(|e| {
+                // Keep directories visible when includes are active so the
+                // scanner can descend and discover matching descendants.
+                !self.is_excluded(&e.path) && (e.is_dir || self.is_visible(&e.path))
+            })
             .collect())
     }
 

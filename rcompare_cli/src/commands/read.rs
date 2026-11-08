@@ -1,8 +1,9 @@
 //! `read` command: read one file from a side and export to stdout or a path.
-use super::support::{is_safe_relative_path, read_bytes_from_source_path, Side};
+use super::support::{copy_source_file_to_writer, is_safe_relative_path, Side};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
 pub(crate) fn run_read(
     left: PathBuf,
@@ -19,20 +20,24 @@ pub(crate) fn run_read(
         return Err("--path must be a safe relative path".into());
     }
 
-    let bytes = match side {
-        Side::Left => read_bytes_from_source_path(&left, &rel)?,
-        Side::Right => read_bytes_from_source_path(&right, &rel)?,
+    let source = match side {
+        Side::Left => left,
+        Side::Right => right,
     };
-
     if let Some(out_path) = out {
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&out_path, &bytes)?;
-        println!("Wrote {} bytes to {}", bytes.len(), out_path.display());
+        let parent = out_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let mut output = NamedTempFile::new_in(parent)?;
+        let bytes_written = copy_source_file_to_writer(&source, &rel, &mut output)?;
+        output.flush()?;
+        output.persist(&out_path)?;
+        println!("Wrote {} bytes to {}", bytes_written, out_path.display());
     } else {
         let mut stdout = std::io::stdout();
-        stdout.write_all(&bytes)?;
+        copy_source_file_to_writer(&source, &rel, &mut stdout)?;
         stdout.flush()?;
     }
 

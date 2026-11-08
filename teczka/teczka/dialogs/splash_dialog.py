@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ..icons import app_icon
 
 
 def _load_license_text() -> str:
@@ -69,6 +71,7 @@ class SplashDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Welcome to RCompare")
+        self.setWindowIcon(app_icon())
         self.setModal(True)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setMinimumSize(620, 360)
@@ -92,12 +95,6 @@ class SplashDialog(QDialog):
         # KDE Compliance: Use system theme instead of hardcoded colors
         self.setStyleSheet(
             """
-            QLabel#badge {
-                border-radius: 22px;
-                font-size: 14px;
-                font-weight: 700;
-                qproperty-alignment: AlignCenter;
-            }
             QLabel#title {
                 font-size: 24px;
                 font-weight: 700;
@@ -115,10 +112,13 @@ class SplashDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
 
-        badge = QLabel("RC", hero)
-        badge.setObjectName("badge")
-        badge.setFixedSize(44, 44)
-        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+        logo = QLabel(hero)
+        logo.setObjectName("appLogo")
+        logo.setAccessibleName("RCompare application logo")
+        logo.setFixedSize(52, 52)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setPixmap(app_icon().pixmap(QSize(48, 48)))
+        layout.addWidget(logo, 0, Qt.AlignmentFlag.AlignTop)
 
         text_col = QVBoxLayout()
         title = QLabel("RCompare", hero)

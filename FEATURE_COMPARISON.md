@@ -55,7 +55,7 @@ Non-RCompare columns are best-effort snapshots and can vary by tool edition and 
 | Regex rules | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited | ❌ No | ❌ No |
 | Patience diff | ✅ Yes | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies | ⚠️ Varies |
 | 3-way merge workflow | ✅ Yes (teczka `merge_view.py`, line-level `difflib` diff) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Conflict-resolution UI | ✅ Yes (young/undertested — see [docs/roadmap.md](docs/roadmap.md)) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| Conflict-resolution UI | ✅ Yes (focused automated coverage added; broader interaction testing remains — see [docs/roadmap.md](docs/roadmap.md)) | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 
 ### Binary and Image Comparison
 

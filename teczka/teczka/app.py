@@ -7,6 +7,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from .dialogs.splash_dialog import SplashDialog
+from .icons import app_icon
 from .main_window import MainWindow
 from .utils.config import AppConfig
 from .logger import setup_logging, get_logger
@@ -29,6 +30,8 @@ def launch(
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("aecs4u")
     app.setStyle("Fusion")
+    app.setWindowIcon(app_icon())
+    app.setDesktopFileName("org.aecs4u.rcompare")
 
     config = AppConfig.load()
     log.info("configuration loaded", theme=config.theme)

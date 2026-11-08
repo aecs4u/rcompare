@@ -17,6 +17,18 @@ use xz2::write::XzEncoder;
 use zip::write::FileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+fn archive_temp_path(destination: &Path) -> Result<tempfile::TempPath, VfsError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+    Ok(temp.into_temp_path())
+}
+
+fn commit_archive_temp(temp: tempfile::TempPath, destination: &Path) -> Result<(), VfsError> {
+    std::fs::rename(&temp, destination)?;
+    Ok(())
+}
+
 /// ZIP archive VFS implementation (read-only)
 pub struct ZipVfs {
     instance_id: String,
@@ -224,7 +236,8 @@ impl WritableZipVfs {
             .lock()
             .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
-        let file = File::create(&self.archive_path)?;
+        let temp_path = archive_temp_path(&self.archive_path)?;
+        let file = File::create(&temp_path)?;
         let mut zip = ZipWriter::new(file);
         let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -233,6 +246,9 @@ impl WritableZipVfs {
 
         zip.finish()
             .map_err(|e| VfsError::Io(std::io::Error::other(e)))?;
+
+        File::open(&temp_path)?.sync_all()?;
+        commit_archive_temp(temp_path, &self.archive_path)?;
 
         Ok(())
     }
@@ -290,6 +306,11 @@ impl Vfs for WritableZipVfs {
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
         self.mark_modified();
         self.local_vfs.remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        self.mark_modified();
+        self.local_vfs.remove_dir(path)
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
@@ -545,7 +566,8 @@ impl WritableTarVfs {
             .lock()
             .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
-        let file = File::create(&self.archive_path)?;
+        let temp_path = archive_temp_path(&self.archive_path)?;
+        let file = File::create(&temp_path)?;
 
         if self.compress_gzip {
             let encoder = GzEncoder::new(file, Compression::default());
@@ -557,6 +579,9 @@ impl WritableTarVfs {
             builder.append_dir_all("", temp_dir.path())?;
             builder.finish()?;
         }
+
+        File::open(&temp_path)?.sync_all()?;
+        commit_archive_temp(temp_path, &self.archive_path)?;
 
         Ok(())
     }
@@ -582,6 +607,11 @@ impl Vfs for WritableTarVfs {
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
         self.mark_modified();
         self.local_vfs.remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        self.mark_modified();
+        self.local_vfs.remove_dir(path)
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
@@ -790,9 +820,14 @@ impl Writable7zVfs {
             .lock()
             .map_err(|_| VfsError::Io(std::io::Error::other("Failed to lock temp dir")))?;
 
-        // Use sevenz_rust to compress the directory
-        sevenz_rust::compress_to_path(temp_dir.path(), &self.archive_path)
+        // Compress into a sibling temporary file so a failed rebuild cannot
+        // leave a truncated archive at the destination.
+        let temp_path = archive_temp_path(&self.archive_path)?;
+        sevenz_rust::compress_to_path(temp_dir.path(), &temp_path)
             .map_err(|e| VfsError::Io(std::io::Error::other(e.to_string())))?;
+
+        File::open(&temp_path)?.sync_all()?;
+        commit_archive_temp(temp_path, &self.archive_path)?;
 
         Ok(())
     }
@@ -818,6 +853,11 @@ impl Vfs for Writable7zVfs {
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
         self.mark_modified();
         self.local_vfs.remove_file(path)
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        self.mark_modified();
+        self.local_vfs.remove_dir(path)
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {

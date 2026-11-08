@@ -1,6 +1,7 @@
+use super::remote_reader::{create_spool_file, open_spool_reader};
 use rcompare_common::{FileEntry, FileMetadata, Vfs, VfsError};
 use ssh2::{Session, Sftp};
-use std::io::{Cursor, Read};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -269,17 +270,24 @@ impl Vfs for SftpVfs {
             ))
         })?;
 
-        // Read entire file into memory (SFTP files don't implement Send)
-        let mut contents = Vec::new();
-        file.read_to_end(&mut contents).map_err(|e| {
-            VfsError::Io(std::io::Error::other(format!(
-                "Failed to read {}: {}",
-                full_path.display(),
-                e
-            )))
-        })?;
+        let (spool_path, mut spool) = create_spool_file().map_err(VfsError::Io)?;
+        let result = std::io::copy(&mut file, &mut spool)
+            .map(|_| spool.sync_all())
+            .map_err(|e| {
+                VfsError::Io(std::io::Error::other(format!(
+                    "Failed to read {}: {}",
+                    full_path.display(),
+                    e
+                )))
+            })
+            .and_then(|result| result.map_err(VfsError::Io));
+        drop(spool);
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&spool_path);
+            return Err(error);
+        }
 
-        Ok(Box::new(Cursor::new(contents)))
+        open_spool_reader(spool_path).map_err(VfsError::Io)
     }
 
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
@@ -297,13 +305,25 @@ impl Vfs for SftpVfs {
         Ok(())
     }
 
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        let sftp = self.get_sftp()?;
+        let full_path = self.full_path(path);
+        sftp.rmdir(&full_path).map_err(|e| {
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to remove directory {}: {}",
+                full_path.display(),
+                e
+            )))
+        })?;
+        Ok(())
+    }
+
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
         // SFTP doesn't have a native copy, so we read and write
         let sftp = self.get_sftp()?;
         let src_full = self.full_path(src);
         let dest_full = self.full_path(dest);
 
-        // Read source file
         let mut src_file = sftp.open(&src_full).map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -311,16 +331,6 @@ impl Vfs for SftpVfs {
             ))
         })?;
 
-        let mut contents = Vec::new();
-        src_file.read_to_end(&mut contents).map_err(|e| {
-            VfsError::Io(std::io::Error::other(format!(
-                "Failed to read source {}: {}",
-                src_full.display(),
-                e
-            )))
-        })?;
-
-        // Write to destination
         let mut dest_file = sftp.create(&dest_full).map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
                 "Failed to create destination {}: {}",
@@ -329,9 +339,17 @@ impl Vfs for SftpVfs {
             )))
         })?;
 
-        std::io::Write::write_all(&mut dest_file, &contents).map_err(|e| {
+        std::io::copy(&mut src_file, &mut dest_file).map_err(|e| {
             VfsError::Io(std::io::Error::other(format!(
-                "Failed to write destination {}: {}",
+                "Failed to copy {} to {}: {}",
+                src_full.display(),
+                dest_full.display(),
+                e
+            )))
+        })?;
+        dest_file.flush().map_err(|e| {
+            VfsError::Io(std::io::Error::other(format!(
+                "Failed to flush destination {}: {}",
                 dest_full.display(),
                 e
             )))

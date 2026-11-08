@@ -89,6 +89,7 @@ class AppConfig:
     three_way_mode: bool = False
     appearance: dict = field(default_factory=dict)
     bookmarks: list[dict] = field(default_factory=list)
+    open_with_handlers: dict[str, str] = field(default_factory=dict)
     _config_file: Optional[str] = field(default=None, repr=False)
 
     @classmethod
@@ -98,6 +99,14 @@ class AppConfig:
         if path.exists():
             try:
                 data = json.loads(path.read_text())
+                open_with_handlers = data.get("open_with_handlers", {})
+                if not isinstance(open_with_handlers, dict):
+                    open_with_handlers = {}
+                open_with_handlers = {
+                    str(extension): command
+                    for extension, command in open_with_handlers.items()
+                    if isinstance(extension, str) and isinstance(command, str)
+                }
                 config = cls(
                     cli_path=data.get("cli_path"),
                     theme=data.get("theme", "light"),
@@ -111,6 +120,7 @@ class AppConfig:
                     three_way_mode=bool(data.get("three_way_mode", False)),
                     appearance=data.get("appearance", {}),
                     bookmarks=data.get("bookmarks", []),
+                    open_with_handlers=open_with_handlers,
                 )
                 config._config_file = str(path)
                 return config
@@ -142,6 +152,7 @@ class AppConfig:
             "three_way_mode": self.three_way_mode,
             "appearance": self.appearance,
             "bookmarks": self.bookmarks,
+            "open_with_handlers": self.open_with_handlers,
         }
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

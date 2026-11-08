@@ -5,3 +5,5 @@ pub(crate) mod read;
 pub(crate) mod scan;
 pub(crate) mod support;
 pub(crate) mod sync;
+pub(crate) mod sync_checkpoint;
+pub(crate) mod transaction_log;

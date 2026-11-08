@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare JSON v2 command envelope",
+  "type": "object",
+  "required": ["schema_version", "command", "status", "summary", "data", "warnings"],
+  "properties": {
+    "schema_version": { "const": "2.0.0" },
+    "command": { "enum": ["scan", "copy", "sync", "sync-checkpoints", "sync-discard", "diff-file", "capabilities"] },
+    "status": { "enum": ["completed", "partial", "failed", "cancelled"] },
+    "summary": { "type": "object" },
+    "data": { "type": "object" },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

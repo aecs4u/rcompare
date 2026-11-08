@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare copy JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "copy" },
+        "summary": {
+          "type": "object",
+          "required": ["total_paths", "copied", "missing", "skipped", "failed"],
+          "properties": {
+            "total_paths": { "type": "integer", "minimum": 0 },
+            "copied": { "type": "integer", "minimum": 0 },
+            "missing": { "type": "integer", "minimum": 0 },
+            "skipped": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["left", "right", "direction", "dry_run", "items"],
+          "properties": {
+            "left": { "type": "string" },
+            "right": { "type": "string" },
+            "direction": { "enum": ["left_to_right", "right_to_left"] },
+            "dry_run": { "type": "boolean" },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "status", "detail"],
+                "properties": {
+                  "path": { "type": "string" },
+                  "status": { "enum": ["copied", "planned", "missing", "skipped", "failed"] },
+                  "detail": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

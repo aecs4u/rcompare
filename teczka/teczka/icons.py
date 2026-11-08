@@ -147,12 +147,14 @@ EXPORT_SVG = (
 
 # Application icon SVG (two overlapping documents with a delta symbol)
 _APP_ICON_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-    'width="24" height="24" fill="none" stroke="currentColor" '
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-    '<rect x="2" y="3" width="9" height="16" rx="1"/>'
-    '<rect x="13" y="5" width="9" height="16" rx="1"/>'
-    '<path d="M6 9l3 5H5z" fill="currentColor" stroke="none"/>'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" '
+    'width="64" height="64">'
+    '<rect x="1" y="1" width="62" height="62" rx="15" fill="#245099"/>'
+    '<rect x="12" y="10" width="23" height="39" rx="4" '
+    'fill="#bdd7ff" stroke="#ffffff" stroke-width="2.5"/>'
+    '<rect x="29" y="16" width="23" height="39" rx="4" '
+    'fill="#ffffff" stroke="#dbe7f8" stroke-width="2.5"/>'
+    '<path d="M40.5 30 49 46H32z" fill="#f4b942"/>'
     '</svg>'
 )
 

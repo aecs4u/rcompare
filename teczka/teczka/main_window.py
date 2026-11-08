@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
 import os
-from pathlib import Path
 import shutil
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QMimeData, QUrl, Slot
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QTextDocument
-from PySide6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
+from PySide6.QtCore import QMimeData, QStandardPaths, Qt, QThread, QTimer, QUrl, Slot
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QIcon,
+    QKeySequence,
+    QTextDocument,
+)
+from PySide6.QtPrintSupport import QPrintDialog, QPrinter, QPrintPreviewDialog
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -20,55 +32,120 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QMessageBox,
-    QProgressBar,
     QStackedWidget,
     QTabBar,
     QVBoxLayout,
     QWidget,
 )
 
-from .utils.config import AppConfig
-from .utils.cli_bridge import CliBridge, DiffStatus, ScanReport
-from .models.comparison import build_tree_with_options, TreeNode
-from .models.settings import ComparisonSettings, ProfileManager
-from .state import ActiveView, AppState
-from .views.folder_view import FolderView
-from .views.text_view import TextView
-from .views.hex_view import HexView
-from .views.image_view import ImageView
-from .views.home_view import HomeView
-from .widgets.filter_bar import FilterBar
-from .widgets.color_legend import ColorLegend
-from .widgets.sidebar import Sidebar
-from .widgets.session_tab_bar import SessionTabBar
-from .widgets.compact_path_bar import CompactPathBar
-from .widgets.integrated_status_bar import IntegratedStatusBar
-from .workers.comparison_worker import ComparisonResult, ComparisonWorker, CliJsonWorker
-from .dialogs.settings_dialog import SettingsDialog
-from .dialogs.sync_dialog import SyncDialog
-from .dialogs.profiles_dialog import ProfilesDialog
+from . import bulk_actions
 from .dialogs.about_dialog import AboutDialog
+from .dialogs.criteria_dialog import CriteriaDialog
+from .dialogs.export_dialog import ExportDialog
+from .dialogs.file_filters_dialog import FileFiltersDialog
+from .dialogs.file_pair_dialog import FilePairDialog
+from .dialogs.open_with_dialog import OpenWithDialog
+from .dialogs.profiles_dialog import ProfilesDialog
+from .dialogs.properties_dialog import PropertiesDialog
+from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.stats_dialog import StatsDialog
-from .models.undo_stack import OperationHistory, Operation, create_backup
+from .dialogs.sync_dialog import SyncDialog
+from .dialogs.unimportant_rules_dialog import UnimportantTextRulesDialog
+from .icons import app_icon
+from .models.comparison import TreeNode, build_tree_with_options, entry_is_dir
+from .models.settings import ComparisonSettings, ProfileManager
+from .models.undo_stack import Operation, OperationHistory, create_backup
+from .state import ActiveView, AppState
+from .utils.cli_bridge import CliBridge, DiffStatus, ScanReport
+from .utils.config import AppConfig
+from .utils.criteria import CompareCriteria
+from .utils.external_app import application_argv, handler_key
+from .utils.file_compare import files_have_identical_contents
+from .utils.file_filter import parse_filter
+from .utils.name_search import compile_name_search, normalize_search_mode
+from .utils.report_export import records_from_nodes, text_diff_html
+from .utils.source_paths import (
+    is_remote_source,
+    local_source_paths,
+    source_log_label,
+    source_scheme,
+    split_source_file,
+    validate_remote_source,
+)
 from .utils.telemetry import log_error, log_info, log_warning
+from .utils.unimportant_text import validate_rules
+from .utils.view_filter import diff_mode_matches, status_is_enabled
+from .views.folder_view import FolderView
+from .views.hex_view import HexView
+from .views.home_view import HomeView
+from .views.image_view import ImageView
+from .views.text_view import TextView
+from .widgets.color_legend import ColorLegend
+from .widgets.compact_path_bar import CompactPathBar
+from .widgets.filter_bar import FilterBar
+from .widgets.integrated_status_bar import IntegratedStatusBar
+from .widgets.session_tab_bar import SessionTabBar
+from .widgets.sidebar import Sidebar
+from .workers.comparison_worker import CliJsonWorker, ComparisonResult, ComparisonWorker
+from .workers.function_worker import FunctionWorker
+from .workers.remote_file_pair_worker import (
+    RemoteFilePairWorker,
+    StagedRemoteFilePair,
+)
+from .workers.tree_watcher import RecursivePathWatcher
 
 # ---------------------------------------------------------------------------
 # File-type extension sets used for view switching on double-click
 # ---------------------------------------------------------------------------
 TEXT_EXTENSIONS = {
-    ".txt", ".md", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx",
-    ".c", ".cpp", ".h", ".hpp", ".java", ".go", ".rb", ".php",
-    ".sh", ".css", ".html", ".xml", ".json", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".sql", ".log",
+    ".txt",
+    ".md",
+    ".rs",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".java",
+    ".go",
+    ".rb",
+    ".php",
+    ".sh",
+    ".css",
+    ".html",
+    ".xml",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".sql",
+    ".log",
 }
 
 IMAGE_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
-    ".webp", ".ico", ".svg",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".ico",
+    ".svg",
 }
 
 TABLE_EXTENSIONS = {
-    ".csv", ".tsv", ".xlsx", ".xls",
+    ".csv",
+    ".tsv",
+    ".xlsx",
+    ".xls",
 }
 
 _AUTO_CLOSE_PROFILE_NAME = "Last Session (Auto)"
@@ -91,12 +168,28 @@ class SessionState:
     show_right_only: bool = True
     show_files_only: bool = False
     search_text: str = ""
+    search_mode: str = "contains"
     diff_option_mode: str = "show_differences"
+    file_filter: str = ""
+    criteria: CompareCriteria = field(default_factory=CompareCriteria)
     active_view: int = 0
     report: Optional[ScanReport] = None
     status_summary: str = "Ready"
     folder_view_mode: str = "compare_structure"
     always_show_folders: bool = True
+    wrap_text: bool = False
+    context_lines: int | None = None
+    unimportant_text_rules: list[dict[str, str]] = field(default_factory=list)
+    stale: bool = False
+
+
+_NEWER_MODES: list[tuple[str, str]] = [
+    ("show_differences", "All Differences"),
+    ("show_left_newer", "Left Newer"),
+    ("show_right_newer", "Right Newer"),
+    ("show_left_newer_left_orphans", "Left Newer and Left Only"),
+    ("show_right_newer_right_orphans", "Right Newer and Right Only"),
+]
 
 
 class MainWindow(QMainWindow):
@@ -118,6 +211,7 @@ class MainWindow(QMainWindow):
         self._worker: Optional[ComparisonWorker] = None
         self._copy_worker: Optional[CliJsonWorker] = None
         self._sync_worker: Optional[CliJsonWorker] = None
+        self._sync_checkpoint_worker: Optional[CliJsonWorker] = None
         self._current_report: Optional[ScanReport] = None
         self._diff_entries_cache: Optional[tuple] = None
         self._all_file_entries_cache: Optional[tuple] = None
@@ -125,6 +219,21 @@ class MainWindow(QMainWindow):
         self._profile_manager: ProfileManager = ProfileManager()
         self._undo_history: OperationHistory = OperationHistory()
         self._three_way_mode: bool = False
+        self._tree_change_generation = 0
+        self._scan_change_generation = 0
+        self._pending_refresh_view_state: Optional[dict] = None
+        self._watch_coverage_message = ""
+        self._applying_session_state = False
+        self._tree_watcher = RecursivePathWatcher(self)
+        self._tree_watcher.changed.connect(self._on_tree_changed)
+        self._tree_watcher.coverage_changed.connect(self._on_watch_coverage_changed)
+        self._tree_watcher.error.connect(
+            lambda message: log_warning("folder watcher error", error=message)
+        )
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.setSingleShot(True)
+        self._auto_refresh_timer.setInterval(1_000)
+        self._auto_refresh_timer.timeout.connect(self._run_auto_refresh)
 
         # Paths cached from the PathBar
         self._left_path: str = ""
@@ -133,6 +242,10 @@ class MainWindow(QMainWindow):
         self._sessions: list[SessionState] = []
         self._active_session_index: int = -1
         self._file_compare_tabs: dict[str, int] = {}
+        self._remote_pair_pending: set[str] = set()
+        self._remote_pair_workers: set[RemoteFilePairWorker] = set()
+        self._file_recompare_workers: set[FunctionWorker] = set()
+        self._closing = False
 
         # --- CLI bridge ------------------------------------------------
         self._cli_bridge: Optional[CliBridge] = None
@@ -150,6 +263,7 @@ class MainWindow(QMainWindow):
 
         # --- Window properties -----------------------------------------
         self.setWindowTitle("RCompare - File Comparison Tool")
+        self.setWindowIcon(app_icon())
         self.setMinimumSize(800, 600)
         self.setAcceptDrops(True)
 
@@ -184,20 +298,34 @@ class MainWindow(QMainWindow):
         self._act_new_tab.setShortcut(QKeySequence.StandardKey.AddTab)  # Ctrl+T
         file_menu.addAction(self._act_new_tab)
 
-        self._act_open_diff = QAction(self._themed_icon("document-open"), "&Open Diff...", self)
+        self._act_open_diff = QAction(
+            self._themed_icon("document-open"), "&Open Diff...", self
+        )
         self._act_open_diff.setShortcut(QKeySequence.StandardKey.Open)  # Ctrl+O
         file_menu.addAction(self._act_open_diff)
 
         self._act_compare_files = QAction(
-            self._themed_icon("system-search"), "Compare &Files/Folders...", self
+            self._themed_icon("system-search"), "Compare &Files...", self
         )
         file_menu.addAction(self._act_compare_files)
+        self._act_compare_folders = QAction("Compare &Folders...", self)
+        file_menu.addAction(self._act_compare_folders)
 
         file_menu.addSeparator()
 
-        self._act_save_diff = QAction(self._themed_icon("document-save"), "&Save Diff...", self)
+        self._act_save_diff = QAction(
+            self._themed_icon("document-save"), "&Save Diff...", self
+        )
         self._act_save_diff.setShortcut(QKeySequence.StandardKey.Save)  # Ctrl+S
         file_menu.addAction(self._act_save_diff)
+
+        self._act_export_report = QAction("Export Folder Report...", self)
+        file_menu.addAction(self._act_export_report)
+
+        self._act_export_text_html = QAction(
+            "Export Current Text Diff as HTML...", self
+        )
+        file_menu.addAction(self._act_export_text_html)
 
         self._act_save_all = QAction(
             self._themed_icon("document-save-all"), "Save &All...", self
@@ -207,7 +335,9 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        self._act_print = QAction(self._themed_icon("document-print"), "&Print...", self)
+        self._act_print = QAction(
+            self._themed_icon("document-print"), "&Print...", self
+        )
         self._act_print.setShortcut(QKeySequence.StandardKey.Print)  # Ctrl+P
         file_menu.addAction(self._act_print)
 
@@ -218,7 +348,9 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        self._act_close_tab = QAction(self._themed_icon("tab-close"), "&Close Tab", self)
+        self._act_close_tab = QAction(
+            self._themed_icon("tab-close"), "&Close Tab", self
+        )
         self._act_close_tab.setShortcut(QKeySequence.StandardKey.Close)  # Ctrl+W
         file_menu.addAction(self._act_close_tab)
 
@@ -259,6 +391,17 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
+        self._act_select_identical_lhs = QAction("Select &Identical on LHS...", self)
+        edit_menu.addAction(self._act_select_identical_lhs)
+
+        self._act_smart_select_lhs = QAction("Smart Select...", self)
+        edit_menu.addAction(self._act_smart_select_lhs)
+
+        self._act_delete_selected_lhs = QAction("&Delete Selected (LHS)...", self)
+        edit_menu.addAction(self._act_delete_selected_lhs)
+
+        edit_menu.addSeparator()
+
         self._act_swap_sides = QAction(
             self._themed_icon("view-sort-descending", "object-flip-horizontal"),
             "S&wap Sides",
@@ -282,7 +425,9 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self._act_find_next)
 
         self._act_find_prev = QAction("Find &Previous", self)
-        self._act_find_prev.setShortcut(QKeySequence.StandardKey.FindPrevious)  # Shift+F3
+        self._act_find_prev.setShortcut(
+            QKeySequence.StandardKey.FindPrevious
+        )  # Shift+F3
         edit_menu.addAction(self._act_find_prev)
 
         # -- Difference -------------------------------------------------
@@ -408,6 +553,29 @@ class MainWindow(QMainWindow):
         self._view_action_group.addAction(self._act_view_table)
         compare_submenu.addAction(self._act_view_table)
 
+        self._act_word_wrap = QAction("&Word Wrap", self)
+        self._act_word_wrap.setCheckable(True)
+        view_menu.addAction(self._act_word_wrap)
+
+        self._text_context_menu = view_menu.addMenu("Text &Context")
+        self._text_context_group = QActionGroup(self)
+        self._text_context_group.setExclusive(True)
+        self._text_context_actions: dict[int | None, QAction] = {}
+        for label, context_lines in (
+            ("All Lines", None),
+            ("5 Lines", 5),
+            ("3 Lines", 3),
+            ("1 Line", 1),
+            ("Differences Only", 0),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(context_lines)
+            self._text_context_group.addAction(action)
+            self._text_context_menu.addAction(action)
+            self._text_context_actions[context_lines] = action
+        self._text_context_actions[None].setChecked(True)
+
         view_menu.addSeparator()
 
         filter_submenu = view_menu.addMenu("&Filter")
@@ -428,6 +596,34 @@ class MainWindow(QMainWindow):
         self._act_filter_same.setCheckable(True)
         self._filter_action_group.addAction(self._act_filter_same)
         filter_submenu.addAction(self._act_filter_same)
+
+        self._act_file_filters = QAction("File Filte&rs...", self)
+        self._act_file_filters.setShortcut("Ctrl+Shift+F")
+        self._act_file_filters.triggered.connect(self._on_edit_file_filters)
+        view_menu.addAction(self._act_file_filters)
+
+        self._act_criteria = QAction("Comparison &Criteria...", self)
+        self._act_criteria.triggered.connect(self._on_edit_criteria)
+        view_menu.addAction(self._act_criteria)
+
+        self._act_unimportant_text_rules = QAction("Unimportant Text Rules...", self)
+        view_menu.addAction(self._act_unimportant_text_rules)
+
+        newer_submenu = view_menu.addMenu("&Newer Files")
+        self._newer_action_group = QActionGroup(self)
+        self._newer_action_group.setExclusive(True)
+        self._newer_actions: dict[str, QAction] = {}
+        for mode, label in _NEWER_MODES:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setData(mode)
+            self._newer_action_group.addAction(act)
+            newer_submenu.addAction(act)
+            self._newer_actions[mode] = act
+        self._newer_actions["show_differences"].setChecked(True)
+        self._newer_action_group.triggered.connect(
+            lambda act: self._apply_newer_mode(act.data())
+        )
 
         view_menu.addSeparator()
 
@@ -503,6 +699,13 @@ class MainWindow(QMainWindow):
         self._act_collapse_all = QAction("&Collapse All", self)
         view_menu.addAction(self._act_collapse_all)
 
+        self._act_fit_columns = QAction("Fit Columns to Contents", self)
+        self._act_fit_columns.setShortcut("Ctrl+Shift+W")
+        self._act_fit_columns.triggered.connect(
+            lambda: self._folder_view.fit_columns_to_contents()
+        )
+        view_menu.addAction(self._act_fit_columns)
+
         # -- Tools ------------------------------------------------------
         tools_menu = menu_bar.addMenu("&Tools")
 
@@ -557,9 +760,7 @@ class MainWindow(QMainWindow):
         settings_menu = menu_bar.addMenu("&Settings")
 
         self._act_configure_shortcuts = QAction("Configure &Shortcuts...", self)
-        self._act_configure_shortcuts.setShortcut(
-            QKeySequence("Ctrl+Shift+,")
-        )
+        self._act_configure_shortcuts.setShortcut(QKeySequence("Ctrl+Shift+,"))
         settings_menu.addAction(self._act_configure_shortcuts)
 
         self._act_configure_toolbars = QAction("Configure Tool&bars...", self)
@@ -572,9 +773,7 @@ class MainWindow(QMainWindow):
             "Configure &rcompare...",
             self,
         )
-        self._act_preferences.setShortcut(
-            QKeySequence("Ctrl+,")
-        )
+        self._act_preferences.setShortcut(QKeySequence("Ctrl+,"))
         settings_menu.addAction(self._act_preferences)
 
         # -- Help -------------------------------------------------------
@@ -593,7 +792,9 @@ class MainWindow(QMainWindow):
         self._act_report_bug = QAction("&Report Bug...", self)
         help_menu.addAction(self._act_report_bug)
 
-        self._act_about = QAction(self._themed_icon("help-about"), "&About rcompare", self)
+        self._act_about = QAction(
+            self._themed_icon("help-about"), "&About rcompare", self
+        )
         help_menu.addAction(self._act_about)
 
         self._act_about_kde = QAction("About &KDE", self)
@@ -650,26 +851,27 @@ class MainWindow(QMainWindow):
 
         # Home view (index 0)
         self._home_view = HomeView(self._config, self._view_stack)
-        self._view_stack.addWidget(self._home_view)    # index 0
+        self._view_stack.addWidget(self._home_view)  # index 0
 
         self._folder_view = FolderView(self._view_stack)
         self._view_stack.addWidget(self._folder_view)  # index 1
 
         self._text_view = TextView(self._view_stack)
-        self._view_stack.addWidget(self._text_view)    # index 2
+        self._view_stack.addWidget(self._text_view)  # index 2
         if self._config.appearance:
             self._text_view.apply_appearance(self._config.appearance)
 
         self._hex_view = HexView(self._view_stack)
-        self._view_stack.addWidget(self._hex_view)      # index 3
+        self._view_stack.addWidget(self._hex_view)  # index 3
 
         self._image_view = ImageView(self._view_stack)
-        self._view_stack.addWidget(self._image_view)    # index 4
+        self._view_stack.addWidget(self._image_view)  # index 4
 
         # Table view (lazily imported, index 5)
         self._table_view: Optional[QWidget]
         try:
             from .views.table_view import TableView
+
             self._table_view = TableView(self._view_stack)
             self._view_stack.addWidget(self._table_view)  # index 5
         except ImportError:
@@ -711,7 +913,9 @@ class MainWindow(QMainWindow):
 
         # Compatibility shims for old code that sets status text
         self._status_summary = QLabel()
-        self._progress_bar = QProgressBar()
+        # Keep existing progress call sites pointed at the visible inline bar.
+        # A standalone QProgressBar here becomes a separate top-level window.
+        self._progress_bar = self._integrated_status.progress_bar
         self._status_stage = QLabel()
         self._status_files = QLabel()
         self._status_diffs = QLabel()
@@ -741,7 +945,14 @@ class MainWindow(QMainWindow):
 
         # Integrated status bar
         self._integrated_status.filters_changed.connect(self._on_integrated_filters)
+        self._integrated_status.newer_changed.connect(self._apply_newer_mode)
+        self._integrated_status.filters_dialog_requested.connect(
+            self._on_edit_file_filters
+        )
         self._integrated_status.search_changed.connect(self._on_search_changed)
+        self._integrated_status.search_mode_changed.connect(
+            self._on_search_mode_changed
+        )
         self._integrated_status.navigate_prev.connect(self._on_prev_diff)
         self._integrated_status.navigate_next.connect(self._on_next_diff)
 
@@ -749,7 +960,10 @@ class MainWindow(QMainWindow):
         self._act_new_tab.triggered.connect(self._on_new_session)
         self._act_open_diff.triggered.connect(self._on_open_diff)
         self._act_compare_files.triggered.connect(self._on_compare_files_dialog)
+        self._act_compare_folders.triggered.connect(self._on_compare_folders_dialog)
         self._act_save_diff.triggered.connect(self._on_save_diff)
+        self._act_export_report.triggered.connect(self._on_export_folder_report)
+        self._act_export_text_html.triggered.connect(self._on_export_text_diff_html)
         self._act_save_all.triggered.connect(self._on_save_all)
         self._act_print.triggered.connect(self._on_print)
         self._act_print_preview.triggered.connect(self._on_print_preview)
@@ -777,10 +991,38 @@ class MainWindow(QMainWindow):
         self._act_unapply_all.triggered.connect(self._on_unapply_all)
         self._act_diff_stats.triggered.connect(self._on_diff_stats)
 
+        # Edit menu: bulk identical-file workflow
+        self._act_select_identical_lhs.triggered.connect(
+            lambda: bulk_actions.select_identical_lhs(self)
+        )
+        self._act_smart_select_lhs.triggered.connect(
+            lambda: bulk_actions.select_by_criteria_lhs(self)
+        )
+        self._act_delete_selected_lhs.triggered.connect(
+            lambda: bulk_actions.delete_selected_lhs(self)
+        )
+
         # View menu
         self._act_refresh.triggered.connect(self._on_refresh)
         self._act_expand_all.triggered.connect(self._folder_view.expand_all)
         self._act_collapse_all.triggered.connect(self._folder_view.collapse_all)
+        self._act_word_wrap.toggled.connect(self._on_word_wrap_toggled)
+        self._text_context_group.triggered.connect(
+            lambda action: self._on_text_context_changed(action.data())
+        )
+        self._act_unimportant_text_rules.triggered.connect(
+            self._on_edit_unimportant_text_rules
+        )
+        self._folder_view.selection_mode_changed.connect(
+            lambda mode: self.statusBar().showMessage(
+                {
+                    "both": "Selection applies to both panels (Alt+Left / Alt+Right to limit).",
+                    "left": "Selection limited to the LHS panel (press Alt+Left again for both).",
+                    "right": "Selection limited to the RHS panel (press Alt+Right again for both).",
+                }[mode],
+                6000,
+            )
+        )
 
         # Tools menu
         self._act_compare_now.triggered.connect(self._on_compare)
@@ -827,15 +1069,29 @@ class MainWindow(QMainWindow):
         self._act_show_left_only.toggled.connect(self._on_view_filter_toggled)
         self._act_show_right_only.toggled.connect(self._on_view_filter_toggled)
         self._act_show_files_only.toggled.connect(self._on_view_filter_toggled)
-        self._act_filter_all.triggered.connect(lambda: self._apply_quick_filter_preset("all"))
-        self._act_filter_diffs.triggered.connect(lambda: self._apply_quick_filter_preset("diffs"))
-        self._act_filter_same.triggered.connect(lambda: self._apply_quick_filter_preset("same"))
+        self._act_filter_all.triggered.connect(
+            lambda: self._apply_quick_filter_preset("all")
+        )
+        self._act_filter_diffs.triggered.connect(
+            lambda: self._apply_quick_filter_preset("diffs")
+        )
+        self._act_filter_same.triggered.connect(
+            lambda: self._apply_quick_filter_preset("same")
+        )
         # (Old toolbar filter presets removed — use menu or integrated status bar)
         self._act_show_preview.toggled.connect(self._on_preview_toggled)
-        self._act_always_show_folders.toggled.connect(self._on_folder_view_options_changed)
-        self._act_mode_compare_structure.triggered.connect(self._on_folder_view_options_changed)
-        self._act_mode_files_only.triggered.connect(self._on_folder_view_options_changed)
-        self._act_mode_ignore_structure.triggered.connect(self._on_folder_view_options_changed)
+        self._act_always_show_folders.toggled.connect(
+            self._on_folder_view_options_changed
+        )
+        self._act_mode_compare_structure.triggered.connect(
+            self._on_folder_view_options_changed
+        )
+        self._act_mode_files_only.triggered.connect(
+            self._on_folder_view_options_changed
+        )
+        self._act_mode_ignore_structure.triggered.connect(
+            self._on_folder_view_options_changed
+        )
 
         # (3-Way toggle available via menu only)
 
@@ -863,6 +1119,43 @@ class MainWindow(QMainWindow):
         if idx < 0 or idx >= len(self._sessions):
             idx = 0
         return self._sessions[idx]
+
+    def _current_sources_are_remote(self) -> bool:
+        return is_remote_source(self._left_path) or is_remote_source(self._right_path)
+
+    def _set_local_source_actions_enabled(self, enabled: bool) -> None:
+        """Keep filesystem mutations unavailable for remote comparisons."""
+        for name in (
+            "_act_copy_lr",
+            "_act_copy_rl",
+            "_act_delete_selected_lhs",
+            "_act_apply_diff",
+            "_act_unapply_diff",
+            "_act_apply_all",
+            "_act_unapply_all",
+            "_act_sync",
+        ):
+            action = getattr(self, name, None)
+            if action is not None:
+                action.setEnabled(enabled)
+                if not enabled:
+                    if not hasattr(action, "_source_local_tooltip"):
+                        action._source_local_tooltip = action.toolTip()
+                    action.setToolTip(
+                        "This action requires local filesystem access and is unavailable for remote sources."
+                    )
+                elif hasattr(action, "_source_local_tooltip"):
+                    action.setToolTip(action._source_local_tooltip)
+        folder_view = getattr(self, "_folder_view", None)
+        if folder_view is not None:
+            folder_view.set_local_operations_enabled(enabled)
+
+    def _show_remote_mutation_limit(self) -> None:
+        QMessageBox.information(
+            self,
+            "Remote Operation Not Available",
+            "Copy, sync, delete, rename, and local file actions are disabled for remote sources.",
+        )
 
     def _session_title(self, session: SessionState, index: int) -> str:
         left = Path(session.left_path).name if session.left_path else ""
@@ -896,6 +1189,7 @@ class MainWindow(QMainWindow):
             follow_symlinks=self._settings.follow_symlinks,
             use_hash_verification=self._settings.use_hash_verification,
             cache_dir=self._settings.cache_dir,
+            auto_refresh=self._settings.auto_refresh,
         )
         session.three_way_mode = self._three_way_mode
         session.show_identical = self._filter_bar.show_identical
@@ -903,13 +1197,19 @@ class MainWindow(QMainWindow):
         session.show_left_only = self._filter_bar.show_left_only
         session.show_right_only = self._filter_bar.show_right_only
         session.show_files_only = self._filter_bar.show_files_only
-        session.search_text = self._filter_bar.search_text
+        session.search_text = self._integrated_status.search_text
+        session.search_mode = self._integrated_status.search_mode
         session.diff_option_mode = self._filter_bar.diff_option_mode
         session.active_view = self._view_stack.currentIndex()
         session.report = self._current_report
         session.status_summary = self._status_summary.text() or "Ready"
         session.folder_view_mode = self._folder_view_mode()
         session.always_show_folders = self._act_always_show_folders.isChecked()
+        session.wrap_text = self._act_word_wrap.isChecked()
+        session.context_lines = self._current_text_context_lines()
+        session.unimportant_text_rules = [
+            dict(rule) for rule in session.unimportant_text_rules
+        ]
         self._update_active_session_title()
 
     def _apply_session_state(self, idx: int) -> None:
@@ -918,19 +1218,35 @@ class MainWindow(QMainWindow):
 
         session = self._sessions[idx]
         self._active_session_index = idx
+        self._set_unimportant_text_rules_action_text()
+        self._applying_session_state = True
         self._settings = ComparisonSettings(
             ignore_patterns=list(session.settings.ignore_patterns),
             follow_symlinks=session.settings.follow_symlinks,
             use_hash_verification=session.settings.use_hash_verification,
             cache_dir=session.settings.cache_dir,
+            auto_refresh=session.settings.auto_refresh,
         )
 
         self._path_bar.left_path = session.left_path
         self._path_bar.right_path = session.right_path
         self._path_bar.base_path = session.base_path
+        self._act_word_wrap.blockSignals(True)
+        self._act_word_wrap.setChecked(session.wrap_text)
+        self._act_word_wrap.blockSignals(False)
+        for text_view in self._all_text_views():
+            text_view.set_word_wrap(session.wrap_text)
+        self._set_text_context_lines(session.context_lines, persist=False)
+        self._sync_file_filter_ui()
         self._left_path = session.left_path
         self._right_path = session.right_path
         self._base_path = session.base_path
+        self._set_local_source_actions_enabled(
+            not (
+                is_remote_source(session.left_path)
+                or is_remote_source(session.right_path)
+            )
+        )
 
         self._three_way_mode = session.three_way_mode
         self._tb_three_way.blockSignals(True)
@@ -948,6 +1264,15 @@ class MainWindow(QMainWindow):
         self._filter_bar.diff_option_mode = session.diff_option_mode
         self._filter_bar.blockSignals(False)
 
+        self._integrated_status.set_filter_state(
+            session.show_identical,
+            session.show_different,
+            session.show_left_only,
+            session.show_right_only,
+        )
+        self._integrated_status.set_search_text(session.search_text)
+        self._integrated_status.set_search_mode(session.search_mode)
+
         self._act_show_identical.setChecked(session.show_identical)
         self._act_show_different.setChecked(session.show_different)
         self._act_show_left_only.setChecked(session.show_left_only)
@@ -961,7 +1286,9 @@ class MainWindow(QMainWindow):
             session.show_files_only,
             session.search_text,
             session.diff_option_mode,
+            session.search_mode,
         )
+        self._integrated_status.set_search_error(self._folder_view.search_error)
 
         active = session.active_view
         if active < 0 or active > 5:
@@ -969,7 +1296,9 @@ class MainWindow(QMainWindow):
         self._switch_view(active)
 
         self._current_report = session.report
-        self._set_folder_view_options(session.folder_view_mode, session.always_show_folders)
+        self._set_folder_view_options(
+            session.folder_view_mode, session.always_show_folders
+        )
         if session.report is not None:
             self._rebuild_folder_tree_from_report()
         else:
@@ -978,12 +1307,26 @@ class MainWindow(QMainWindow):
             )
 
         self._status_summary.setText(session.status_summary or "Ready")
-        self._integrated_status.set_status(session.status_summary or "Ready")
+        self._integrated_status.set_status(
+            "Comparison is out of date. Choose View > Refresh (F5)."
+            if session.stale
+            else session.status_summary or "Ready"
+        )
+        if session.report is not None and not session.stale:
+            self._update_visible_status_summary()
+        self._set_refresh_action_stale(session.stale)
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
         self._session_tab_bar.set_comparing(False)
         self._update_quick_filter_actions()
         self._update_active_session_title()
+        self._applying_session_state = False
+        if session.report is not None and not session.stale:
+            self._tree_watcher.start(
+                local_source_paths((session.left_path, session.right_path))
+            )
+        else:
+            self._tree_watcher.stop()
 
     @Slot(int)
     def _on_session_changed(self, index: int) -> None:
@@ -994,6 +1337,7 @@ class MainWindow(QMainWindow):
         old_index = self._active_session_index
         if old_index != index:
             self._capture_session_state(old_index)
+            self._tree_watcher.stop()
         self._apply_session_state(index)
 
     # ------------------------------------------------------------------
@@ -1004,17 +1348,142 @@ class MainWindow(QMainWindow):
     def _on_left_path_changed(self, path: str) -> None:
         self._left_path = path
         self._app_state.left_path = path
+        self._set_local_source_actions_enabled(
+            not (is_remote_source(path) or is_remote_source(self._right_path))
+        )
         session = self._current_session()
         session.left_path = path
         self._update_active_session_title()
+        if not self._applying_session_state:
+            self._on_comparison_paths_changed()
 
     @Slot(str)
     def _on_right_path_changed(self, path: str) -> None:
         self._right_path = path
         self._app_state.right_path = path
+        self._set_local_source_actions_enabled(
+            not (is_remote_source(self._left_path) or is_remote_source(path))
+        )
         session = self._current_session()
         session.right_path = path
         self._update_active_session_title()
+        if not self._applying_session_state:
+            self._on_comparison_paths_changed()
+
+    def _on_comparison_paths_changed(self) -> None:
+        session = self._current_session()
+        report = session.report
+        if report is None or (
+            session.left_path == report.left and session.right_path == report.right
+        ):
+            return
+        self._auto_refresh_timer.stop()
+        self._tree_watcher.stop()
+        session.stale = True
+        self._set_refresh_action_stale(True)
+        self._integrated_status.set_status(
+            "Folder paths changed. Choose View > Refresh (F5) to compare them."
+        )
+
+    @Slot(bool)
+    def _on_word_wrap_toggled(self, enabled: bool) -> None:
+        """Apply and retain the text-pane wrapping preference for this session."""
+        for text_view in self._all_text_views():
+            text_view.set_word_wrap(enabled)
+        self._current_session().wrap_text = enabled
+
+    def _all_text_views(self) -> list[TextView]:
+        """Return the base text view and any open standalone text comparisons."""
+        return [
+            widget
+            for index in range(self._view_stack.count())
+            if isinstance((widget := self._view_stack.widget(index)), TextView)
+        ]
+
+    def _current_text_context_lines(self) -> int | None:
+        action = self._text_context_group.checkedAction()
+        if action is None:
+            return None
+        value = action.data()
+        return value if value in (None, 0, 1, 3, 5) else None
+
+    def _set_text_context_lines(
+        self, context_lines: int | None, *, persist: bool = True
+    ) -> bool:
+        """Apply the active session's unchanged-line context to every text view."""
+        if context_lines not in (None, 0, 1, 3, 5):
+            context_lines = None
+        text_views = self._all_text_views()
+        if context_lines != self._current_text_context_lines() and any(
+            view._edit_mode for view in text_views
+        ):
+            return False
+        for text_view in text_views:
+            if not text_view.set_context_lines(context_lines):
+                return False
+        action = self._text_context_actions[context_lines]
+        action.setChecked(True)
+        if persist:
+            self._current_session().context_lines = context_lines
+        return True
+
+    def _on_text_context_changed(self, context_lines: object) -> None:
+        value = context_lines if type(context_lines) is int else None
+        if not self._set_text_context_lines(value):
+            self._text_context_actions[
+                self._current_session().context_lines
+            ].setChecked(True)
+            self._integrated_status.set_status(
+                "Exit text editing before hiding unchanged lines."
+            )
+            self._integrated_status.set_status(
+                "Exit text editing before hiding unchanged lines."
+            )
+
+    def _set_refresh_action_stale(self, stale: bool) -> None:
+        self._act_refresh.setText("&Refresh Now *" if stale else "&Refresh")
+        self._act_refresh.setToolTip(
+            "Folder contents changed; run the comparison again."
+            if stale
+            else "Compare the current folders again."
+        )
+
+    def _mark_current_session_stale(self, *, auto_refresh: bool) -> None:
+        session = self._current_session()
+        if session.report is None:
+            return
+        session.stale = True
+        self._set_refresh_action_stale(True)
+        self._integrated_status.set_status(
+            "Comparison is out of date. Choose View > Refresh (F5)."
+        )
+        if (
+            auto_refresh
+            and session.settings.auto_refresh
+            and not self._app_state.comparing
+        ):
+            self._auto_refresh_timer.start()
+
+    @Slot(str)
+    def _on_tree_changed(self, path: str) -> None:
+        self._tree_change_generation += 1
+        log_info("compared folder changed", path=path)
+        self._mark_current_session_stale(auto_refresh=True)
+
+    @Slot(str)
+    def _on_watch_coverage_changed(self, message: str) -> None:
+        self._watch_coverage_message = message
+        if message:
+            self._integrated_status.setToolTip(message)
+
+    @Slot()
+    def _run_auto_refresh(self) -> None:
+        session = self._current_session()
+        if not session.stale or not session.settings.auto_refresh:
+            return
+        if self._app_state.comparing:
+            return
+        self._on_refresh()
 
     @Slot(str)
     def _on_base_path_changed(self, path: str) -> None:
@@ -1045,13 +1514,29 @@ class MainWindow(QMainWindow):
             show_files_only,
             search_text,
             self._filter_bar.diff_option_mode,
+            self._integrated_status.search_mode,
         )
+        self._filter_bar.blockSignals(True)
+        self._filter_bar.show_identical = show_identical
+        self._filter_bar.show_different = show_different
+        self._filter_bar.show_left_only = show_left_only
+        self._filter_bar.show_right_only = show_right_only
+        self._filter_bar.show_files_only = show_files_only
+        self._filter_bar.search_text = search_text
+        self._filter_bar.blockSignals(False)
+        self._integrated_status.set_filter_state(
+            show_identical, show_different, show_left_only, show_right_only
+        )
+        self._integrated_status.set_search_error(self._folder_view.search_error)
         # Keep View menu checkboxes in sync with the active filter bar state.
         self._act_show_identical.setChecked(show_identical)
         self._act_show_different.setChecked(show_different)
         self._act_show_left_only.setChecked(show_left_only)
         self._act_show_right_only.setChecked(show_right_only)
         self._act_show_files_only.setChecked(show_files_only)
+        if self._current_report is not None:
+            self._integrated_status.set_diff_position(0, len(self._get_diff_entries()))
+            self._update_visible_status_summary()
         session = self._current_session()
         session.show_identical = show_identical
         session.show_different = show_different
@@ -1059,6 +1544,7 @@ class MainWindow(QMainWindow):
         session.show_right_only = show_right_only
         session.show_files_only = show_files_only
         session.search_text = search_text
+        session.search_mode = self._integrated_status.search_mode
         session.diff_option_mode = self._filter_bar.diff_option_mode
         self._update_quick_filter_actions()
 
@@ -1066,6 +1552,39 @@ class MainWindow(QMainWindow):
     def _on_diff_option_changed(self, mode: str) -> None:
         self._folder_view.set_diff_option_mode(mode)
         self._current_session().diff_option_mode = mode
+        self._update_visible_status_summary()
+
+    def _update_visible_status_summary(self) -> str:
+        """Summarize rows accepted by the active folder-view proxy filters."""
+        counts = {
+            DiffStatus.SAME: 0,
+            DiffStatus.DIFFERENT: 0,
+            DiffStatus.ORPHAN_LEFT: 0,
+            DiffStatus.ORPHAN_RIGHT: 0,
+            DiffStatus.UNCHECKED: 0,
+        }
+        for node in self._folder_view.visible_nodes():
+            if node.status in counts:
+                counts[node.status] += 1
+
+        status_text = (
+            f"{counts[DiffStatus.SAME]} identical, "
+            f"{counts[DiffStatus.DIFFERENT]} different, "
+            f"{counts[DiffStatus.ORPHAN_LEFT]} left only, "
+            f"{counts[DiffStatus.ORPHAN_RIGHT]} right only"
+        )
+        if counts[DiffStatus.UNCHECKED]:
+            status_text += f", {counts[DiffStatus.UNCHECKED]} unchecked"
+        if self._current_session().stale:
+            status_text += " (out of date)"
+        self._current_session().status_summary = status_text
+        self._status_summary.setText(status_text)
+        self._integrated_status.set_status(status_text)
+        self._integrated_status.set_status_details(
+            "Counts include visible folder rows. Folder rows inherit status from "
+            "their descendants; Next/Previous counts file entries only."
+        )
+        return status_text
 
     @Slot()
     def _on_view_filter_toggled(self) -> None:
@@ -1096,7 +1615,124 @@ class MainWindow(QMainWindow):
         self._act_show_files_only.setChecked(self._filter_bar.show_files_only)
         self._on_view_filter_toggled()
 
+    @Slot()
+    def _on_edit_file_filters(self) -> None:
+        session = self._current_session()
+        dialog = FileFiltersDialog(session.file_filter, self)
+        if dialog.exec():
+            session.file_filter = dialog.filter_text()
+            self._sync_file_filter_ui()
+            if self._current_report is not None:
+                self._on_refresh()
+        else:
+            self._sync_file_filter_ui()
+
+    @Slot()
+    def _on_edit_unimportant_text_rules(self) -> None:
+        """Edit ordered text rules and reapply them to open text comparisons."""
+        session = self._current_session()
+        dialog = UnimportantTextRulesDialog(session.unimportant_text_rules, self)
+        if not dialog.exec():
+            return
+        try:
+            rules = dialog.rules()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Text Rule", str(exc))
+            return
+        if rules == session.unimportant_text_rules:
+            return
+
+        session.unimportant_text_rules = rules
+        self._set_unimportant_text_rules_action_text()
+        text_views = [self._text_view]
+        text_views.extend(
+            widget
+            for index in range(_BASE_VIEW_TAB_COUNT, self._view_stack.count())
+            if isinstance((widget := self._view_stack.widget(index)), TextView)
+        )
+        for text_view in text_views:
+            left_path, right_path = text_view._left_path, text_view._right_path
+            if (
+                left_path
+                and right_path
+                and Path(left_path).is_file()
+                and Path(right_path).is_file()
+            ):
+                text_view.compare_files(
+                    left_path,
+                    right_path,
+                    rules,
+                    apply_unimportant_rules=text_view._apply_unimportant_rules,
+                )
+        if self._current_report is not None:
+            self._on_refresh()
+
+    def _set_unimportant_text_rules_action_text(self) -> None:
+        """Show the active session's text-rule count in the View menu."""
+        count = len(self._current_session().unimportant_text_rules)
+        self._act_unimportant_text_rules.setText(f"Unimportant Text Rules... ({count})")
+
+    @Slot()
+    def _on_edit_criteria(self) -> None:
+        session = self._current_session()
+        dialog = CriteriaDialog(session.criteria, self)
+        if dialog.exec() and dialog.criteria() != session.criteria:
+            session.criteria = dialog.criteria()
+            self.statusBar().showMessage(
+                f"Criteria: {session.criteria.summary()}", 5000
+            )
+            if self._current_report is not None:
+                self._on_refresh()
+
+    def _sync_file_filter_ui(self) -> None:
+        text = self._current_session().file_filter
+        self._integrated_status.set_file_filter_active(parse_filter(text).active, text)
+
+    def _apply_newer_mode(self, mode: str) -> None:
+        """Show only files newer on one side (Beyond Compare style)."""
+        saved = getattr(self, "_pre_newer_filters", None)
+        if mode != "show_differences":
+            if saved is None:
+                # Remember what was visible so leaving Newer mode restores it.
+                self._pre_newer_filters = (
+                    self._act_show_identical.isChecked(),
+                    self._act_show_different.isChecked(),
+                    self._act_show_left_only.isChecked(),
+                    self._act_show_right_only.isChecked(),
+                )
+            # Newer-side views only make sense for changed files / orphans.
+            self._act_show_identical.setChecked(False)
+            self._act_show_different.setChecked(True)
+            self._act_show_left_only.setChecked(True)
+            self._act_show_right_only.setChecked(True)
+        elif saved is not None:
+            (
+                ident,
+                diff,
+                left_only,
+                right_only,
+            ) = saved
+            self._pre_newer_filters = None
+            self._act_show_identical.setChecked(ident)
+            self._act_show_different.setChecked(diff)
+            self._act_show_left_only.setChecked(left_only)
+            self._act_show_right_only.setChecked(right_only)
+        self._filter_bar.diff_option_mode = mode
+        self._on_view_filter_toggled()
+        self._on_diff_option_changed(mode)
+        total = len(self._get_diff_entries())
+        if self._current_report is not None:
+            self._integrated_status.set_diff_position(0, total)
+            self.statusBar().showMessage(
+                f"{dict(_NEWER_MODES)[mode]}: {total} file(s).", 4000
+            )
+
     def _update_quick_filter_actions(self) -> None:
+        mode = self._filter_bar.diff_option_mode
+        act = self._newer_actions.get(mode)
+        if act is not None and not act.isChecked():
+            act.setChecked(True)
+        self._integrated_status.set_newer_mode(mode)
         identical = self._filter_bar.show_identical
         different = self._filter_bar.show_different
         left_only = self._filter_bar.show_left_only
@@ -1104,7 +1740,9 @@ class MainWindow(QMainWindow):
 
         all_match = identical and different and left_only and right_only
         diffs_match = (not identical) and different and left_only and right_only
-        same_match = identical and (not different) and (not left_only) and (not right_only)
+        same_match = (
+            identical and (not different) and (not left_only) and (not right_only)
+        )
 
         actions = [
             self._act_filter_all,
@@ -1177,7 +1815,11 @@ class MainWindow(QMainWindow):
         """Validate paths and launch an asynchronous comparison."""
         left = self._path_bar.left_path.strip()
         right = self._path_bar.right_path.strip()
-        log_info("compare requested", left=left, right=right)
+        log_info(
+            "compare requested",
+            left=source_log_label(left),
+            right=source_log_label(right),
+        )
 
         if not left or not right:
             log_warning("compare rejected: missing paths", left=left, right=right)
@@ -1186,21 +1828,39 @@ class MainWindow(QMainWindow):
             )
             return
 
-        left_path = Path(left)
-        right_path = Path(right)
-
-        if not left_path.exists():
-            log_warning("compare rejected: left path missing", left=left)
-            QMessageBox.critical(
-                self, "Path Not Found", f"Left path does not exist:\n{left}"
-            )
-            return
-        if not right_path.exists():
-            log_warning("compare rejected: right path missing", right=right)
-            QMessageBox.critical(
-                self, "Path Not Found", f"Right path does not exist:\n{right}"
-            )
-            return
+        for label, source in (("left", left), ("right", right)):
+            if is_remote_source(source):
+                validation_error = validate_remote_source(source)
+                if validation_error:
+                    QMessageBox.critical(
+                        self, "Invalid Remote Source", validation_error
+                    )
+                    return
+                if not source_scheme(source):
+                    QMessageBox.critical(
+                        self,
+                        "Invalid Remote Source",
+                        f"The {label} remote source URL is malformed.",
+                    )
+                    return
+                continue
+            local_path = Path(source)
+            if not local_path.exists():
+                log_warning(f"compare rejected: {label} path missing")
+                QMessageBox.critical(
+                    self,
+                    "Path Not Found",
+                    f"The {label} path does not exist:\n{source}",
+                )
+                return
+            if not local_path.is_dir():
+                log_warning(f"compare rejected: {label} path is not a directory")
+                QMessageBox.critical(
+                    self,
+                    "Invalid Folder",
+                    f"The {label} path is not a folder:\n{source}",
+                )
+                return
 
         if self._cli_bridge is None:
             log_error("compare rejected: cli bridge not configured")
@@ -1210,6 +1870,27 @@ class MainWindow(QMainWindow):
                 "rcompare_cli binary is not configured. Please set the path in Tools > Options.",
             )
             return
+
+        # Keep the active session state in sync even when paths are supplied by
+        # a caller that updates the path bar without emitting edit signals.
+        self._left_path = left
+        self._right_path = right
+        self._current_session().left_path = left
+        self._current_session().right_path = right
+
+        self._auto_refresh_timer.stop()
+        self._pending_refresh_view_state = (
+            self._folder_view.capture_view_state()
+            if self._current_report is not None
+            else None
+        )
+        self._scan_change_generation = self._tree_change_generation
+        # Track new roots while a comparison is in flight as well. This matters
+        # after the user changes paths and the previous watch set is retired.
+        self._tree_watcher.start(local_source_paths((left, right)))
+        self._set_local_source_actions_enabled(
+            not (is_remote_source(left) or is_remote_source(right))
+        )
 
         # Cancel any running worker
         if self._worker is not None and self._worker.is_running():
@@ -1227,12 +1908,16 @@ class MainWindow(QMainWindow):
         self._session_tab_bar.set_comparing(True)
         self._status_summary.setText("Comparing...")
         self._integrated_status.set_status("Comparing...")
+        self._integrated_status.set_busy_progress()
         self._integrated_status.show_progress(True)
         self._current_session().status_summary = "Comparing..."
-        self._progress_bar.setValue(0)
-        self._progress_bar.show()
         self._status_stage.setText("")
         self.statusBar().showMessage("Starting comparison...")
+
+        # Show the comparison panels while the scan runs; the results replace
+        # the previous tree as soon as the worker finishes.
+        if self._view_stack.currentIndex() == 0:
+            self._switch_view(1)
 
         self._worker.start_scan(
             left=left,
@@ -1242,6 +1927,10 @@ class MainWindow(QMainWindow):
             ignore_patterns=self._settings.ignore_patterns or None,
             folder_view_mode=self._folder_view_mode(),
             always_show_folders=self._act_always_show_folders.isChecked(),
+            file_filter=self._current_session().file_filter,
+            criteria=self._current_session().criteria,
+            unimportant_rules=self._current_session().unimportant_text_rules,
+            cache_dir=self._settings.cache_dir,
         )
         log_info(
             "compare started",
@@ -1253,6 +1942,13 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_cancel(self) -> None:
         """Cancel a running comparison."""
+        if self._sync_worker is not None and self._sync_worker.is_running():
+            self._sync_worker.cancel()
+            self._tb_cancel.setEnabled(False)
+            self.statusBar().showMessage(
+                "Stopping sync; the current transfer is saving its checkpoint..."
+            )
+            return
         if self._worker is not None:
             self._worker.cancel()
         self._app_state.request_stop()
@@ -1260,8 +1956,15 @@ class MainWindow(QMainWindow):
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
         self._session_tab_bar.set_comparing(False)
-        self._status_summary.setText("Cancelled")
-        self._integrated_status.set_status("Cancelled")
+        self._auto_refresh_timer.stop()
+        self._pending_refresh_view_state = None
+        message = (
+            "Cancelled; the comparison is out of date. Refresh to update it."
+            if self._current_session().stale
+            else "Cancelled"
+        )
+        self._status_summary.setText(message)
+        self._integrated_status.set_status(message)
         self._integrated_status.show_progress(False)
         self._current_session().status_summary = "Cancelled"
 
@@ -1284,6 +1987,7 @@ class MainWindow(QMainWindow):
         self._app_state.set_comparing(False)
         session = self._current_session()
         session.report = report
+        session.stale = self._tree_change_generation != self._scan_change_generation
         self._tb_cancel.setEnabled(False)
         self._tb_compare.setEnabled(True)
         self._session_tab_bar.set_comparing(False)
@@ -1292,28 +1996,46 @@ class MainWindow(QMainWindow):
         self._status_stage.setText("")
 
         self._folder_view.set_tree(tree)
+        if self._pending_refresh_view_state is not None:
+            self._folder_view.restore_view_state(self._pending_refresh_view_state)
+        self._pending_refresh_view_state = None
         self._folder_view.set_preview_roots(self._left_path, self._right_path)
+        self._folder_view.set_preview_cli(
+            self._cli_bridge.executable if self._cli_bridge is not None else ""
+        )
 
         # Switch to folder view if we're on the home view
         if self._view_stack.currentIndex() == 0:
             self._switch_view(1)
 
-        summary = report.summary
-        status_text = (
-            f"{summary.same} identical, "
-            f"{summary.different} different, "
-            f"{summary.orphan_left} left only, "
-            f"{summary.orphan_right} right only"
+        self._update_visible_status_summary()
+        self._set_refresh_action_stale(session.stale)
+        self._tree_watcher.start(
+            local_source_paths((session.left_path, session.right_path))
         )
-        session.status_summary = status_text
-        self._status_summary.setText(status_text)
-        self.statusBar().showMessage("Comparison complete.", 5000)
+        self._set_local_source_actions_enabled(
+            not (
+                is_remote_source(session.left_path)
+                or is_remote_source(session.right_path)
+            )
+        )
+        if session.stale:
+            self._mark_current_session_stale(auto_refresh=True)
+        if self._current_sources_are_remote():
+            self.statusBar().showMessage(
+                "Remote comparison complete. Local file actions are unavailable; "
+                "the preview panel reads text files up to 64 KB.",
+                10000,
+            )
+        else:
+            self.statusBar().showMessage("Comparison complete.", 5000)
 
         # Update navigation counters
         diff_entries = self._get_diff_entries()
         all_entries = self._get_all_file_entries()
         self._status_files.setText(f"{len(all_entries)} files")
         self._status_diffs.setText(f"{len(diff_entries)} differences")
+        self._integrated_status.set_diff_position(0, len(diff_entries))
         log_info(
             "compare completed",
             total=report.summary.total,
@@ -1338,6 +2060,7 @@ class MainWindow(QMainWindow):
         self._status_summary.setText("Error")
         self._integrated_status.set_status("Error")
         self._current_session().status_summary = "Error"
+        self._pending_refresh_view_state = None
         log_error("compare failed", error_text=message)
         QMessageBox.critical(self, "Comparison Error", message)
 
@@ -1350,14 +2073,20 @@ class MainWindow(QMainWindow):
     def _on_progress_update(self, info) -> None:
         """Handle structured progress updates from the CLI."""
         self._app_state.update_progress(info)
-        self._progress_bar.setValue(info.percent)
+        if info.entries_total > 0:
+            self._integrated_status.set_progress(info.percent, 100)
+        else:
+            # The CLI cannot estimate directory traversal totals in advance.
+            # Keep animating until it reports a phase with a trustworthy total.
+            self._integrated_status.set_busy_progress()
+        self._integrated_status.show_progress(True)
         self._status_stage.setText(info.stage_label)
         if info.entries_total > 0:
-            self._status_summary.setText(
-                f"{info.stage_label} ({info.entries_done:,}/{info.entries_total:,})"
-            )
+            text = f"{info.stage_label} ({info.entries_done:,}/{info.entries_total:,})"
         else:
-            self._status_summary.setText(info.stage_label)
+            text = info.stage_label
+        self._status_summary.setText(text)
+        self._integrated_status.set_status(text)
 
     # ------------------------------------------------------------------
     # Refresh / New Session
@@ -1383,9 +2112,18 @@ class MainWindow(QMainWindow):
             self._on_preferences()
 
     @Slot(bool, bool, bool, bool)
-    def _on_integrated_filters(self, identical: bool, different: bool, left_only: bool, right_only: bool) -> None:
+    def _on_integrated_filters(
+        self, identical: bool, different: bool, left_only: bool, right_only: bool
+    ) -> None:
         """Handle filter changes from IntegratedStatusBar."""
-        self._on_filters_changed(identical, different, left_only, right_only, True, self._integrated_status.search_text)
+        self._on_filters_changed(
+            identical,
+            different,
+            left_only,
+            right_only,
+            self._act_show_files_only.isChecked(),
+            self._integrated_status.search_text,
+        )
 
     @Slot(str)
     def _on_search_changed(self, text: str) -> None:
@@ -1397,6 +2135,18 @@ class MainWindow(QMainWindow):
             self._act_show_right_only.isChecked(),
             self._act_show_files_only.isChecked(),
             text,
+        )
+
+    @Slot(str)
+    def _on_search_mode_changed(self, _mode: str) -> None:
+        """Reapply tree and navigation filters when search interpretation changes."""
+        self._on_filters_changed(
+            self._act_show_identical.isChecked(),
+            self._act_show_different.isChecked(),
+            self._act_show_left_only.isChecked(),
+            self._act_show_right_only.isChecked(),
+            self._act_show_files_only.isChecked(),
+            self._integrated_status.search_text,
         )
 
     @Slot(int)
@@ -1515,6 +2265,10 @@ class MainWindow(QMainWindow):
         if is_dir:
             return
 
+        if self._current_sources_are_remote():
+            self._open_remote_file_pair(path)
+            return
+
         resolved = self._resolve_compare_file_paths(path)
         if resolved is None:
             log_warning("file activation rejected", rel_path=path)
@@ -1526,67 +2280,526 @@ class MainWindow(QMainWindow):
             return
 
         left_file, right_file = resolved
-        mode = self._determine_file_compare_mode(path)
-        tab_key = self._make_file_tab_key(mode, left_file, right_file)
+        self._open_file_pair(left_file, right_file, relative_path=path)
+
+    def _open_file_pair(
+        self,
+        left_file: Path,
+        right_file: Path,
+        *,
+        relative_path: str | None = None,
+        tab_key_override: str | None = None,
+        temporary_owner: object | None = None,
+    ) -> bool:
+        """Open a standalone two-file view, reusing an existing tab when possible."""
+        left_file = Path(left_file).expanduser()
+        right_file = Path(right_file).expanduser()
+        if not left_file.is_file() or not right_file.is_file():
+            QMessageBox.information(
+                self,
+                "File Compare Not Available",
+                "Select two existing files. Folders cannot be used in file-only mode.",
+            )
+            return False
+        try:
+            # Opening without reading catches permission and I/O errors before
+            # a viewer (especially the table viewer) can display an empty pane.
+            with left_file.open("rb"):
+                pass
+            with right_file.open("rb"):
+                pass
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "File Cannot Be Read",
+                f"Unable to open the selected file pair:\n{exc}",
+            )
+            return False
+
+        recompare_worker = self._prepare_opened_pair_recompare(
+            left_file, right_file, relative_path
+        )
+        mode = self._determine_file_pair_mode(left_file, right_file)
+        session = self._current_session()
+        apply_unimportant_rules = (
+            relative_path is None or session.criteria.mode == "content"
+        )
+        unimportant_rules = (
+            session.unimportant_text_rules if apply_unimportant_rules else []
+        )
+        tab_key = tab_key_override or self._make_file_tab_key(
+            mode, left_file, right_file
+        )
 
         existing = self._file_compare_tabs.get(tab_key)
         if existing is not None and 0 <= existing < self._view_stack.count():
+            existing_widget = self._view_stack.widget(existing)
+            if isinstance(existing_widget, TextView):
+                existing_widget.compare_files(
+                    str(left_file),
+                    str(right_file),
+                    unimportant_rules,
+                    apply_unimportant_rules=apply_unimportant_rules,
+                )
+            self._finish_opened_pair_workers(
+                existing_widget, recompare_worker, temporary_owner
+            )
             self._switch_view(existing)
-            log_info("file compare tab reused", rel_path=path, mode=mode, index=existing)
-            return
+            log_info(
+                "file compare tab reused",
+                rel_path=relative_path,
+                left=str(left_file),
+                right=str(right_file),
+                mode=mode,
+                index=existing,
+            )
+            return True
 
         widget: QWidget
         if mode == "table":
             try:
                 from .views.table_view import TableView
+
                 table_view = TableView(self._view_stack)
-                suffix = Path(path).suffix.lower()
-                if suffix in (".xlsx", ".xls"):
+                if left_file.suffix.lower() in (".xlsx", ".xls"):
                     table_view.compare_excel(str(left_file), str(right_file))
                 else:
                     table_view.compare_csv(str(left_file), str(right_file))
                 widget = table_view
-                label = f"Table: {Path(path).name}"
+                label = self._file_pair_tab_label("Table", left_file, right_file)
             except ImportError:
                 # Fallback to text view if table_view not available
                 text_view = TextView(self._view_stack)
-                text_view.compare_files(str(left_file), str(right_file))
+                text_view.compare_files(
+                    str(left_file),
+                    str(right_file),
+                    unimportant_rules,
+                    apply_unimportant_rules=apply_unimportant_rules,
+                )
                 widget = text_view
-                label = f"Text: {Path(path).name}"
+                label = self._file_pair_tab_label("Text", left_file, right_file)
         elif mode == "text":
             text_view = TextView(self._view_stack)
-            text_view.compare_files(str(left_file), str(right_file))
+            text_view.compare_files(
+                str(left_file),
+                str(right_file),
+                unimportant_rules,
+                apply_unimportant_rules=apply_unimportant_rules,
+            )
             widget = text_view
-            label = f"Text: {Path(path).name}"
+            label = self._file_pair_tab_label("Text", left_file, right_file)
         elif mode == "image":
             image_view = ImageView(self._view_stack)
             image_view.compare_images(str(left_file), str(right_file))
             widget = image_view
-            label = f"Image: {Path(path).name}"
+            label = self._file_pair_tab_label("Image", left_file, right_file)
         else:
             hex_view = HexView(self._view_stack)
             hex_view.compare_files(str(left_file), str(right_file))
             widget = hex_view
-            label = f"Hex: {Path(path).name}"
+            label = self._file_pair_tab_label("Hex", left_file, right_file)
+
+        if isinstance(widget, TextView):
+            widget.set_word_wrap(session.wrap_text)
+            widget.set_context_lines(session.context_lines)
+
+        if temporary_owner is not None:
+            widget._remote_temporary_directory = temporary_owner
+
+        self._finish_opened_pair_workers(widget, recompare_worker, temporary_owner)
 
         index = self._view_stack.addWidget(widget)
         self._view_switcher.addTab(label)
         self._view_switcher.setTabData(index, tab_key)
         self._file_compare_tabs[tab_key] = index
         self._switch_view(index)
-        log_info("file compare tab opened", rel_path=path, mode=mode, index=index)
+        self.statusBar().showMessage(
+            f"Comparing files: {left_file.name} ↔ {right_file.name}", 5000
+        )
+        log_info(
+            "file compare tab opened",
+            rel_path=relative_path,
+            left=str(left_file),
+            right=str(right_file),
+            mode=mode,
+            index=index,
+        )
+        return True
 
-    def _determine_file_compare_mode(self, rel_path: str) -> str:
-        suffix = Path(rel_path).suffix.lower()
-        if suffix in TABLE_EXTENSIONS:
-            return "table"
-        if suffix in TEXT_EXTENSIONS:
+    def _prepare_opened_pair_recompare(
+        self,
+        left_file: Path,
+        right_file: Path,
+        relative_path: str | None,
+    ) -> FunctionWorker | None:
+        """Compare opened folder-pair contents when the scan used quick tests."""
+        if relative_path is None or self._closing:
+            return None
+        session = self._current_session()
+        report = self._current_report
+        if (
+            session.criteria.mode == "content"
+            or session.stale
+            or report is None
+            or session.report is not report
+        ):
+            return None
+
+        entry = self._folder_view.source_model.entry_for_path(relative_path)
+        if (
+            entry is None
+            or entry.left is None
+            or entry.right is None
+            or entry.left.is_dir
+            or entry.right.is_dir
+        ):
+            return None
+
+        worker = FunctionWorker(
+            files_have_identical_contents,
+            left_file,
+            right_file,
+            cancelled=lambda: QThread.currentThread().isInterruptionRequested(),
+            parent=self,
+        )
+        worker.finished_with_result.connect(
+            lambda identical, s=session, r=report, p=relative_path, e=entry: (
+                self._on_opened_pair_recompared(s, r, p, e, identical)
+            )
+        )
+        worker.error.connect(
+            lambda message, p=relative_path: self._on_opened_pair_recompare_error(
+                p, message
+            )
+        )
+        worker.finished.connect(
+            lambda current=worker: self._file_recompare_workers.discard(current)
+        )
+        worker.finished.connect(worker.deleteLater)
+        self._file_recompare_workers.add(worker)
+        return worker
+
+    def _finish_opened_pair_workers(
+        self,
+        widget: QWidget,
+        recompare_worker: FunctionWorker | None,
+        temporary_owner: object | None,
+    ) -> None:
+        """Start the content check and release staged files after all readers finish."""
+        load_worker = next(
+            (
+                candidate
+                for name in ("_diff_worker", "_image_worker", "_table_worker")
+                if (candidate := getattr(widget, name, None)) is not None
+            ),
+            None,
+        )
+        active_workers = [
+            worker
+            for worker in (load_worker, recompare_worker)
+            if worker is not None
+            and (worker is recompare_worker or not worker.isFinished())
+        ]
+
+        if temporary_owner is not None:
+            remaining = set(active_workers)
+            cleanup_done = False
+
+            if not remaining:
+                temporary_owner.cleanup()
+            else:
+
+                def release_when_done(worker) -> None:
+                    nonlocal cleanup_done
+                    remaining.discard(worker)
+                    if not remaining and not cleanup_done:
+                        cleanup_done = True
+                        temporary_owner.cleanup()
+
+                for worker in active_workers:
+                    worker.finished.connect(
+                        lambda current=worker: release_when_done(current)
+                    )
+                for worker in active_workers:
+                    if worker.isFinished():
+                        release_when_done(worker)
+
+        if recompare_worker is not None:
+            recompare_worker.start()
+
+    def _on_opened_pair_recompared(
+        self,
+        session: SessionState,
+        report: ScanReport,
+        relative_path: str,
+        entry,
+        identical: bool,
+    ) -> None:
+        """Apply an opened file's actual content result to its folder row."""
+        if self._closing or session.report is not report or session.stale:
+            return
+        status = DiffStatus.SAME if identical else DiffStatus.DIFFERENT
+        if self._current_session() is session:
+            if self._current_report is not report:
+                return
+            previous = self._folder_view.source_model.update_entry_status(
+                relative_path, status
+            )
+        else:
+            previous = entry.status
+            if previous != status:
+                entry.status = status
+
+        if previous is None or previous == status:
+            return
+        summary_fields = {
+            DiffStatus.SAME: "same",
+            DiffStatus.DIFFERENT: "different",
+            DiffStatus.ORPHAN_LEFT: "orphan_left",
+            DiffStatus.ORPHAN_RIGHT: "orphan_right",
+            DiffStatus.UNCHECKED: "unchecked",
+        }
+        previous_field = summary_fields[previous]
+        status_field = summary_fields[status]
+        setattr(
+            report.summary,
+            previous_field,
+            max(0, getattr(report.summary, previous_field) - 1),
+        )
+        setattr(report.summary, status_field, getattr(report.summary, status_field) + 1)
+        self._diff_entries_cache = None
+
+        if self._current_session() is session:
+            self._update_visible_status_summary()
+        log_info(
+            "folder status updated after opening file pair",
+            rel_path=relative_path,
+            status=status.value,
+        )
+
+    @staticmethod
+    def _on_opened_pair_recompare_error(relative_path: str, message: str) -> None:
+        """Log a failed background check without changing the scan result."""
+        if "cancelled" not in message.casefold():
+            log_warning(
+                "opened file pair could not be re-compared",
+                rel_path=relative_path,
+                error=message,
+            )
+
+    def _open_remote_file_pair(self, relative_path: str) -> None:
+        """Stage and open the selected remote row through the configured CLI."""
+        left_root, right_root = self._left_path, self._right_path
+        relative_paths = (relative_path, relative_path)
+        display_paths = tuple(
+            self._display_source_root_file(root, relative_path)
+            for root in (left_root, right_root)
+        )
+        self._start_staged_file_pair(
+            (left_root, right_root),
+            relative_paths,
+            display_paths,
+            relative_path,
+            standalone=False,
+        )
+
+    def _open_standalone_file_pair(
+        self, left_source: str | Path, right_source: str | Path
+    ) -> bool:
+        """Open local operands directly or stage a mixed/remote pair via CLI."""
+        left_text, right_text = str(left_source), str(right_source)
+        if not is_remote_source(left_text) and not is_remote_source(right_text):
+            return self._open_file_pair(
+                Path(left_text).expanduser(), Path(right_text).expanduser()
+            )
+
+        try:
+            left_root, left_relative = split_source_file(left_text)
+            right_root, right_relative = split_source_file(right_text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "File Compare Not Available", str(exc))
+            return False
+
+        display_paths = (
+            self._display_source_file(left_text, left_root, left_relative),
+            self._display_source_file(right_text, right_root, right_relative),
+        )
+        names = f"{Path(left_relative).name} ↔ {Path(right_relative).name}"
+        return self._start_staged_file_pair(
+            (left_root, right_root),
+            (left_relative, right_relative),
+            display_paths,
+            names,
+            standalone=True,
+        )
+
+    @staticmethod
+    def _display_source_file(source: str, root: str, relative_path: str) -> str:
+        """Show local paths as entered and redact remote URL path components."""
+        if not is_remote_source(source):
+            return str(Path(source).expanduser())
+        return MainWindow._display_source_root_file(root, relative_path)
+
+    @staticmethod
+    def _display_source_root_file(root: str, relative_path: str) -> str:
+        """Display a file under a local or sanitized remote root."""
+        if is_remote_source(root):
+            name = relative_path.replace("\\", "/").rsplit("/", 1)[-1]
+            return f"{source_log_label(root)}/{name}"
+        return str(Path(root) / relative_path)
+
+    def _start_staged_file_pair(
+        self,
+        roots: tuple[str, str],
+        relative_paths: tuple[str, str],
+        display_paths: tuple[str, str],
+        file_label: str,
+        *,
+        standalone: bool,
+    ) -> bool:
+        """Read a pair into private staging files and open its type-specific view."""
+        if self._cli_bridge is None:
+            QMessageBox.critical(
+                self,
+                "CLI Not Found",
+                "rcompare_cli is required to read remote or mixed file pairs.",
+            )
+            return False
+
+        for label, source in zip(("left", "right"), roots):
+            validation_error = validate_remote_source(source)
+            if is_remote_source(source) and validation_error:
+                QMessageBox.critical(
+                    self,
+                    "Invalid Remote Source",
+                    f"The {label} source cannot be read: {validation_error}",
+                )
+                return False
+
+        key_material = "\x00".join((*roots, *relative_paths))
+        pair_key = "remote|" + hashlib.sha256(key_material.encode()).hexdigest()
+        existing = self._file_compare_tabs.get(pair_key)
+        if existing is not None and 0 <= existing < self._view_stack.count():
+            self._switch_view(existing)
+            return True
+        if pair_key in self._remote_pair_pending:
+            self.statusBar().showMessage(
+                "That remote file pair is already loading.", 5000
+            )
+            return False
+
+        try:
+            worker = RemoteFilePairWorker(
+                self._cli_bridge.executable,
+                roots[0],
+                roots[1],
+                relative_paths,
+                parent=self,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "File Compare Not Available", str(exc))
+            return False
+
+        def on_pair_staged(staged: StagedRemoteFilePair) -> None:
+            self._on_remote_pair_ready(
+                pair_key,
+                relative_paths,
+                display_paths,
+                staged,
+                standalone=standalone,
+            )
+
+        worker.completed.connect(on_pair_staged)
+        worker.error.connect(
+            lambda message, key=pair_key, label=file_label: self._on_remote_pair_error(
+                key, label, message
+            )
+        )
+        worker.finished.connect(
+            lambda current=worker, key=pair_key: self._on_remote_pair_worker_finished(
+                current, key
+            )
+        )
+        self._remote_pair_workers.add(worker)
+        self._remote_pair_pending.add(pair_key)
+        self.statusBar().showMessage(f"Reading file pair: {file_label}", 0)
+        worker.start()
+        return True
+
+    def _on_remote_pair_ready(
+        self,
+        pair_key: str,
+        relative_paths: tuple[str, str],
+        display_paths: tuple[str, str],
+        staged: StagedRemoteFilePair,
+        *,
+        standalone: bool,
+    ) -> None:
+        opened = self._open_file_pair(
+            staged.left_path,
+            staged.right_path,
+            relative_path=None if standalone else relative_paths[0],
+            tab_key_override=pair_key,
+            temporary_owner=staged.temporary_directory,
+        )
+        if not opened:
+            staged.temporary_directory.cleanup()
+            return
+
+        index = self._file_compare_tabs.get(pair_key)
+        widget = self._view_stack.widget(index) if index is not None else None
+        if widget is not None:
+            for side, display_path in zip(("left", "right"), display_paths):
+                path_label = getattr(widget, f"_{side}_path_label", None)
+                if path_label is None:
+                    continue
+                path_label.setText(display_path)
+                path_label.setToolTip(display_path)
+
+    def _on_remote_pair_error(
+        self, pair_key: str, relative_path: str, message: str
+    ) -> None:
+        self._remote_pair_pending.discard(pair_key)
+        self.statusBar().showMessage("Remote file comparison failed.", 5000)
+        QMessageBox.warning(
+            self,
+            "Remote File Compare Failed",
+            f"Unable to compare {relative_path}:\n{message}",
+        )
+
+    def _on_remote_pair_worker_finished(
+        self, worker: RemoteFilePairWorker, pair_key: str
+    ) -> None:
+        self._remote_pair_pending.discard(pair_key)
+        self._remote_pair_workers.discard(worker)
+        worker.deleteLater()
+
+    def _determine_file_pair_mode(self, left_file: Path, right_file: Path) -> str:
+        """Choose a view only when both files are supported by that view."""
+        left_suffix = left_file.suffix.lower()
+        right_suffix = right_file.suffix.lower()
+        if left_suffix in TABLE_EXTENSIONS and right_suffix in TABLE_EXTENSIONS:
+            left_excel = left_suffix in {".xlsx", ".xls"}
+            right_excel = right_suffix in {".xlsx", ".xls"}
+            if left_excel == right_excel:
+                return "table"
+        if left_suffix in TEXT_EXTENSIONS and right_suffix in TEXT_EXTENSIONS:
             return "text"
-        if suffix in IMAGE_EXTENSIONS:
+        if left_suffix in IMAGE_EXTENSIONS and right_suffix in IMAGE_EXTENSIONS:
             return "image"
         return "hex"
 
+    @staticmethod
+    def _file_pair_tab_label(mode: str, left_file: Path, right_file: Path) -> str:
+        if left_file.name == right_file.name:
+            names = left_file.name
+        else:
+            names = f"{left_file.name} ↔ {right_file.name}"
+        return f"{mode}: {names}"
+
     def _resolve_compare_file_paths(self, rel_path: str) -> Optional[tuple[Path, Path]]:
+        if self._current_sources_are_remote():
+            return None
         left_root = Path(self._left_path)
         right_root = Path(self._right_path)
         if not left_root.exists() or not right_root.exists():
@@ -1627,15 +2840,20 @@ class MainWindow(QMainWindow):
         """Lazily add the 3-way merge view to the view stack."""
         try:
             from .views.merge_view import MergeView
+
             self._merge_view = MergeView(self._view_stack)
             idx = self._view_stack.addWidget(self._merge_view)
             self._view_switcher.addTab("3-Way Merge")
             # Don't allow closing the merge tab via the close button
             self._view_switcher.setTabButton(
-                idx, QTabBar.ButtonPosition.RightSide, None,
+                idx,
+                QTabBar.ButtonPosition.RightSide,
+                None,
             )
             self._view_switcher.setTabButton(
-                idx, QTabBar.ButtonPosition.LeftSide, None,
+                idx,
+                QTabBar.ButtonPosition.LeftSide,
+                None,
             )
         except ImportError:
             log_warning("merge_view module not available")
@@ -1644,6 +2862,9 @@ class MainWindow(QMainWindow):
     def _on_preview_toggled(self, checked: bool) -> None:
         self._folder_view.set_preview_visible(checked)
         self._folder_view.set_preview_roots(self._left_path, self._right_path)
+        self._folder_view.set_preview_cli(
+            self._cli_bridge.executable if self._cli_bridge is not None else ""
+        )
 
     # ------------------------------------------------------------------
     # Copy actions
@@ -1662,8 +2883,32 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     @Slot(str, str, str)
-    def _on_folder_context_command(self, command: str, rel_path: str, side: str) -> None:
+    def _on_folder_context_command(
+        self, command: str, rel_path: str, side: str
+    ) -> None:
         """Handle right-click menu commands from FolderView."""
+        if self._current_sources_are_remote() and command in {
+            "set_base_folder",
+            "set_base_other",
+            "open_new_view",
+            "compare_contents",
+            "open_ext",
+            "open_saved",
+            "open_with_picker",
+            "align_with",
+            "copy_lr",
+            "copy_rl",
+            "copy_to_folder",
+            "move_to_folder",
+            "delete_item",
+            "rename_item",
+            "attributes",
+            "touch_item",
+            "new_folder",
+            "sync_dialog",
+        }:
+            self._show_remote_mutation_limit()
+            return
         if command == "copy_lr":
             self._copy_paths([rel_path], left_to_right=True)
             return
@@ -1672,6 +2917,12 @@ class MainWindow(QMainWindow):
             return
         if command == "open_ext":
             self._open_external_for_path(rel_path, side)
+            return
+        if command == "open_saved":
+            self._open_saved_application_for_path(rel_path, side)
+            return
+        if command == "open_with_picker":
+            self._choose_external_application(rel_path, side)
             return
         if command == "open_new_view" or command == "compare_contents":
             self._on_file_activated(rel_path, False)
@@ -1730,6 +2981,9 @@ class MainWindow(QMainWindow):
         self._copy_paths(selected, left_to_right=left_to_right)
 
     def _copy_paths(self, rel_paths: list[str], *, left_to_right: bool) -> None:
+        if self._current_sources_are_remote():
+            self._show_remote_mutation_limit()
+            return
         left_root = Path(self._left_path)
         right_root = Path(self._right_path)
         log_info(
@@ -1739,7 +2993,11 @@ class MainWindow(QMainWindow):
         )
 
         if not left_root.is_dir() or not right_root.is_dir():
-            log_warning("copy rejected: non-local roots", left=self._left_path, right=self._right_path)
+            log_warning(
+                "copy rejected: non-local roots",
+                left=self._left_path,
+                right=self._right_path,
+            )
             QMessageBox.warning(
                 self,
                 "Copy Not Supported",
@@ -1763,13 +3021,13 @@ class MainWindow(QMainWindow):
 
             self._copy_worker = CliJsonWorker(self)
             self._copy_worker.finished.connect(
-                lambda report: self._on_copy_finished(report, left_to_right=left_to_right)
+                lambda report: self._on_copy_finished(
+                    report, left_to_right=left_to_right
+                )
             )
-            self._copy_worker.error.connect(
-                lambda message: self._on_copy_error(message, rel_paths=rel_paths, left_to_right=left_to_right)
-            )
+            self._copy_worker.error.connect(self._on_copy_error)
             self.statusBar().showMessage("Copying...")
-            self._copy_worker.start(cmd)
+            self._copy_worker.start(cmd, accepted_exit_codes=(0, 1))
             return
 
         self._copy_paths_local_fallback(rel_paths, left_to_right=left_to_right)
@@ -1797,15 +3055,16 @@ class MainWindow(QMainWindow):
         )
         self._on_refresh()
 
-    def _on_copy_error(self, message: str, *, rel_paths: list[str], left_to_right: bool) -> None:
-        log_warning("copy via cli failed; fallback to local", error=message)
+    def _on_copy_error(self, message: str) -> None:
+        log_error("copy via cli failed", error=message)
         self.statusBar().showMessage(
-            f"CLI copy failed, using local fallback: {message}",
+            f"Copy failed: {message}",
             7000,
         )
-        self._copy_paths_local_fallback(rel_paths, left_to_right=left_to_right)
 
-    def _copy_paths_local_fallback(self, rel_paths: list[str], *, left_to_right: bool) -> None:
+    def _copy_paths_local_fallback(
+        self, rel_paths: list[str], *, left_to_right: bool
+    ) -> None:
         left_root = Path(self._left_path)
         right_root = Path(self._right_path)
         copied = 0
@@ -1853,7 +3112,9 @@ class MainWindow(QMainWindow):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
 
-    def _sync_delete_path(self, target: Path, *, use_trash: bool, trash_root: Path) -> None:
+    def _sync_delete_path(
+        self, target: Path, *, use_trash: bool, trash_root: Path
+    ) -> None:
         """Delete one target path, optionally moving it to a local trash folder."""
         if not target.exists():
             return
@@ -1895,25 +3156,25 @@ class MainWindow(QMainWindow):
                 actions.append(("SKIP", rel_path))
                 continue
 
-            if direction == "left_to_right":
+            if direction in {"left_to_right", "update_right", "mirror_right"}:
                 if status == DiffStatus.ORPHAN_LEFT:
                     actions.append(("COPY_LR", rel_path))
-                elif status == DiffStatus.ORPHAN_RIGHT:
+                elif status == DiffStatus.ORPHAN_RIGHT and direction != "update_right":
                     actions.append(("DELETE_R", rel_path))
                 elif status == DiffStatus.DIFFERENT:
                     actions.append(("UPDATE_R", rel_path))
                 continue
 
-            if direction == "right_to_left":
+            if direction in {"right_to_left", "update_left", "mirror_left"}:
                 if status == DiffStatus.ORPHAN_RIGHT:
                     actions.append(("COPY_RL", rel_path))
-                elif status == DiffStatus.ORPHAN_LEFT:
+                elif status == DiffStatus.ORPHAN_LEFT and direction != "update_left":
                     actions.append(("DELETE_L", rel_path))
                 elif status == DiffStatus.DIFFERENT:
                     actions.append(("UPDATE_L", rel_path))
                 continue
 
-            # bidirectional
+            # Bidirectional modes
             if status == DiffStatus.ORPHAN_LEFT:
                 actions.append(("COPY_LR", rel_path))
             elif status == DiffStatus.ORPHAN_RIGHT:
@@ -1934,28 +3195,25 @@ class MainWindow(QMainWindow):
         return actions
 
     @Slot(str, bool, bool)
-    def _on_sync_requested(self, direction: str, dry_run: bool, use_trash: bool) -> None:
+    def _on_sync_requested(
+        self, direction: str, dry_run: bool, use_trash: bool
+    ) -> None:
         """Execute synchronization actions selected in SyncDialog."""
+        if self._current_sources_are_remote():
+            self._show_remote_mutation_limit()
+            return
+        disabled_reason = self._sync_disabled_reason()
+        if disabled_reason is not None:
+            QMessageBox.information(self, "Sync Not Available", disabled_reason)
+            return
         log_info(
             "sync requested",
             direction=direction,
             dry_run=dry_run,
             use_trash=use_trash,
         )
-        if self._current_report is None:
-            log_warning("sync rejected: no comparison report")
-            QMessageBox.information(
-                self,
-                "No Comparison Available",
-                "Run a comparison first before executing synchronization.",
-            )
-            return
-
         # Prefer CLI backend so sync behavior stays consistent with scan logic.
         if self._cli_bridge is not None:
-            if self._sync_worker is not None and self._sync_worker.is_running():
-                self._sync_worker.cancel()
-
             args = self._cli_bridge.build_sync_args(
                 left=self._left_path,
                 right=self._right_path,
@@ -1966,37 +3224,137 @@ class MainWindow(QMainWindow):
                 follow_symlinks=self._settings.follow_symlinks,
                 verify_hashes=self._settings.use_hash_verification,
                 conflict="newest",
+                checkpoint_dir=str(self._sync_checkpoint_dir()),
             )
-            cmd = self._cli_bridge.build_command(args)
-
-            self._sync_worker = CliJsonWorker(self)
-            self._sync_worker.finished.connect(
-                lambda report: self._on_sync_finished(report, dry_run=dry_run)
-            )
-            self._sync_worker.error.connect(
-                lambda message: self._on_sync_error(
-                    message, direction=direction, dry_run=dry_run, use_trash=use_trash
-                )
-            )
-            self.statusBar().showMessage("Sync dry-run..." if dry_run else "Syncing...")
-            self._sync_worker.start(cmd)
+            self._start_cli_sync(args, dry_run=dry_run)
             return
 
         self._sync_local_fallback(direction, dry_run, use_trash)
 
+    def _start_cli_sync(self, args: list[str], *, dry_run: bool) -> None:
+        if self._sync_worker is not None and self._sync_worker.is_running():
+            self.statusBar().showMessage("A synchronization is already running.", 5000)
+            return
+        assert self._cli_bridge is not None
+        self._sync_worker = CliJsonWorker(self)
+        self._sync_worker.finished.connect(
+            lambda report: self._on_sync_finished(report, dry_run=dry_run)
+        )
+        self._sync_worker.error.connect(self._on_sync_error)
+        self._tb_cancel.setEnabled(True)
+        self._session_tab_bar.set_comparing(True)
+        self.statusBar().showMessage(
+            "Resuming sync..."
+            if "--resume-checkpoint" in args
+            else "Sync dry-run..."
+            if dry_run
+            else "Syncing..."
+        )
+        self._sync_worker.start(
+            self._cli_bridge.build_command(args), accepted_exit_codes=(0, 1, 130)
+        )
+
+    @Slot(object)
+    def _on_sync_resume_requested(self, checkpoint: object) -> None:
+        """Resume a saved sync with the exact roots and options it recorded."""
+        if not isinstance(checkpoint, dict) or self._cli_bridge is None:
+            return
+        checkpoint_id = checkpoint.get("id")
+        if not isinstance(checkpoint_id, str):
+            return
+        if (
+            checkpoint.get("left") != self._left_path
+            or checkpoint.get("right") != self._right_path
+        ):
+            QMessageBox.warning(
+                self,
+                "Sync Roots Changed",
+                "The saved sync belongs to different folders. Open that folder pair "
+                "before resuming.",
+            )
+            return
+        if self._current_sources_are_remote():
+            self._show_remote_mutation_limit()
+            return
+        args = self._cli_bridge.build_sync_args(
+            left=self._left_path,
+            right=self._right_path,
+            direction=str(checkpoint.get("direction", "left_to_right")),
+            dry_run=False,
+            use_trash=checkpoint.get("delete_mode") != "permanent",
+            ignore_patterns=list(checkpoint.get("ignore_patterns") or []),
+            follow_symlinks=bool(checkpoint.get("follow_symlinks")),
+            verify_hashes=bool(checkpoint.get("verify_hashes")),
+            no_verify_hashes=bool(checkpoint.get("no_verify_hashes")),
+            strict=bool(checkpoint.get("strict")),
+            conflict=str(checkpoint.get("conflict_policy", "newest")),
+            checkpoint_dir=str(self._sync_checkpoint_dir()),
+            resume_checkpoint=checkpoint_id,
+        )
+        self._start_cli_sync(args, dry_run=False)
+
+    def _load_sync_checkpoints(self, dialog: SyncDialog) -> None:
+        """Load saved sync runs without blocking the dialog event loop."""
+        if self._cli_bridge is None:
+            dialog.set_recovery_checkpoints([], self._left_path, self._right_path)
+            return
+        worker = CliJsonWorker(self)
+        self._sync_checkpoint_worker = worker
+        worker.finished.connect(
+            lambda report: dialog.set_recovery_checkpoints(
+                list(report.get("checkpoints") or []), self._left_path, self._right_path
+            )
+        )
+        worker.error.connect(dialog.set_recovery_error)
+        args = self._cli_bridge.build_sync_checkpoints_args(
+            str(self._sync_checkpoint_dir())
+        )
+        worker.start(self._cli_bridge.build_command(args))
+
+    def _discard_sync_checkpoint(self, checkpoint_id: str, dialog: SyncDialog) -> None:
+        if self._cli_bridge is None:
+            return
+        worker = CliJsonWorker(self)
+        self._sync_checkpoint_worker = worker
+        worker.finished.connect(lambda _report: self._load_sync_checkpoints(dialog))
+        worker.error.connect(
+            lambda message: QMessageBox.warning(dialog, "Discard Failed", message)
+        )
+        args = self._cli_bridge.build_sync_discard_args(
+            str(self._sync_checkpoint_dir()), checkpoint_id
+        )
+        worker.start(self._cli_bridge.build_command(args))
+
     def _on_sync_finished(self, report: dict, *, dry_run: bool) -> None:
+        self._tb_cancel.setEnabled(False)
+        self._session_tab_bar.set_comparing(False)
         summary = report.get("summary", {})
         copied = int(summary.get("copied", 0))
         updated = int(summary.get("updated", 0))
         deleted = int(summary.get("deleted", 0))
         skipped = int(summary.get("skipped", 0))
         failed = int(summary.get("failed", 0))
-        label = "Sync dry-run" if dry_run else "Sync complete"
-        self.statusBar().showMessage(
-            f"{label}: {copied} copied, {updated} updated, {deleted} deleted, "
-            f"{skipped} skipped, {failed} failed.",
-            10000,
+        cancelled = (
+            bool(summary.get("cancelled")) or report.get("status") == "cancelled"
         )
+        completed = int(summary.get("completed", 0))
+        remaining = int(summary.get("remaining", 0))
+        if cancelled:
+            if not dry_run:
+                self._mark_current_session_stale(auto_refresh=False)
+            self.statusBar().showMessage(
+                f"Sync cancelled: {completed} actions completed, {remaining} remaining; "
+                f"{copied} copied, {updated} updated, {deleted} deleted, {failed} failed. "
+                "Refresh to update the comparison.",
+                15000,
+            )
+        else:
+            label = "Sync dry-run" if dry_run else "Sync complete"
+            self.statusBar().showMessage(
+                f"{label}: {copied} copied, {updated} updated, {deleted} deleted, "
+                f"{skipped} skipped, {failed} failed.",
+                10000,
+            )
         log_info(
             "sync completed via cli",
             copied=copied,
@@ -2004,24 +3362,46 @@ class MainWindow(QMainWindow):
             deleted=deleted,
             skipped=skipped,
             failed=failed,
+            cancelled=cancelled,
+            completed=completed,
+            remaining=remaining,
             dry_run=dry_run,
         )
-        if not dry_run:
+        if not dry_run and not cancelled:
             self._on_refresh()
 
-    def _on_sync_error(self, message: str, *, direction: str, dry_run: bool, use_trash: bool) -> None:
-        log_warning("sync via cli failed; fallback to local", error=message)
+    def _on_sync_error(self, message: str) -> None:
+        self._tb_cancel.setEnabled(False)
+        self._session_tab_bar.set_comparing(False)
+        self._mark_current_session_stale(auto_refresh=False)
+        log_error("sync via cli failed", error=message)
         self.statusBar().showMessage(
-            f"CLI sync failed, using local fallback: {message}",
+            f"Sync failed: {message}",
             7000,
         )
-        self._sync_local_fallback(direction, dry_run, use_trash)
 
-    def _sync_local_fallback(self, direction: str, dry_run: bool, use_trash: bool) -> None:
+    def _sync_checkpoint_dir(self) -> Path:
+        """Return persistent app storage for local interrupted-sync checkpoints."""
+        location = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+        if location:
+            return Path(location) / "sync-checkpoints"
+        config_file = getattr(self._config, "_config_file", None)
+        base = Path(config_file).expanduser().parent if config_file else Path.home()
+        return base / "sync-checkpoints"
+
+    def _sync_local_fallback(
+        self, direction: str, dry_run: bool, use_trash: bool
+    ) -> None:
         left_root = Path(self._left_path)
         right_root = Path(self._right_path)
         if not left_root.is_dir() or not right_root.is_dir():
-            log_warning("sync rejected: non-local roots", left=self._left_path, right=self._right_path)
+            log_warning(
+                "sync rejected: non-local roots",
+                left=self._left_path,
+                right=self._right_path,
+            )
             QMessageBox.warning(
                 self,
                 "Sync Not Supported",
@@ -2037,8 +3417,12 @@ class MainWindow(QMainWindow):
 
         if dry_run:
             copy_count = sum(1 for code, _ in actions if code in {"COPY_LR", "COPY_RL"})
-            update_count = sum(1 for code, _ in actions if code in {"UPDATE_L", "UPDATE_R"})
-            delete_count = sum(1 for code, _ in actions if code in {"DELETE_L", "DELETE_R"})
+            update_count = sum(
+                1 for code, _ in actions if code in {"UPDATE_L", "UPDATE_R"}
+            )
+            delete_count = sum(
+                1 for code, _ in actions if code in {"DELETE_L", "DELETE_R"}
+            )
             skipped = sum(1 for code, _ in actions if code in {"SKIP", "CONFLICT"})
             self.statusBar().showMessage(
                 f"Sync dry-run: {copy_count} copy, {update_count} update, "
@@ -2060,8 +3444,12 @@ class MainWindow(QMainWindow):
         skipped = 0
         failed = 0
 
-        trash_root = (left_root if direction == "right_to_left" else right_root) / ".rcompare_trash"
-        if use_trash:
+        trash_root = (
+            left_root
+            if direction in {"right_to_left", "update_left", "mirror_left"}
+            else right_root
+        ) / ".rcompare_trash"
+        if use_trash and any(code in {"DELETE_L", "DELETE_R"} for code, _ in actions):
             trash_root.mkdir(parents=True, exist_ok=True)
 
         for code, rel_path in actions:
@@ -2095,10 +3483,14 @@ class MainWindow(QMainWindow):
                     else:
                         failed += 1
                 elif code == "DELETE_R":
-                    self._sync_delete_path(right_path, use_trash=use_trash, trash_root=trash_root)
+                    self._sync_delete_path(
+                        right_path, use_trash=use_trash, trash_root=trash_root
+                    )
                     deleted += 1
                 elif code == "DELETE_L":
-                    self._sync_delete_path(left_path, use_trash=use_trash, trash_root=trash_root)
+                    self._sync_delete_path(
+                        left_path, use_trash=use_trash, trash_root=trash_root
+                    )
                     deleted += 1
                 else:
                     skipped += 1
@@ -2121,15 +3513,8 @@ class MainWindow(QMainWindow):
         self._on_refresh()
 
     def _open_external_for_path(self, rel_path: str, side: str) -> None:
-        left_root = Path(self._left_path)
-        right_root = Path(self._right_path)
-        rel = Path(rel_path)
-
-        preferred = left_root / rel if side == "left" else right_root / rel
-        fallback = right_root / rel if side == "left" else left_root / rel
-
-        target = preferred if preferred.exists() else fallback
-        if not target.exists():
+        target = self._external_target(rel_path, side)
+        if target is None:
             QMessageBox.warning(
                 self,
                 "Open Failed",
@@ -2145,13 +3530,105 @@ class MainWindow(QMainWindow):
                 f"Could not open:\n{target}",
             )
 
+    def _open_saved_application_for_path(self, rel_path: str, side: str) -> None:
+        target = self._external_target(rel_path, side)
+        if target is None:
+            QMessageBox.warning(
+                self,
+                "Open Failed",
+                f"Path does not exist on either side:\n{rel_path}",
+            )
+            return
+        command = self._config.open_with_handlers.get(handler_key(target))
+        if not command:
+            QMessageBox.information(
+                self,
+                "No Saved Application",
+                f"Choose an application for {handler_key(target)} files first.",
+            )
+            return
+        self._launch_external_command(command, target)
+
+    def _choose_external_application(self, rel_path: str, side: str) -> None:
+        target = self._external_target(rel_path, side)
+        if target is None:
+            QMessageBox.warning(
+                self,
+                "Open Failed",
+                f"Path does not exist on either side:\n{rel_path}",
+            )
+            return
+
+        key = handler_key(target)
+        dialog = OpenWithDialog(
+            target,
+            self._config.open_with_handlers.get(key, ""),
+            self,
+        )
+        if not dialog.exec():
+            return
+        self._launch_external_command(
+            dialog.command,
+            target,
+            remember=dialog.remember,
+        )
+
+    def _external_target(self, rel_path: str, side: str) -> Optional[Path]:
+        relative = Path(rel_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            return None
+
+        preferred = self._side_root(side) / relative
+        fallback = self._side_root(self._other_side(side)) / relative
+        target = preferred if preferred.exists() or preferred.is_symlink() else fallback
+        return target if target.exists() or target.is_symlink() else None
+
+    def _launch_external_command(
+        self, command: str, target: Path, *, remember: bool = False
+    ) -> bool:
+        try:
+            argv = application_argv(command, target)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Open Failed", str(exc))
+            return False
+
+        launch_options = {
+            "cwd": str(target.parent),
+            "close_fds": True,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "posix":
+            launch_options["start_new_session"] = True
+        elif os.name == "nt":
+            launch_options["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0)
+
+        try:
+            subprocess.Popen(argv, **launch_options)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Open Failed",
+                f"Could not start {argv[0]}:\n{exc}",
+            )
+            return False
+
+        if remember:
+            self._config.open_with_handlers[handler_key(target)] = command.strip()
+            self._config.save()
+        self.statusBar().showMessage(f"Opened with {argv[0]}", 5000)
+        return True
+
     def _side_root(self, side: str) -> Path:
         return Path(self._left_path if side == "left" else self._right_path)
 
     def _other_side(self, side: str) -> str:
         return "right" if side == "left" else "left"
 
-    def _resolve_item_path(self, rel_path: str, side: str, *, allow_fallback: bool) -> Optional[Path]:
+    def _resolve_item_path(
+        self, rel_path: str, side: str, *, allow_fallback: bool
+    ) -> Optional[Path]:
         rel = Path(rel_path)
         primary = self._side_root(side) / rel
         if primary.exists():
@@ -2162,7 +3639,9 @@ class MainWindow(QMainWindow):
                 return secondary
         return None
 
-    def _set_base_folder_from_side(self, rel_path: str, side: str, *, other_side: bool) -> None:
+    def _set_base_folder_from_side(
+        self, rel_path: str, side: str, *, other_side: bool
+    ) -> None:
         effective_side = self._other_side(side) if other_side else side
         base = self._side_root(effective_side) / Path(rel_path)
         if base.exists() and base.is_file():
@@ -2205,7 +3684,9 @@ class MainWindow(QMainWindow):
     def _move_to_folder(self, rel_path: str, side: str) -> None:
         source = self._resolve_item_path(rel_path, side, allow_fallback=False)
         if source is None:
-            QMessageBox.warning(self, "Move to Folder", "Source path does not exist on this side.")
+            QMessageBox.warning(
+                self, "Move to Folder", "Source path does not exist on this side."
+            )
             return
 
         destination_dir = QFileDialog.getExistingDirectory(
@@ -2228,7 +3709,9 @@ class MainWindow(QMainWindow):
     def _delete_item(self, rel_path: str, side: str) -> None:
         target = self._resolve_item_path(rel_path, side, allow_fallback=False)
         if target is None:
-            QMessageBox.warning(self, "Delete", "Target path does not exist on this side.")
+            QMessageBox.warning(
+                self, "Delete", "Target path does not exist on this side."
+            )
             return
 
         answer = QMessageBox.question(
@@ -2257,10 +3740,14 @@ class MainWindow(QMainWindow):
     def _rename_item(self, rel_path: str, side: str) -> None:
         target = self._resolve_item_path(rel_path, side, allow_fallback=False)
         if target is None:
-            QMessageBox.warning(self, "Rename", "Target path does not exist on this side.")
+            QMessageBox.warning(
+                self, "Rename", "Target path does not exist on this side."
+            )
             return
 
-        new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=target.name)
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=target.name
+        )
         if not ok:
             return
         new_name = new_name.strip()
@@ -2276,40 +3763,41 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Rename Failed", str(exc))
 
     def _show_item_attributes(self, rel_path: str, side: str) -> None:
-        target = self._resolve_item_path(rel_path, side, allow_fallback=True)
-        if target is None:
-            QMessageBox.warning(self, "Attributes", "Path does not exist.")
+        relative = Path(rel_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            QMessageBox.warning(self, "Properties", "The selected path is invalid.")
             return
 
-        try:
-            stat = target.stat()
-        except OSError as exc:
-            QMessageBox.critical(self, "Attributes Failed", str(exc))
-            return
-
-        lines = [
-            f"Path: {target}",
-            f"Type: {'Directory' if target.is_dir() else 'File'}",
-            f"Size: {stat.st_size} bytes",
-            f"Modified: {stat.st_mtime}",
-            f"Mode: {oct(stat.st_mode)}",
-        ]
-        QMessageBox.information(self, "Attributes", "\n".join(lines))
+        left_path = self._side_root("left") / relative
+        right_path = self._side_root("right") / relative
+        dialog = PropertiesDialog(
+            rel_path, left_path, right_path, self, selected_side=side
+        )
+        dialog.exec()
 
     def _touch_item(self, rel_path: str, side: str) -> None:
         target = self._resolve_item_path(rel_path, side, allow_fallback=False)
         if target is None:
-            QMessageBox.warning(self, "Touch", "Target path does not exist on this side.")
+            QMessageBox.warning(
+                self, "Touch", "Target path does not exist on this side."
+            )
             return
 
-        other = self._resolve_item_path(rel_path, self._other_side(side), allow_fallback=False)
+        other = self._resolve_item_path(
+            rel_path, self._other_side(side), allow_fallback=False
+        )
 
         choices = ["Set to current time"]
         if other is not None and other.exists():
             choices.insert(0, "Copy timestamp from other side")
 
         choice, ok = QInputDialog.getItem(
-            self, "Touch", f"Set timestamp for:\n{target.name}", choices, 0, False,
+            self,
+            "Touch",
+            f"Set timestamp for:\n{target.name}",
+            choices,
+            0,
+            False,
         )
         if not ok:
             return
@@ -2319,7 +3807,8 @@ class MainWindow(QMainWindow):
                 stat = other.stat()
                 os.utime(target, (stat.st_atime, stat.st_mtime))
                 self.statusBar().showMessage(
-                    f"Timestamp copied from {self._other_side(side)} side: {target.name}", 5000,
+                    f"Timestamp copied from {self._other_side(side)} side: {target.name}",
+                    5000,
                 )
             else:
                 os.utime(target, None)
@@ -2385,7 +3874,9 @@ class MainWindow(QMainWindow):
         try:
             from .dialogs.align_dialog import AlignDialog
         except ImportError:
-            QMessageBox.information(self, "Align With", "Alignment dialog not available yet.")
+            QMessageBox.information(
+                self, "Align With", "Alignment dialog not available yet."
+            )
             return
 
         other_side = self._other_side(side)
@@ -2405,9 +3896,12 @@ class MainWindow(QMainWindow):
             selected = dialog.selected_path()
             if selected:
                 self.statusBar().showMessage(
-                    f"Aligned '{filename}' with '{selected}'", 5000,
+                    f"Aligned '{filename}' with '{selected}'",
+                    5000,
                 )
-                log_info("alignment override", source=rel_path, target=selected, side=side)
+                log_info(
+                    "alignment override", source=rel_path, target=selected, side=side
+                )
 
     def _copy_filename(self, rel_path: str) -> None:
         app = QApplication.instance()
@@ -2423,18 +3917,46 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_sync(self) -> None:
         """Open the Sync dialog."""
-        if self._current_report is None:
-            QMessageBox.information(
-                self,
-                "No Comparison Available",
-                "Run a comparison first to generate a synchronization preview.",
-            )
+        if self._current_sources_are_remote():
+            self._show_remote_mutation_limit()
             return
-
+        disabled_reason = self._sync_disabled_reason()
         dialog = SyncDialog(self)
-        dialog.set_preview_source(self._current_report, self._left_path, self._right_path)
+        if self._current_report is not None:
+            dialog.set_preview_source(
+                self._current_report, self._left_path, self._right_path
+            )
+        dialog.set_sync_enabled(disabled_reason is None, disabled_reason or "")
         dialog.sync_requested.connect(self._on_sync_requested)
+        dialog.resume_requested.connect(self._on_sync_resume_requested)
+        dialog.discard_requested.connect(
+            lambda checkpoint_id: self._discard_sync_checkpoint(checkpoint_id, dialog)
+        )
+        self._load_sync_checkpoints(dialog)
         dialog.exec()
+
+    def _sync_disabled_reason(self) -> str | None:
+        """Explain when a CLI rescan cannot match the current preview."""
+        session = self._current_session()
+        if self._current_report is None:
+            return "Run a comparison before starting a new sync. Saved sync runs can still be resumed."
+        if session.stale:
+            return "The comparison is out of date. Refresh before starting a new sync. Saved sync runs can still be resumed."
+        unsupported_options = []
+        if parse_filter(session.file_filter).active:
+            unsupported_options.append("File Filters")
+        if not session.criteria.is_default:
+            unsupported_options.append("non-default Comparison Criteria")
+        if session.unimportant_text_rules:
+            unsupported_options.append("Unimportant Text Rules")
+        if unsupported_options:
+            options = ", ".join(unsupported_options)
+            return (
+                f"Sync rescans both folders and cannot apply {options}. Clear these options "
+                "and refresh before starting a new sync so the preview matches the planned changes. "
+                "Saved sync runs can still be resumed."
+            )
+        return None
 
     @Slot()
     def _on_options(self) -> None:
@@ -2448,6 +3970,7 @@ class MainWindow(QMainWindow):
                 follow_symlinks=self._settings.follow_symlinks,
                 use_hash_verification=self._settings.use_hash_verification,
                 cache_dir=self._settings.cache_dir,
+                auto_refresh=self._settings.auto_refresh,
             )
             updates = dialog.get_config_updates()
             self._config.theme = str(updates.get("theme", self._config.theme))
@@ -2489,37 +4012,44 @@ class MainWindow(QMainWindow):
             return
 
         from datetime import datetime
+
         from .models.settings import SessionProfile
 
-        existing = None
-        for profile in self._profile_manager.profiles:
-            if profile.name == _AUTO_CLOSE_PROFILE_NAME:
-                existing = profile
-                break
+        try:
+            existing = None
+            for profile in self._profile_manager.profiles:
+                if profile.name == _AUTO_CLOSE_PROFILE_NAME:
+                    existing = profile
+                    break
 
-        now = datetime.now().isoformat()
-        if existing is None:
-            profile = SessionProfile(
-                name=_AUTO_CLOSE_PROFILE_NAME,
-                left_path=self._left_path,
-                right_path=self._right_path,
-                base_path=self._base_path,
-                ignore_patterns=list(self._settings.ignore_patterns),
-                follow_symlinks=self._settings.follow_symlinks,
-                hash_verification=self._settings.use_hash_verification,
-                last_used=now,
+            now = datetime.now().isoformat()
+            if existing is None:
+                profile = SessionProfile(
+                    name=_AUTO_CLOSE_PROFILE_NAME,
+                    left_path=self._left_path,
+                    right_path=self._right_path,
+                    base_path=self._base_path,
+                    ignore_patterns=list(self._settings.ignore_patterns),
+                    follow_symlinks=self._settings.follow_symlinks,
+                    hash_verification=self._settings.use_hash_verification,
+                    last_used=now,
+                )
+                self._profile_manager.add(profile)
+                return
+
+            existing.left_path = self._left_path
+            existing.right_path = self._right_path
+            existing.base_path = self._base_path
+            existing.ignore_patterns = list(self._settings.ignore_patterns)
+            existing.follow_symlinks = self._settings.follow_symlinks
+            existing.hash_verification = self._settings.use_hash_verification
+            existing.last_used = now
+            self._profile_manager.update(existing)
+        except OSError as exc:
+            log_warning(
+                "automatic profile could not be saved on close",
+                error_type=type(exc).__name__,
             )
-            self._profile_manager.add(profile)
-            return
-
-        existing.left_path = self._left_path
-        existing.right_path = self._right_path
-        existing.base_path = self._base_path
-        existing.ignore_patterns = list(self._settings.ignore_patterns)
-        existing.follow_symlinks = self._settings.follow_symlinks
-        existing.hash_verification = self._settings.use_hash_verification
-        existing.last_used = now
-        self._profile_manager.update(existing)
 
     @Slot()
     def _on_load_profile(self) -> None:
@@ -2555,6 +4085,7 @@ class MainWindow(QMainWindow):
                     follow_symlinks=profile.follow_symlinks,
                     use_hash_verification=profile.hash_verification,
                     cache_dir=self._settings.cache_dir,
+                    auto_refresh=self._settings.auto_refresh,
                 )
                 session.report = None
                 session.status_summary = "Profile loaded"
@@ -2564,7 +4095,8 @@ class MainWindow(QMainWindow):
                 )
                 self._update_active_session_title()
                 self.statusBar().showMessage(
-                    f"Profile '{profile.name}' loaded.", 5000,
+                    f"Profile '{profile.name}' loaded.",
+                    5000,
                 )
                 log_info("profile loaded", name=profile.name)
 
@@ -2581,14 +4113,25 @@ class MainWindow(QMainWindow):
             # Don't close the last tab
             return
 
-        current = self._session_tabs.currentIndex()
-        if current >= _BASE_VIEW_TAB_COUNT:
-            # Close session tab
-            self._session_tabs.removeTab(current)
-            del self._sessions[current - _BASE_VIEW_TAB_COUNT]
-            if self._active_session_index >= current - _BASE_VIEW_TAB_COUNT:
-                self._active_session_index = max(0, self._active_session_index - 1)
-        # Note: Can't close base view tabs (Folder/Text/Hex/Image)
+        current = self._session_tab_bar.current_index
+        if current < 0 or current >= len(self._sessions):
+            return
+        was_active = current == self._active_session_index
+        if was_active:
+            self._tree_watcher.stop()
+            self._auto_refresh_timer.stop()
+
+        self._session_tab_bar._tab_bar.blockSignals(True)
+        self._session_tab_bar.remove_session(current)
+        del self._sessions[current]
+        self._session_tab_bar._tab_bar.blockSignals(False)
+
+        if was_active:
+            next_index = min(current, len(self._sessions) - 1)
+            self._active_session_index = next_index
+            self._apply_session_state(next_index)
+        elif current < self._active_session_index:
+            self._active_session_index -= 1
 
     @Slot()
     def _on_find(self) -> None:
@@ -2623,14 +4166,53 @@ class MainWindow(QMainWindow):
         if report is None:
             self._diff_entries_cache = None
             return []
+        fb = self._filter_bar
+        mode = fb.diff_option_mode
+        search_text = self._integrated_status.search_text
+        search_mode = self._integrated_status.search_mode
+        key = (
+            fb.show_identical,
+            fb.show_different,
+            fb.show_left_only,
+            fb.show_right_only,
+            mode,
+            search_text,
+            search_mode,
+        )
         cached = self._diff_entries_cache
-        if cached is not None and cached[0] is report:
+        if (
+            cached is not None
+            and cached[0] is report
+            and getattr(self, "_diff_entries_key", None) == key
+        ):
             return cached[1]
+        matcher = compile_name_search(search_text, search_mode)
         entries = [
-            e for e in report.entries
-            if e.status != DiffStatus.SAME and not (e.left and e.left.is_dir)
+            e
+            for e in report.entries
+            if e.status != DiffStatus.SAME
+            and not entry_is_dir(e)
+            and status_is_enabled(
+                e.status,
+                show_identical=fb.show_identical,
+                show_different=fb.show_different,
+                show_left_only=fb.show_left_only,
+                show_right_only=fb.show_right_only,
+            )
+            and diff_mode_matches(
+                e.status,
+                e.left.modified_unix if e.left else None,
+                e.right.modified_unix if e.right else None,
+                mode,
+            )
+            and matcher.matches(e.path)
         ]
-        self._diff_entries_cache = (report, entries, {e.path: i for i, e in enumerate(entries)})
+        self._diff_entries_key = key
+        self._diff_entries_cache = (
+            report,
+            entries,
+            {e.path: i for i, e in enumerate(entries)},
+        )
         return entries
 
     def _get_all_file_entries(self) -> list:
@@ -2645,14 +4227,17 @@ class MainWindow(QMainWindow):
         cached = self._all_file_entries_cache
         if cached is not None and cached[0] is report:
             return cached[1]
-        entries = [
-            e for e in report.entries
-            if not (e.left and e.left.is_dir) or not (e.right and e.right.is_dir)
-        ]
-        self._all_file_entries_cache = (report, entries, {e.path: i for i, e in enumerate(entries)})
+        entries = [e for e in report.entries if not entry_is_dir(e)]
+        self._all_file_entries_cache = (
+            report,
+            entries,
+            {e.path: i for i, e in enumerate(entries)},
+        )
         return entries
 
-    def _path_index(self, entries: list, cache: Optional[tuple], path: str) -> Optional[int]:
+    def _path_index(
+        self, entries: list, cache: Optional[tuple], path: str
+    ) -> Optional[int]:
         """O(1) lookup of *path*'s index within *entries* using the cache
         populated by _get_diff_entries()/_get_all_file_entries(), falling
         back to a linear scan if the cache doesn't (yet) match.
@@ -2677,7 +4262,9 @@ class MainWindow(QMainWindow):
         # Find current index
         current_idx = self._path_index(entries, self._diff_entries_cache, current_path)
         if current_idx is None:
-            current_idx = self._path_index(entries, self._all_file_entries_cache, current_path)
+            current_idx = self._path_index(
+                entries, self._all_file_entries_cache, current_path
+            )
         if current_idx is None:
             new_idx = 0 if direction > 0 else len(entries) - 1
         else:
@@ -2696,15 +4283,20 @@ class MainWindow(QMainWindow):
     def _update_nav_status(self, index: int, total: int, entry=None) -> None:
         """Update the status bar navigation indicators."""
         self._status_diffs.setText(f"Diff {index + 1} of {total}")
+        self._integrated_status.set_diff_position(index + 1, total)
 
         # Also update file counter
         report = self._current_report
         if report:
             all_files = self._get_all_file_entries()
             if entry and entry.path:
-                file_idx = self._path_index(all_files, self._all_file_entries_cache, entry.path)
+                file_idx = self._path_index(
+                    all_files, self._all_file_entries_cache, entry.path
+                )
                 if file_idx is not None:
-                    self._status_files.setText(f"File {file_idx + 1} of {len(all_files)}")
+                    self._status_files.setText(
+                        f"File {file_idx + 1} of {len(all_files)}"
+                    )
 
     @Slot()
     def _on_prev_diff(self) -> None:
@@ -2827,7 +4419,23 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_compare_files_dialog(self) -> None:
-        """Open a dialog to select two files/folders to compare."""
+        """Open the standalone file-pair selector."""
+        dialog = FilePairDialog(self)
+        if dialog.exec() != FilePairDialog.DialogCode.Accepted:
+            return
+        pair = dialog.selected_files()
+        if pair is None:
+            QMessageBox.information(
+                self,
+                "Files Required",
+                "Choose two existing local files or valid remote file URLs.",
+            )
+            return
+        self._open_standalone_file_pair(*pair)
+
+    @Slot()
+    def _on_compare_folders_dialog(self) -> None:
+        """Open folder selectors and start a folder comparison."""
         left = QFileDialog.getExistingDirectory(self, "Select Left Folder")
         if not left:
             return
@@ -2842,9 +4450,7 @@ class MainWindow(QMainWindow):
     def _on_save_diff(self) -> None:
         """Save the current comparison as a unified diff file."""
         if self._current_report is None:
-            QMessageBox.information(
-                self, "No Comparison", "Run a comparison first."
-            )
+            QMessageBox.information(self, "No Comparison", "Run a comparison first.")
             return
 
         path, _ = QFileDialog.getSaveFileName(
@@ -2863,6 +4469,76 @@ class MainWindow(QMainWindow):
             log_info("diff saved", path=path)
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", str(exc))
+
+    @Slot()
+    def _on_export_folder_report(self) -> None:
+        """Export the rows accepted by the current folder-view filters."""
+        if self._current_report is None:
+            QMessageBox.information(self, "No Comparison", "Run a comparison first.")
+            return
+
+        dialog = ExportDialog(self)
+        dialog._path_edit.setText("comparison.csv")
+        if not dialog.exec():
+            return
+        if not dialog.file_path.strip():
+            QMessageBox.warning(self, "Export Report", "Choose a destination file.")
+            return
+
+        rows = self._current_visible_folder_report_rows()
+        try:
+            ExportDialog.export_results(
+                rows,
+                dialog.file_path.strip(),
+                dialog.format,
+                include_identical=True,
+                include_sizes=dialog.include_sizes,
+                left_root=self._left_path,
+                right_root=self._right_path,
+            )
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+
+        self._integrated_status.set_status(
+            f"Exported {len(rows)} visible row(s) to {dialog.file_path}"
+        )
+
+    def _current_visible_folder_report_rows(self) -> list[dict]:
+        """Return report data for rows accepted by the folder view's proxy."""
+        return records_from_nodes(self._folder_view.visible_nodes())
+
+    @Slot()
+    def _on_export_text_diff_html(self) -> None:
+        """Export the active side-by-side text comparison as standalone HTML."""
+        view = self._view_stack.currentWidget()
+        if not isinstance(view, TextView) or not view.has_comparison_data:
+            QMessageBox.information(
+                self,
+                "No Text Comparison",
+                "Open a two-sided text comparison before exporting it.",
+            )
+            return
+
+        left_label, right_label, left_lines, right_lines = view.export_diff_rows()
+        default_name = f"{Path(right_label).name or 'text-diff'}.html"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Text Diff as HTML",
+            default_name,
+            "HTML Files (*.html *.htm);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(
+                text_diff_html(left_label, right_label, left_lines, right_lines),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+        self._integrated_status.set_status(f"Exported text diff to {path}")
 
     def _generate_diff_output(self) -> list[str]:
         """Generate a unified-diff-style text summary of the current comparison."""
@@ -2944,9 +4620,7 @@ class MainWindow(QMainWindow):
         """Build a QTextDocument from the current comparison for printing."""
         report = self._current_report
         if report is None:
-            QMessageBox.information(
-                self, "No Comparison", "Run a comparison first."
-            )
+            QMessageBox.information(self, "No Comparison", "Run a comparison first.")
             return None
 
         doc = QTextDocument()
@@ -3015,16 +4689,25 @@ class MainWindow(QMainWindow):
                 follow_symlinks=self._settings.follow_symlinks,
                 use_hash_verification=self._settings.use_hash_verification,
                 cache_dir=self._settings.cache_dir,
+                auto_refresh=self._settings.auto_refresh,
             )
             appearance = dialog.get_appearance_settings()
             self._config.appearance = appearance
             self._apply_appearance(appearance)
+            self._config.comparison_settings = {
+                "ignore_patterns": list(self._settings.ignore_patterns),
+                "follow_symlinks": self._settings.follow_symlinks,
+                "use_hash_verification": self._settings.use_hash_verification,
+                "cache_dir": self._settings.cache_dir,
+                "auto_refresh": self._settings.auto_refresh,
+            }
             self._config.save()
 
     @Slot()
     def _on_configure_shortcuts(self) -> None:
         """Open the Configure Keyboard Shortcuts dialog."""
         from .dialogs.shortcuts_dialog import ShortcutsDialog
+
         dialog = ShortcutsDialog(self)
         dialog.exec()
 
@@ -3079,6 +4762,15 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """Save window geometry to config before closing."""
         log_info("main window close event")
+        self._closing = True
+        self._auto_refresh_timer.stop()
+        self._tree_watcher.close()
+        for worker in tuple(self._remote_pair_workers):
+            worker.cancel()
+        for worker in tuple(self._file_recompare_workers):
+            worker.requestInterruption()
+        for worker in tuple(self._file_recompare_workers):
+            worker.wait()
         self._capture_session_state(self._active_session_index)
         self._save_profile_on_close()
         geom = self.geometry()
@@ -3113,6 +4805,7 @@ class MainWindow(QMainWindow):
             cache_dir=settings.get("cache_dir")
             if isinstance(settings.get("cache_dir"), str)
             else None,
+            auto_refresh=bool(settings.get("auto_refresh", False)),
         )
 
         paths = self._config.last_paths or {}
@@ -3129,6 +4822,9 @@ class MainWindow(QMainWindow):
         session.show_right_only = bool(filters.get("show_right_only", True))
         session.show_files_only = bool(filters.get("show_files_only", False))
         session.search_text = str(filters.get("search_text", ""))
+        session.search_mode = normalize_search_mode(
+            str(filters.get("search_mode", "contains"))
+        )
         mode_value = filters.get("diff_option_mode", "show_differences")
         session.diff_option_mode = (
             str(mode_value) if isinstance(mode_value, str) else "show_differences"
@@ -3138,6 +4834,23 @@ class MainWindow(QMainWindow):
             str(mode_value) if isinstance(mode_value, str) else "compare_structure"
         )
         session.always_show_folders = bool(filters.get("always_show_folders", True))
+        session.wrap_text = bool(filters.get("wrap_text", False))
+        context_value = filters.get("context_lines")
+        session.context_lines = (
+            context_value
+            if type(context_value) is int and context_value in (0, 1, 3, 5)
+            else None
+        )
+        try:
+            session.unimportant_text_rules = validate_rules(
+                filters.get("unimportant_text_rules", [])
+            )
+        except ValueError as exc:
+            session.unimportant_text_rules = []
+            log_warning("ignoring invalid saved unimportant text rules", error=str(exc))
+        ff = filters.get("file_filter", "")
+        session.file_filter = ff if isinstance(ff, str) else ""
+        session.criteria = CompareCriteria.from_dict(filters.get("criteria"))
         session.status_summary = "Ready"
         session.report = None
 
@@ -3162,6 +4875,7 @@ class MainWindow(QMainWindow):
             "follow_symlinks": self._settings.follow_symlinks,
             "use_hash_verification": self._settings.use_hash_verification,
             "cache_dir": self._settings.cache_dir,
+            "auto_refresh": self._settings.auto_refresh,
         }
         self._config.filter_options = {
             "show_identical": self._filter_bar.show_identical,
@@ -3169,10 +4883,18 @@ class MainWindow(QMainWindow):
             "show_left_only": self._filter_bar.show_left_only,
             "show_right_only": self._filter_bar.show_right_only,
             "show_files_only": self._filter_bar.show_files_only,
-            "search_text": self._filter_bar.search_text,
+            "search_text": self._integrated_status.search_text,
+            "search_mode": self._integrated_status.search_mode,
             "diff_option_mode": self._filter_bar.diff_option_mode,
+            "file_filter": self._current_session().file_filter,
+            "criteria": self._current_session().criteria.to_dict(),
             "folder_view_mode": self._folder_view_mode(),
             "always_show_folders": self._act_always_show_folders.isChecked(),
+            "wrap_text": self._current_session().wrap_text,
+            "context_lines": self._current_session().context_lines,
+            "unimportant_text_rules": [
+                dict(rule) for rule in self._current_session().unimportant_text_rules
+            ],
         }
         self._config.folder_columns = self._folder_view.column_widths()
         self._config.last_paths = {
@@ -3191,9 +4913,12 @@ class MainWindow(QMainWindow):
         self._act_undo.setEnabled(self._undo_history.can_undo)
         self._act_redo.setEnabled(self._undo_history.can_redo)
 
-    def _record_file_op(self, op_type: str, source: str, dest: str, backup_path: str | None = None) -> None:
+    def _record_file_op(
+        self, op_type: str, source: str, dest: str, backup_path: str | None = None
+    ) -> None:
         """Record a file operation for undo."""
         from datetime import datetime
+
         op = Operation(
             op_type=op_type,
             source_path=source,
@@ -3208,6 +4933,7 @@ class MainWindow(QMainWindow):
     def _on_undo(self) -> None:
         """Undo the last file operation."""
         from .models.undo_stack import restore_backup
+
         op = self._undo_history.undo()
         if op is None:
             return
@@ -3215,7 +4941,9 @@ class MainWindow(QMainWindow):
         try:
             if op.backup_path and Path(op.backup_path).exists():
                 restore_backup(Path(op.backup_path), Path(op.source_path))
-                self.statusBar().showMessage(f"Undone: {op.op_type} on {Path(op.source_path).name}", 5000)
+                self.statusBar().showMessage(
+                    f"Undone: {op.op_type} on {Path(op.source_path).name}", 5000
+                )
             else:
                 self.statusBar().showMessage("Cannot undo: no backup available", 5000)
         except OSError as exc:
@@ -3230,7 +4958,9 @@ class MainWindow(QMainWindow):
         op = self._undo_history.redo()
         if op is None:
             return
-        self.statusBar().showMessage(f"Redo: {op.op_type} (re-run the operation manually)", 5000)
+        self.statusBar().showMessage(
+            f"Redo: {op.op_type} (re-run the operation manually)", 5000
+        )
         self._update_undo_redo_state()
 
     # ------------------------------------------------------------------
@@ -3262,23 +4992,39 @@ class MainWindow(QMainWindow):
             return
 
         if len(paths) >= 2:
+            if Path(paths[0]).is_file() and Path(paths[1]).is_file():
+                self._open_file_pair(Path(paths[0]), Path(paths[1]))
+                if len(paths) > 2:
+                    self.statusBar().showMessage(
+                        f"Dropped {len(paths)} paths; compared the first two files.",
+                        5000,
+                    )
+                event.acceptProposedAction()
+                return
             self._path_bar.left_path = paths[0]
             self._path_bar.right_path = paths[1]
-            self.statusBar().showMessage("Dropped two paths — starting comparison...", 5000)
+            message = "Dropped two paths — starting comparison..."
+            if len(paths) > 2:
+                message = f"Dropped {len(paths)} paths; comparing the first two..."
+            self.statusBar().showMessage(message, 5000)
             self._on_compare()
         elif not self._left_path.strip():
             self._path_bar.left_path = paths[0]
             self.statusBar().showMessage(
-                f"Left path set to: {paths[0]}  (drop another for right side)", 5000,
+                f"Left path set to: {paths[0]}  (drop another for right side)",
+                5000,
             )
         elif not self._right_path.strip():
             self._path_bar.right_path = paths[0]
-            self.statusBar().showMessage("Right path set — starting comparison...", 5000)
+            self.statusBar().showMessage(
+                "Right path set — starting comparison...", 5000
+            )
             self._on_compare()
         else:
             self._path_bar.left_path = paths[0]
             self.statusBar().showMessage(
-                f"Left path updated to: {paths[0]}  (drop another for right side)", 5000,
+                f"Left path updated to: {paths[0]}  (drop another for right side)",
+                5000,
             )
 
         event.acceptProposedAction()
@@ -3307,6 +5053,7 @@ class MainWindow(QMainWindow):
             follow_symlinks=profile.follow_symlinks,
             use_hash_verification=profile.hash_verification,
             cache_dir=self._settings.cache_dir,
+            auto_refresh=self._settings.auto_refresh,
         )
         session.report = None
         session.status_summary = "Profile loaded"
@@ -3342,7 +5089,10 @@ class MainWindow(QMainWindow):
             default_name = Path(right).name
 
         name, ok = QInputDialog.getText(
-            self, "Add Bookmark", "Bookmark name:", text=default_name,
+            self,
+            "Add Bookmark",
+            "Bookmark name:",
+            text=default_name,
         )
         if not ok or not name.strip():
             return
@@ -3363,7 +5113,12 @@ class MainWindow(QMainWindow):
 
         names = [b.get("name", "Unnamed") for b in bookmarks]
         name, ok = QInputDialog.getItem(
-            self, "Manage Bookmarks", "Select bookmark to remove:", names, 0, False,
+            self,
+            "Manage Bookmarks",
+            "Select bookmark to remove:",
+            names,
+            0,
+            False,
         )
         if not ok:
             return
@@ -3378,7 +5133,7 @@ class MainWindow(QMainWindow):
         """Rebuild the dynamic bookmark entries in the Bookmarks menu."""
         # Remove old dynamic entries (everything after the separator)
         actions = self._bookmarks_menu.actions()
-        for action in actions[self._bookmarks_separator_index:]:
+        for action in actions[self._bookmarks_separator_index :]:
             self._bookmarks_menu.removeAction(action)
 
         for i, bookmark in enumerate(self._config.bookmarks):
@@ -3388,8 +5143,8 @@ class MainWindow(QMainWindow):
             action = QAction(name, self)
             action.setToolTip(f"{left} <> {right}")
             action.triggered.connect(
-                lambda checked=False, left_path=left, right_path=right: self._load_bookmark(
-                    left_path, right_path
+                lambda checked=False, left_path=left, right_path=right: (
+                    self._load_bookmark(left_path, right_path)
                 )
             )
             self._bookmarks_menu.addAction(action)

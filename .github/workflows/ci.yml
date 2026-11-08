@@ -280,10 +280,36 @@ jobs:
         run: cargo test --package rcompare_core --lib vfs::tests_cloud -- --include-ignored --nocapture
         continue-on-error: true
 
+  # PySide6 GUI tests
+  test-teczka:
+    name: Teczka GUI Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+          enable-cache: true
+          cache-dependency-glob: teczka/uv.lock
+
+      - name: Install GUI dependencies
+        working-directory: teczka
+        run: uv sync --group dev --locked
+
+      - name: Run GUI tests
+        working-directory: teczka
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest -q
+
   # Final gating job - must pass for merge
   ci-success:
     name: CI Success Gate
-    needs: [test-core, test-cli, test-ffi, quality]
+    needs: [test-core, test-cli, test-ffi, quality, test-teczka]
     runs-on: ubuntu-latest
     if: always()
 
@@ -304,6 +330,10 @@ jobs:
           fi
           if [ "${{ needs.quality.result }}" != "success" ]; then
             echo "Code quality checks failed!"
+            exit 1
+          fi
+          if [ "${{ needs.test-teczka.result }}" != "success" ]; then
+            echo "Teczka GUI tests failed!"
             exit 1
           fi
           echo "All required checks passed!"

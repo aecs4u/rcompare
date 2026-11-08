@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from teczka.state import AppState, CompareState, ActiveView
 from teczka.models.undo_stack import OperationHistory, Operation
 from teczka.models.comparison import TreeNode
-from teczka.models.tree_model import ComparisonTreeModel
+from teczka.models.tree_model import (
+    COL_LEFT_DATE,
+    COL_LEFT_SIZE,
+    COL_RIGHT_DATE,
+    COL_RIGHT_SIZE,
+    ComparisonTreeModel,
+)
 from teczka.utils.cli_bridge import DiffStatus
 
 
@@ -88,3 +96,45 @@ def test_tree_model_tracks_large_node_count(qapp):
     model.set_tree(root)
     assert model.node_count == 10_001
     assert model.rowCount() == 10_000
+
+
+def test_orphan_metadata_cells_explain_the_missing_side(qapp):
+    root = TreeNode(name="", path="", status=DiffStatus.SAME, is_dir=True)
+    right_only = TreeNode(
+        name="right.txt",
+        path="right.txt",
+        status=DiffStatus.ORPHAN_RIGHT,
+        is_dir=False,
+        right_size=8,
+        right_modified=1_700_000_000,
+        parent=root,
+    )
+    left_only = TreeNode(
+        name="left.txt",
+        path="left.txt",
+        status=DiffStatus.ORPHAN_LEFT,
+        is_dir=False,
+        left_size=4,
+        left_modified=1_700_000_001,
+        parent=root,
+    )
+    root.add_child(right_only)
+    root.add_child(left_only)
+
+    model = ComparisonTreeModel()
+    model.set_tree(root)
+    right_row = model.index(0, 0)
+    left_row = model.index(1, 0)
+
+    for col in (COL_LEFT_SIZE, COL_LEFT_DATE):
+        cell = model.index(right_row.row(), col)
+        assert model.data(cell, Qt.DisplayRole) == "—"
+        assert model.data(cell, Qt.ToolTipRole) == "Not present on the left side."
+        assert model.data(cell, Qt.ForegroundRole).isValid()
+    for col in (COL_RIGHT_SIZE, COL_RIGHT_DATE):
+        cell = model.index(left_row.row(), col)
+        assert model.data(cell, Qt.DisplayRole) == "—"
+        assert model.data(cell, Qt.ToolTipRole) == "Not present on the right side."
+
+    assert model.data(model.index(right_row.row(), COL_RIGHT_SIZE), Qt.DisplayRole) == "8 B"
+    assert model.data(model.index(left_row.row(), COL_LEFT_SIZE), Qt.DisplayRole) == "4 B"

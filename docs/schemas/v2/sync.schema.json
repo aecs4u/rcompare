@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare sync JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "sync" },
+        "summary": {
+          "type": "object",
+          "required": ["total_actions", "completed", "remaining", "cancelled", "copied", "updated", "deleted", "skipped", "failed"],
+          "properties": {
+            "total_actions": { "type": "integer", "minimum": 0 },
+            "completed": { "type": "integer", "minimum": 0 },
+            "remaining": { "type": "integer", "minimum": 0 },
+            "cancelled": { "type": "boolean" },
+            "copied": { "type": "integer", "minimum": 0 },
+            "updated": { "type": "integer", "minimum": 0 },
+            "deleted": { "type": "integer", "minimum": 0 },
+            "skipped": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["left", "right", "direction", "dry_run", "delete_mode", "conflict_policy", "checkpoint_id", "resumed", "actions"],
+          "properties": {
+            "left": { "type": "string" },
+            "right": { "type": "string" },
+            "direction": { "enum": ["left_to_right", "right_to_left", "bidirectional", "update_left", "update_right", "update_both", "mirror_left", "mirror_right"] },
+            "dry_run": { "type": "boolean" },
+            "delete_mode": { "enum": ["trash", "permanent"] },
+            "conflict_policy": { "enum": ["newest", "left", "right", "skip", "error"] },
+            "checkpoint_id": { "type": ["string", "null"] },
+            "resumed": { "type": "boolean" },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["code", "path", "detail"],
+                "properties": {
+                  "code": { "type": "string" },
+                  "path": { "type": "string" },
+                  "detail": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -112,12 +112,18 @@ class SettingsDialog(QDialog):
         self._symlinks_check.setChecked(self._settings.follow_symlinks)
         self._hash_check = QCheckBox("Use hash verification for same-sized files")
         self._hash_check.setChecked(self._settings.use_hash_verification)
+        self._auto_refresh_check = QCheckBox(
+            "Automatically re-compare after folder changes"
+        )
+        self._auto_refresh_check.setChecked(self._settings.auto_refresh)
         behavior_hint = QLabel(
-            "Hash verification improves accuracy but can increase scan time."
+            "Hash verification improves accuracy but can increase scan time. "
+            "Automatic re-compare waits for changes to settle."
         )
         behavior_hint.setWordWrap(True)
         behavior_layout.addWidget(self._symlinks_check)
         behavior_layout.addWidget(self._hash_check)
+        behavior_layout.addWidget(self._auto_refresh_check)
         behavior_layout.addWidget(behavior_hint)
         layout.addWidget(behavior_group)
 
@@ -395,6 +401,7 @@ class SettingsDialog(QDialog):
             follow_symlinks=self._symlinks_check.isChecked(),
             use_hash_verification=self._hash_check.isChecked(),
             cache_dir=self._cache_edit.text() or None,
+            auto_refresh=self._auto_refresh_check.isChecked(),
         )
 
     def get_appearance_settings(self) -> dict:
@@ -426,6 +433,7 @@ class SettingsDialog(QDialog):
         self._patterns_edit.clear()
         self._symlinks_check.setChecked(False)
         self._hash_check.setChecked(True)
+        self._auto_refresh_check.setChecked(False)
         self._cache_edit.clear()
         self._theme_combo.setCurrentText("Light")
         # Reset diff colors

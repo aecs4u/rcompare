@@ -1,7 +1,7 @@
 //! `scan` command: scan and compare two directories or supported archives.
 use super::support::{
-    build_scan_source, build_text_diff_config, is_text_file, OutputOptions, ProgressPolicy,
-    ScanSource, WhitespaceModeArg,
+    build_scan_source_with_overlays, build_text_diff_config, envelope_from_v1_report, is_text_file,
+    json_v2_envelope, OutputOptions, ProgressPolicy, ScanSource, WhitespaceModeArg,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use rcompare_common::{default_cache_dir, load_config, DiffStatus};
@@ -72,6 +72,9 @@ pub(crate) fn run_scan(
     left: PathBuf,
     right: PathBuf,
     ignore_patterns: Vec<String>,
+    overlays: Vec<PathBuf>,
+    include_patterns: Vec<String>,
+    exclude_patterns: Vec<String>,
     follow_symlinks: bool,
     verify_hashes: bool,
     no_verify_hashes: bool,
@@ -110,14 +113,6 @@ pub(crate) fn run_scan(
     // branch below, same as --json; the two differ only in the final
     // document-vs-newline-delimited encoding chosen at the very end.
     let json = json || output_opts.jsonl;
-
-    // Validate paths
-    if !left.exists() {
-        return Err(format!("Left path does not exist: {}", left.display()).into());
-    }
-    if !right.exists() {
-        return Err(format!("Right path does not exist: {}", right.display()).into());
-    }
 
     info!("Comparing:");
     info!("  Left:  {}", left.display());
@@ -174,8 +169,10 @@ pub(crate) fn run_scan(
     let right_scanner = FolderScanner::new(config).with_strict(strict);
 
     // Scan both directories
-    let left_source = build_scan_source(&left)?;
-    let right_source = build_scan_source(&right)?;
+    let left_source =
+        build_scan_source_with_overlays(&left, &overlays, &include_patterns, &exclude_patterns)?;
+    let right_source =
+        build_scan_source_with_overlays(&right, &overlays, &include_patterns, &exclude_patterns)?;
 
     // Auto-enable hash verification for archive comparisons
     // Archives don't preserve timestamps reliably, so we need hash verification
@@ -223,7 +220,9 @@ pub(crate) fn run_scan(
             bytes_total: 0,
         };
         if let Ok(line) = serde_json::to_string(&data) {
-            let _ = writeln!(std::io::stderr(), "PROGRESS:{line}");
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(stderr, "PROGRESS:{line}");
+            let _ = stderr.flush();
         }
     };
 
@@ -379,7 +378,9 @@ pub(crate) fn run_scan(
                         bytes_total: 0,
                     };
                     if let Ok(line) = serde_json::to_string(&data) {
-                        let _ = writeln!(std::io::stderr(), "PROGRESS:{line}");
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "PROGRESS:{line}");
+                        let _ = stderr.flush();
                     }
                 }
             }),
@@ -1926,17 +1927,29 @@ pub(crate) fn run_scan(
             let summary = summarize_nodes(&diff_nodes);
             let left_text = left.to_string_lossy();
             let right_text = right.to_string_lossy();
-            serde_json::to_writer(
-                &mut writer,
-                &JsonlSummaryLine {
-                    kind: "summary",
-                    schema_version: "1.1.0",
-                    left: &left_text,
-                    right: &right_text,
-                    summary: &summary,
-                    warnings: &scan_warnings,
-                },
-            )?;
+            if output_opts.schema_version == 1 {
+                serde_json::to_writer(
+                    &mut writer,
+                    &JsonlSummaryLine {
+                        kind: "summary",
+                        schema_version: "1.1.0",
+                        left: &left_text,
+                        right: &right_text,
+                        summary: &summary,
+                        warnings: &scan_warnings,
+                    },
+                )?;
+            } else {
+                let mut record = json_v2_envelope(
+                    "scan",
+                    "summary",
+                    serde_json::to_value(&summary)?,
+                    serde_json::json!({ "left": left_text, "right": right_text }),
+                    scan_warnings.clone(),
+                );
+                record["type"] = serde_json::json!("summary");
+                serde_json::to_writer(&mut writer, &record)?;
+            }
             writeln!(writer)?;
             if !output_opts.summary_only {
                 let mut emitted = 0_usize;
@@ -1956,13 +1969,25 @@ pub(crate) fn run_scan(
                         break;
                     }
                     let entry = json_entry(node);
-                    serde_json::to_writer(
-                        &mut writer,
-                        &JsonlEntryLine {
-                            kind: "entry",
-                            entry: &entry,
-                        },
-                    )?;
+                    if output_opts.schema_version == 1 {
+                        serde_json::to_writer(
+                            &mut writer,
+                            &JsonlEntryLine {
+                                kind: "entry",
+                                entry: &entry,
+                            },
+                        )?;
+                    } else {
+                        let mut record = json_v2_envelope(
+                            "scan",
+                            "entry",
+                            serde_json::json!({}),
+                            serde_json::to_value(&entry)?,
+                            Vec::new(),
+                        );
+                        record["type"] = serde_json::json!("entry");
+                        serde_json::to_writer(&mut writer, &record)?;
+                    }
                     writeln!(writer)?;
                     emitted += 1;
                 }
@@ -1998,10 +2023,23 @@ pub(crate) fn run_scan(
             } else if let Some(max) = output_opts.max_results {
                 report.entries.truncate(max);
             }
-            if output_opts.pretty {
-                serde_json::to_writer_pretty(&mut writer, &report)?;
+            let report_json = if output_opts.schema_version == 1 {
+                serde_json::to_value(&report)?
             } else {
-                serde_json::to_writer(&mut writer, &report)?;
+                envelope_from_v1_report(
+                    "scan",
+                    if report.warnings.is_empty() {
+                        "completed"
+                    } else {
+                        "partial"
+                    },
+                    serde_json::to_value(&report)?,
+                )
+            };
+            if output_opts.pretty {
+                serde_json::to_writer_pretty(&mut writer, &report_json)?;
+            } else {
+                serde_json::to_writer(&mut writer, &report_json)?;
             }
             writeln!(writer)?;
         }

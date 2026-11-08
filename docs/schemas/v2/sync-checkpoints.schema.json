@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare sync checkpoint listing JSON v2",
+  "allOf": [
+    { "$ref": "envelope.schema.json" },
+    {
+      "properties": {
+        "command": { "const": "sync-checkpoints" },
+        "summary": {
+          "type": "object",
+          "required": ["checkpoint_count"],
+          "properties": {
+            "checkpoint_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["checkpoints"],
+          "properties": {
+            "checkpoints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id", "schema_version", "created_at", "updated_at", "status",
+                  "left", "right", "direction", "delete_mode", "conflict_policy",
+                  "ignore_patterns", "follow_symlinks", "verify_hashes",
+                  "no_verify_hashes", "strict", "total_actions", "completed_actions",
+                  "remaining_actions", "failed_actions"
+                ],
+                "properties": {
+                  "id": { "type": "string" },
+                  "schema_version": { "type": "string" },
+                  "created_at": { "type": "integer", "minimum": 0 },
+                  "updated_at": { "type": "integer", "minimum": 0 },
+                  "status": { "enum": ["running", "cancelled", "failed", "completed"] },
+                  "left": { "type": "string" },
+                  "right": { "type": "string" },
+                  "direction": { "enum": ["left_to_right", "right_to_left", "bidirectional", "update_left", "update_right", "update_both", "mirror_left", "mirror_right"] },
+                  "delete_mode": { "enum": ["trash", "permanent"] },
+                  "conflict_policy": { "enum": ["newest", "left", "right", "skip", "error"] },
+                  "ignore_patterns": { "type": "array", "items": { "type": "string" } },
+                  "follow_symlinks": { "type": "boolean" },
+                  "verify_hashes": { "type": "boolean" },
+                  "no_verify_hashes": { "type": "boolean" },
+                  "strict": { "type": "boolean" },
+                  "total_actions": { "type": "integer", "minimum": 0 },
+                  "completed_actions": { "type": "integer", "minimum": 0 },
+                  "remaining_actions": { "type": "integer", "minimum": 0 },
+                  "failed_actions": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

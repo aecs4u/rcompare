@@ -104,6 +104,8 @@ bytes = "1.5"
 async-trait = "0.1"
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
 url = "2.5"
+quick-xml = "0.38"
+httpdate = "1.0"
 
 # Benchmarking (dev dependency)
 criterion = { version = "0.5", features = ["html_reports"] }

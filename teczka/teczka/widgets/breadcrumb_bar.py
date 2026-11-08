@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -50,10 +51,16 @@ class BreadcrumbBar(QWidget):
         # --- Scroll area for breadcrumb segments ---
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        self._scroll_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._scroll_area.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
 
         self._breadcrumb_container = QWidget()
         self._breadcrumb_layout = QHBoxLayout(self._breadcrumb_container)
@@ -64,7 +71,9 @@ class BreadcrumbBar(QWidget):
 
         # --- Line edit for raw editing mode ---
         self._line_edit = QLineEdit()
-        self._line_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._line_edit.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._line_edit.returnPressed.connect(self._on_edit_finished)
         self._line_edit.editingFinished.connect(self._on_edit_finished)
         self._line_edit.setVisible(False)
@@ -94,6 +103,7 @@ class BreadcrumbBar(QWidget):
         h = ref.sizeHint().height()
         self.setFixedHeight(h)
         self._scroll_area.setFixedHeight(h)
+        self._rebuild_breadcrumbs()
 
     # ------------------------------------------------------------------
     # Public property
@@ -107,7 +117,12 @@ class BreadcrumbBar(QWidget):
     @path.setter
     def path(self, value: str) -> None:
         """Set the displayed path and rebuild the breadcrumb segments."""
-        normalised = os.path.normpath(value) if value else ""
+        value = value.strip() if value else ""
+        # normpath collapses the URL delimiter in sources such as s3://bucket
+        # into s3:/bucket. Keep URLs intact; local paths still use OS rules.
+        normalised = (
+            value if "://" in value else os.path.normpath(value) if value else ""
+        )
         if normalised == self._path:
             return
         self._path = normalised
@@ -126,10 +141,16 @@ class BreadcrumbBar(QWidget):
                 continue
             widget = item.widget()
             if widget is not None:
+                widget.hide()
                 widget.deleteLater()
 
         if not self._path:
+            placeholder = QLabel("Choose a folder…", self._breadcrumb_container)
+            placeholder.setStyleSheet(
+                "QLabel { color: palette(mid); padding-left: 4px; }"
+            )
             self._breadcrumb_layout.addStretch()
+            self._breadcrumb_layout.insertWidget(0, placeholder)
             return
 
         parts = self._split_path(self._path)
@@ -137,9 +158,7 @@ class BreadcrumbBar(QWidget):
         for index, (label_text, accumulated_path) in enumerate(parts):
             if index > 0:
                 sep = QLabel("/")
-                sep.setStyleSheet(
-                    "QLabel { color: palette(mid); padding: 0 2px; }"
-                )
+                sep.setStyleSheet("QLabel { color: palette(mid); padding: 0 2px; }")
                 self._breadcrumb_layout.addWidget(sep)
 
             btn = QPushButton(label_text)
@@ -178,6 +197,31 @@ class BreadcrumbBar(QWidget):
         On Unix the root is shown as ``/``.  On Windows the drive letter
         (e.g. ``C:\\``) is used as the root label.
         """
+        if "://" in path:
+            try:
+                parsed = urlsplit(path)
+                if parsed.scheme and parsed.netloc:
+                    host = parsed.hostname or parsed.netloc
+                    try:
+                        port = parsed.port
+                    except ValueError:
+                        port = None
+                    if ":" in host and not host.startswith("["):
+                        host = f"[{host}]"
+                    if port is not None:
+                        host = f"{host}:{port}"
+                    root = f"{parsed.scheme}://{host}"
+                    remote_parts = [(root, root)]
+                    accumulated = root
+                    for component in parsed.path.split("/"):
+                        if not component:
+                            continue
+                        accumulated = f"{accumulated}/{component}"
+                        remote_parts.append((component, accumulated))
+                    return remote_parts
+            except ValueError:
+                pass
+
         parts: list[tuple[str, str]] = []
 
         # Normalise separators.

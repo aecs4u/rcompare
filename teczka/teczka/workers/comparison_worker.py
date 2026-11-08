@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass
-from PySide6.QtCore import QObject, QProcess, Signal
+
+from PySide6.QtCore import QObject, QProcess, QTimer, Signal
+
 from ..models.comparison import TreeNode, build_tree_with_options
-from ..utils.cli_bridge import CliBridge, ScanReport
+from ..utils.cli_bridge import CliBridge, ScanReport, unwrap_json_envelope
+from ..utils.criteria import CompareCriteria, apply_criteria
+from ..utils.file_filter import apply_to_report as apply_file_filter
+from ..utils.file_filter import parse_filter
+from ..utils.source_paths import is_remote_source, source_log_label, source_scheme
 from ..utils.telemetry import log_error, log_info
+from ..utils.unimportant_text import apply_to_report as apply_unimportant_text_rules
+from ..utils.unimportant_text import validate_rules
 from .function_worker import FunctionWorker
 
 _PROGRESS_PREFIX = "PROGRESS:"
@@ -59,17 +67,26 @@ class CliJsonWorker(QObject):
         super().__init__(parent)
         self._process = QProcess(self)
         self._stderr_buffer = ""
+        self._stderr_pending = ""
         self._accepted_exit_codes: tuple[int, ...] = (0,)
         self._result_worker: FunctionWorker | None = None
         self._cancelled = False
+        self._report_on_cancel = False
+        self._cancel_kill_timer = QTimer(self)
+        self._cancel_kill_timer.setSingleShot(True)
+        self._cancel_kill_timer.setInterval(10_000)
+        self._cancel_kill_timer.timeout.connect(self._kill_after_cancel_timeout)
         self._process.finished.connect(self._on_finished)
         self._process.readyReadStandardError.connect(self._on_stderr)
 
-    def start(self, cmd: list[str], accepted_exit_codes: tuple[int, ...] = (0,)) -> None:
+    def start(
+        self, cmd: list[str], accepted_exit_codes: tuple[int, ...] = (0,)
+    ) -> None:
         """Start the given command asynchronously."""
         self._accepted_exit_codes = accepted_exit_codes
         self._stderr_buffer = ""
         self._cancelled = False
+        self._report_on_cancel = 130 in accepted_exit_codes
         log_info(
             "starting cli json process",
             command=cmd[0] if cmd else "",
@@ -81,6 +98,12 @@ class CliJsonWorker(QObject):
         self._cancelled = True
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling cli json process")
+            self._process.terminate()
+            self._cancel_kill_timer.start()
+
+    def _kill_after_cancel_timeout(self) -> None:
+        if self._process.state() != QProcess.NotRunning:
+            log_error("cli json process did not stop after cancellation")
             self._process.kill()
 
     def is_running(self) -> bool:
@@ -96,6 +119,7 @@ class CliJsonWorker(QObject):
             self._stderr_buffer += data
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self._cancel_kill_timer.stop()
         stdout = bytes(self._process.readAllStandardOutput().data()).decode(
             "utf-8", errors="replace"
         )
@@ -106,11 +130,40 @@ class CliJsonWorker(QObject):
             self._stderr_buffer += stderr_tail
         stderr = self._stderr_buffer.strip()
 
-        if self._cancelled:
+        if self._cancelled and not self._report_on_cancel:
             return
         if exit_status == QProcess.CrashExit:
             log_error("cli json process crashed")
-            self.error.emit("Process crashed")
+            self.error.emit(
+                "Process stopped before it could report the sync outcome. Refresh the comparison."
+                if self._cancelled
+                else "Process crashed"
+            )
+            return
+
+        if self._cancelled and exit_code not in self._accepted_exit_codes:
+            self.error.emit(
+                "Process stopped before it could report the sync outcome. Refresh the comparison."
+            )
+            return
+
+        if exit_code == 130 and not stdout.strip():
+            self.finished.emit(
+                {
+                    "status": "cancelled",
+                    "summary": {
+                        "cancelled": True,
+                        "completed": 0,
+                        "remaining": 0,
+                        "copied": 0,
+                        "updated": 0,
+                        "deleted": 0,
+                        "skipped": 0,
+                        "failed": 0,
+                    },
+                    "actions": [],
+                }
+            )
             return
 
         if exit_code not in self._accepted_exit_codes:
@@ -127,15 +180,17 @@ class CliJsonWorker(QObject):
         self._result_worker.start()
 
     def _on_json_ready(self, data: dict, exit_code: int) -> None:
-        if self._cancelled:
+        if self._cancelled and not self._report_on_cancel:
             self._result_worker = None
             return
+        if isinstance(data, dict):
+            data = unwrap_json_envelope(data)
         log_info("cli json process completed", exit_code=exit_code)
         self.finished.emit(data)
         self._result_worker = None
 
     def _on_json_error(self, message: str) -> None:
-        if self._cancelled:
+        if self._cancelled and not self._report_on_cancel:
             self._result_worker = None
             return
         log_error("failed to decode cli json output", details=message)
@@ -155,11 +210,18 @@ class ComparisonWorker(QObject):
         super().__init__(parent)
         self._cli_bridge = cli_bridge
         self._process = QProcess(self)
+        self._cancel_kill_timer = QTimer(self)
+        self._cancel_kill_timer.setSingleShot(True)
+        self._cancel_kill_timer.setInterval(1500)
+        self._cancel_kill_timer.timeout.connect(self._kill_after_cancel_timeout)
         self._stderr_buffer = ""
         self._result_worker: FunctionWorker | None = None
         self._folder_view_mode = "compare_structure"
         self._always_show_folders = True
         self._cancelled = False
+        self._checking_capabilities = False
+        self._pending_scan_args: list[str] | None = None
+        self._required_source_schemes: set[str] = set()
         self._process.finished.connect(self._on_finished)
         self._process.readyReadStandardError.connect(self._on_stderr)
 
@@ -183,13 +245,30 @@ class ComparisonWorker(QObject):
         ignore_case: bool = False,
         folder_view_mode: str = "compare_structure",
         always_show_folders: bool = True,
+        file_filter: str = "",
+        criteria: CompareCriteria | None = None,
+        unimportant_rules: list[dict[str, str]] | None = None,
+        cache_dir: str | None = None,
     ) -> None:
         """Start an async folder scan."""
+        self._file_filter = file_filter or ""
+        self._criteria = criteria or CompareCriteria()
+        self._unimportant_rules = validate_rules(unimportant_rules or [])
+        if not self._criteria.needs_hashes:
+            verify_hashes = False
         args = ["scan", left, right, "--json"]
+        ignore_patterns = [
+            *(ignore_patterns or []),
+            *parse_filter(self._file_filter).ignore_args(),
+        ]
         if follow_symlinks:
             args.append("--follow-symlinks")
+        if cache_dir:
+            args.extend(["--cache-dir", cache_dir])
         if verify_hashes:
             args.append("--verify-hashes")
+        elif not self._criteria.needs_hashes:
+            args.append("--no-verify-hashes")
         for p in ignore_patterns or []:
             args.extend(["--ignore", p])
         if text_diff:
@@ -215,24 +294,57 @@ class ComparisonWorker(QObject):
         if ignore_case:
             args.append("--ignore-case")
 
-        cmd = self._cli_bridge.build_command(args)
         self._stderr_buffer = ""
+        self._stderr_pending = ""
         self._cancelled = False
         self._folder_view_mode = folder_view_mode
         self._always_show_folders = always_show_folders
+        remote_sources = [
+            source for source in (left, right) if is_remote_source(source)
+        ]
+        self._required_source_schemes = {
+            scheme for source in remote_sources if (scheme := source_scheme(source))
+        }
+        self._checking_capabilities = bool(remote_sources)
+        self._pending_scan_args = args if remote_sources else None
         log_info(
             "starting async scan process",
-            command=cmd[0] if cmd else "",
-            args=cmd[1:] if len(cmd) > 1 else [],
+            command="capabilities" if remote_sources else "scan",
+            left=source_log_label(left),
+            right=source_log_label(right),
+            remote=bool(remote_sources),
         )
-        self.progress.emit("Starting comparison...")
+        if remote_sources:
+            self.progress.emit("Checking remote source support...")
+            self._start_process(["capabilities", "--json"])
+        else:
+            self.progress.emit("Starting comparison...")
+            self._start_scan(args)
+
+    def _start_process(self, args: list[str]) -> None:
+        """Launch a CLI subcommand after clearing output from the prior phase."""
+        cmd = self._cli_bridge.build_command(args)
+        self._stderr_buffer = ""
+        self._stderr_pending = ""
         self._process.start(cmd[0], cmd[1:])
 
+    def _start_scan(self, args: list[str]) -> None:
+        self._checking_capabilities = False
+        self._pending_scan_args = None
+        self.progress.emit("Starting comparison...")
+        self._start_process(args)
+
     def cancel(self) -> None:
-        """Cancel a running comparison."""
+        """Ask the CLI to stop, then force-stop it if it does not exit."""
         self._cancelled = True
         if self._process.state() != QProcess.NotRunning:
             log_info("cancelling comparison process")
+            self._process.terminate()
+            self._cancel_kill_timer.start()
+
+    def _kill_after_cancel_timeout(self) -> None:
+        if self._process.state() != QProcess.NotRunning:
+            log_info("comparison process did not stop after cancellation; killing it")
             self._process.kill()
 
     def is_running(self) -> bool:
@@ -241,6 +353,7 @@ class ComparisonWorker(QObject):
         )
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        self._cancel_kill_timer.stop()
         stdout = bytes(self._process.readAllStandardOutput().data()).decode(
             "utf-8", errors="replace"
         )
@@ -249,9 +362,16 @@ class ComparisonWorker(QObject):
         )
         if stderr_tail:
             self._stderr_buffer += stderr_tail
+            if not self._cancelled:
+                self._consume_stderr(stderr_tail)
+        if not self._cancelled:
+            self._consume_stderr("", flush=True)
         stderr = self._stderr_buffer.strip()
 
         if self._cancelled:
+            return
+        if self._checking_capabilities:
+            self._on_capabilities_finished(stdout, stderr, exit_code, exit_status)
             return
         if exit_status == QProcess.CrashExit:
             log_error("comparison process crashed")
@@ -264,7 +384,8 @@ class ComparisonWorker(QObject):
         if exit_code not in (0, 2):
             # Filter out PROGRESS: lines from error display
             details_lines = [
-                line for line in (stderr or "no stderr output").splitlines()
+                line
+                for line in (stderr or "no stderr output").splitlines()
                 if not line.startswith(_PROGRESS_PREFIX)
             ]
             details = "\n".join(details_lines) or "no stderr output"
@@ -287,10 +408,65 @@ class ComparisonWorker(QObject):
         self._result_worker.error.connect(self._on_result_error)
         self._result_worker.start()
 
+    def _on_capabilities_finished(
+        self,
+        stdout: str,
+        stderr: str,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
+    ) -> None:
+        """Require explicit CLI source-scheme support before scanning URLs."""
+        self._checking_capabilities = False
+        if exit_status == QProcess.CrashExit or exit_code != 0:
+            self._pending_scan_args = None
+            details = stderr or "no diagnostic output"
+            self.error.emit(f"Unable to check remote-source support: {details}")
+            return
+        try:
+            report = unwrap_json_envelope(_json.loads(stdout))
+        except _json.JSONDecodeError:
+            report = None
+        advertised = report.get("source_schemes") if isinstance(report, dict) else None
+        if not isinstance(advertised, list) or not all(
+            isinstance(scheme, str) for scheme in advertised
+        ):
+            self._pending_scan_args = None
+            self.error.emit(
+                "Remote comparison needs an rcompare_cli build that reports "
+                "source_schemes in `capabilities --json`. Update the configured CLI and try again."
+            )
+            return
+
+        supported = {scheme.lower() for scheme in advertised}
+        missing = sorted(self._required_source_schemes - supported)
+        if missing:
+            self._pending_scan_args = None
+            self.error.emit(
+                "The configured rcompare_cli does not support remote scheme(s): "
+                + ", ".join(missing)
+            )
+            return
+
+        args = self._pending_scan_args
+        if args is None:
+            self.error.emit("Remote comparison could not be started. Please try again.")
+            return
+        self._start_scan(args)
+
     def _parse_report_and_tree(
         self, stdout: str, folder_view_mode: str, always_show_folders: bool
     ) -> ComparisonResult:
         report = self._cli_bridge.parse_scan_report(stdout)
+        apply_criteria(report, getattr(self, "_criteria", CompareCriteria()))
+        apply_file_filter(report, getattr(self, "_file_filter", ""))
+        criteria = getattr(self, "_criteria", CompareCriteria())
+        if criteria.mode == "content":
+            apply_unimportant_text_rules(
+                report,
+                report.left,
+                report.right,
+                getattr(self, "_unimportant_rules", []),
+            )
         tree = build_tree_with_options(
             report,
             folder_view_mode,
@@ -326,8 +502,22 @@ class ComparisonWorker(QObject):
         if not data:
             return
         self._stderr_buffer += data
-        for line in data.strip().splitlines():
+        if not self._cancelled:
+            self._consume_stderr(data)
+
+    def _consume_stderr(self, data: str, *, flush: bool = False) -> None:
+        """Process complete stderr lines without losing split progress events."""
+        self._stderr_pending += data
+        lines = self._stderr_pending.split("\n")
+        self._stderr_pending = lines.pop()
+        if flush and self._stderr_pending:
+            lines.append(self._stderr_pending)
+            self._stderr_pending = ""
+
+        for line in lines:
             stripped = line.strip()
+            if not stripped:
+                continue
             if stripped.startswith(_PROGRESS_PREFIX):
                 self._parse_progress_line(stripped)
             else:
@@ -336,7 +526,7 @@ class ComparisonWorker(QObject):
     def _parse_progress_line(self, line: str) -> None:
         """Parse a structured PROGRESS:{json} line from the CLI."""
         try:
-            raw = line[len(_PROGRESS_PREFIX):]
+            raw = line[len(_PROGRESS_PREFIX) :]
             obj = _json.loads(raw)
             stage = obj.get("stage", "")
             entries_done = int(obj.get("entries_done", 0))

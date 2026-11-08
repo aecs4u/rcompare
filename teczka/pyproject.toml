@@ -34,6 +34,9 @@ teczka = "teczka.__main__:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
 [tool.mypy]
 ignore_missing_imports = true
 # PySide6 exposes many compatibility enum aliases dynamically and its model

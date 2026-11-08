@@ -1,3 +1,6 @@
+use super::remote_reader::{create_spool_file, open_spool_reader};
+use quick_xml::events::Event;
+use quick_xml::Reader as XmlReader;
 use rcompare_common::{FileEntry, FileMetadata, Vfs, VfsCapabilities, VfsError};
 use reqwest::{Client, Method, StatusCode};
 use std::io::{Read, Write};
@@ -50,15 +53,25 @@ pub struct WebDavVfs {
 impl WebDavVfs {
     /// Create a new WebDAV VFS connection
     pub fn new(config: WebDavConfig) -> Result<Self, VfsError> {
+        if matches!(config.auth, WebDavAuth::Digest { .. }) {
+            return Err(VfsError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WebDAV Digest authentication is not supported",
+            )));
+        }
         let instance_id = format!("webdav://{}{}", config.url, config.root_path.display());
 
         // Parse base URL
-        let base_url = Url::parse(&config.url).map_err(|e| {
+        let mut base_url = Url::parse(&config.url).map_err(|e| {
             VfsError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("Invalid WebDAV URL: {e}"),
             ))
         })?;
+        if !base_url.path().ends_with('/') {
+            let path = format!("{}/", base_url.path());
+            base_url.set_path(&path);
+        }
 
         // Create a Tokio runtime for async operations
         let runtime = Runtime::new().map_err(|e| {
@@ -115,9 +128,8 @@ impl WebDavVfs {
                 builder.basic_auth(username, Some(password))
             }
             WebDavAuth::Digest { username, password } => {
-                // Note: reqwest doesn't natively support digest auth
-                // Using basic auth as fallback
-                builder.basic_auth(username, Some(password))
+                let _ = (username, password);
+                builder
             }
             WebDavAuth::Bearer { token } => {
                 builder.header("Authorization", format!("Bearer {token}"))
@@ -125,49 +137,139 @@ impl WebDavVfs {
         }
     }
 
-    /// Parse PROPFIND response to extract file entries
-    fn parse_propfind_response(&self, xml: &str, path: &Path) -> Result<Vec<FileEntry>, VfsError> {
+    fn parse_propfind_response(
+        &self,
+        xml: &str,
+        path: &Path,
+        skip_parent: bool,
+    ) -> Result<Vec<FileEntry>, VfsError> {
+        let mut reader = XmlReader::from_str(xml);
         let mut entries = Vec::new();
+        let mut current: Option<ParsedPropfindEntry> = None;
+        let mut field: Option<Vec<u8>> = None;
 
-        // Simple XML parsing (in production, use a proper XML parser like quick-xml)
-        // This is a simplified implementation for demonstration
-        for line in xml.lines() {
-            // Extract href (file path)
-            if let Some(href_start) = line.find("<D:href>") {
-                if let Some(href_end) = line.find("</D:href>") {
-                    let href = &line[href_start + 8..href_end];
-
-                    // Skip the parent directory itself
-                    if href.trim_end_matches('/') == path.to_string_lossy().trim_end_matches('/') {
-                        continue;
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(event)) => {
+                    let event_name = event.name();
+                    let name = local_name(event_name.as_ref());
+                    if name == b"response" {
+                        current = Some(ParsedPropfindEntry::default());
+                    } else if matches!(
+                        name,
+                        b"href" | b"getcontentlength" | b"getlastmodified" | b"creationdate"
+                    ) {
+                        field = Some(name.to_vec());
+                    } else if name == b"collection" {
+                        if let Some(entry) = current.as_mut() {
+                            entry.is_dir = true;
+                        }
                     }
-
-                    // Extract just the filename from the full path
-                    let entry_path = PathBuf::from(href.trim_start_matches('/'));
-
-                    // Determine if it's a directory
-                    let is_dir = href.ends_with('/');
-
-                    entries.push(FileEntry {
-                        path: entry_path,
-                        size: 0, // Will be updated from getcontentlength
-                        modified: SystemTime::now(),
-                        is_dir,
-                    });
                 }
+                Ok(Event::Empty(event)) => {
+                    if local_name(event.name().as_ref()) == b"collection" {
+                        if let Some(entry) = current.as_mut() {
+                            entry.is_dir = true;
+                        }
+                    }
+                }
+                Ok(Event::Text(text)) => {
+                    if let (Some(entry), Some(name)) = (current.as_mut(), field.as_deref()) {
+                        let decoded = text.decode().map_err(|e| xml_error(e.to_string()))?;
+                        let value = quick_xml::escape::unescape(&decoded)
+                            .map_err(|e| xml_error(e.to_string()))?;
+                        match name {
+                            b"href" => entry.href = Some(value.into_owned()),
+                            b"getcontentlength" => entry.size = value.parse().unwrap_or(0),
+                            b"getlastmodified" | b"creationdate" => {
+                                entry.modified = Self::parse_date(&value);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(Event::End(event)) => {
+                    let event_name = event.name();
+                    let name = local_name(event_name.as_ref());
+                    if matches!(
+                        name,
+                        b"href" | b"getcontentlength" | b"getlastmodified" | b"creationdate"
+                    ) {
+                        field = None;
+                    } else if name == b"response" {
+                        if let Some(entry) = current.take() {
+                            if let Some(href) = entry.href {
+                                let entry_path = self.href_to_path(&href);
+                                let requested = normalize_path(path);
+                                if !skip_parent || entry_path != requested {
+                                    entries.push(FileEntry {
+                                        path: entry_path,
+                                        size: entry.size,
+                                        modified: entry.modified.unwrap_or(UNIX_EPOCH),
+                                        is_dir: entry.is_dir || href.ends_with('/'),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => return Err(xml_error(e.to_string())),
             }
         }
 
         Ok(entries)
     }
 
-    /// Parse a WebDAV date string (RFC 1123 format)
-    fn parse_date(_date_str: &str) -> Option<SystemTime> {
-        // Simplified date parsing
-        // In production, use chrono or httpdate crate
-        // For now, return current time
-        Some(SystemTime::now())
+    fn href_to_path(&self, href: &str) -> PathBuf {
+        let href_path = Url::parse(href).map_or_else(
+            |_| href.split('?').next().unwrap_or(href).to_string(),
+            |url| url.path().to_string(),
+        );
+        let base_path = format!(
+            "{}/{}",
+            self.base_url.path().trim_end_matches('/'),
+            self.config.root_path.to_string_lossy().trim_matches('/')
+        );
+        let relative = href_path
+            .strip_prefix(base_path.trim_end_matches('/'))
+            .unwrap_or(href_path.as_str())
+            .trim_matches('/');
+        PathBuf::from(relative)
     }
+
+    fn parse_date(date_str: &str) -> Option<SystemTime> {
+        chrono::DateTime::parse_from_rfc3339(date_str)
+            .ok()
+            .map(|date| date.into())
+            .or_else(|| httpdate::parse_http_date(date_str).ok())
+    }
+}
+
+#[derive(Default)]
+struct ParsedPropfindEntry {
+    href: Option<String>,
+    size: u64,
+    modified: Option<SystemTime>,
+    is_dir: bool,
+}
+
+const UNIX_EPOCH: SystemTime = SystemTime::UNIX_EPOCH;
+
+fn local_name(name: &[u8]) -> &[u8] {
+    name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().replace('\\', "/").trim_matches('/'))
+}
+
+fn xml_error(message: String) -> VfsError {
+    VfsError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("Invalid WebDAV XML: {message}"),
+    ))
 }
 
 impl Vfs for WebDavVfs {
@@ -222,35 +324,15 @@ impl Vfs for WebDavVfs {
                 )))
             })?;
 
-            // Parse the XML response
-            let is_dir = xml.contains("<D:collection/>") || xml.contains("<D:collection ");
-
-            // Extract content length
-            let size = if let Some(start) = xml.find("<D:getcontentlength>") {
-                if let Some(end) = xml.find("</D:getcontentlength>") {
-                    xml[start + 20..end].parse::<u64>().unwrap_or(0)
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            // Extract last modified date
-            let modified = if let Some(start) = xml.find("<D:getlastmodified>") {
-                if let Some(end) = xml.find("</D:getlastmodified>") {
-                    Self::parse_date(&xml[start + 19..end]).unwrap_or_else(SystemTime::now)
-                } else {
-                    SystemTime::now()
-                }
-            } else {
-                SystemTime::now()
-            };
+            let mut entries = self.parse_propfind_response(&xml, path, false)?;
+            let entry = entries.pop().ok_or_else(|| {
+                VfsError::NotFound(format!("WebDAV resource not found: {}", path.display()))
+            })?;
 
             Ok(FileMetadata {
-                size,
-                modified,
-                is_dir,
+                size: entry.size,
+                modified: entry.modified,
+                is_dir: entry.is_dir,
                 is_symlink: false,
             })
         })
@@ -297,7 +379,7 @@ impl Vfs for WebDavVfs {
                 )))
             })?;
 
-            self.parse_propfind_response(&xml, path)
+            self.parse_propfind_response(&xml, path, true)
         })
     }
 
@@ -308,7 +390,7 @@ impl Vfs for WebDavVfs {
             let request = self.client.get(url);
             let request = self.add_auth_header(request);
 
-            let response = request.send().await.map_err(|e| {
+            let mut response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("Failed to GET WebDAV file: {e}"),
@@ -322,13 +404,26 @@ impl Vfs for WebDavVfs {
                 )));
             }
 
-            let bytes = response.bytes().await.map_err(|e| {
-                VfsError::Io(std::io::Error::other(format!(
-                    "Failed to read WebDAV file body: {e}"
-                )))
-            })?;
+            let (spool_path, mut spool) = create_spool_file().map_err(VfsError::Io)?;
+            let result = async {
+                while let Some(chunk) = response.chunk().await.map_err(|e| {
+                    VfsError::Io(std::io::Error::other(format!(
+                        "Failed to read WebDAV file body: {e}"
+                    )))
+                })? {
+                    spool.write_all(&chunk).map_err(VfsError::Io)?;
+                }
+                spool.sync_all().map_err(VfsError::Io)
+            }
+            .await;
 
-            Ok(Box::new(std::io::Cursor::new(bytes.to_vec())) as Box<dyn Read + Send>)
+            drop(spool);
+            if let Err(error) = result {
+                let _ = std::fs::remove_file(&spool_path);
+                return Err(error);
+            }
+
+            open_spool_reader(spool_path).map_err(VfsError::Io)
         })
     }
 
@@ -354,6 +449,10 @@ impl Vfs for WebDavVfs {
 
             Ok(())
         })
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+        self.remove_file(path)
     }
 
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError> {
@@ -472,7 +571,6 @@ impl Vfs for WebDavVfs {
                 .header("Overwrite", "F");
 
             let request = self.add_auth_header(request);
-
             let response = request.send().await.map_err(|e| {
                 VfsError::Io(std::io::Error::other(format!(
                     "Failed to MOVE WebDAV resource: {e}"
@@ -523,6 +621,7 @@ struct WebDavWriter {
     url: Url,
     auth: WebDavAuth,
     buffer: Vec<u8>,
+    dirty: bool,
 }
 
 impl WebDavWriter {
@@ -533,6 +632,7 @@ impl WebDavWriter {
             url,
             auth,
             buffer: Vec::new(),
+            dirty: true,
         }
     }
 
@@ -543,9 +643,8 @@ impl WebDavWriter {
                 builder.basic_auth(username, Some(password))
             }
             WebDavAuth::Digest { username, password } => {
-                // Note: reqwest doesn't natively support digest auth
-                // Using basic auth as fallback
-                builder.basic_auth(username, Some(password))
+                let _ = (username, password);
+                builder
             }
             WebDavAuth::Bearer { token } => {
                 builder.header("Authorization", format!("Bearer {token}"))
@@ -557,10 +656,14 @@ impl WebDavWriter {
 impl std::io::Write for WebDavWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.buffer.extend_from_slice(buf);
+        self.dirty = true;
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        if !self.dirty {
+            return Ok(());
+        }
         // Upload the buffer to WebDAV
         let client = self.client.clone();
         let url = self.url.clone();
@@ -570,18 +673,85 @@ impl std::io::Write for WebDavWriter {
             let request = client.put(url).body(data);
             let request = self.add_auth_header(request);
 
-            request
+            let response = request
                 .send()
                 .await
                 .map_err(|e| std::io::Error::other(format!("Failed to upload to WebDAV: {e}")))?;
 
+            if !response.status().is_success() {
+                return Err(std::io::Error::other(format!(
+                    "WebDAV PUT returned status: {}",
+                    response.status()
+                )));
+            }
+
             Ok(())
-        })
+        })?;
+        self.buffer.clear();
+        self.dirty = false;
+        Ok(())
     }
 }
 
 impl Drop for WebDavWriter {
     fn drop(&mut self) {
         let _ = self.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_namespaced_propfind_entries_and_metadata() {
+        let vfs = WebDavVfs::new(WebDavConfig {
+            url: "https://example.test/dav".to_string(),
+            auth: WebDavAuth::None,
+            root_path: PathBuf::from("/Documents"),
+        })
+        .expect("valid WebDAV config");
+        let xml = r#"
+            <d:multistatus xmlns:d="DAV:">
+              <d:response>
+                <d:href>/dav/Documents/report.txt</d:href>
+                <d:propstat><d:prop>
+                  <d:getcontentlength>42</d:getcontentlength>
+                  <d:getlastmodified>Tue, 15 Nov 1994 12:45:26 GMT</d:getlastmodified>
+                  <d:resourcetype/>
+                </d:prop></d:propstat>
+              </d:response>
+              <d:response>
+                <d:href>/dav/Documents/subdir/</d:href>
+                <d:propstat><d:prop>
+                  <d:resourcetype><d:collection/></d:resourcetype>
+                </d:prop></d:propstat>
+              </d:response>
+            </d:multistatus>
+        "#;
+
+        let entries = vfs
+            .parse_propfind_response(xml, Path::new("Documents"), true)
+            .expect("valid PROPFIND XML");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, PathBuf::from("report.txt"));
+        assert_eq!(entries[0].size, 42);
+        assert!(!entries[0].is_dir);
+        assert_eq!(entries[1].path, PathBuf::from("subdir"));
+        assert!(entries[1].is_dir);
+        assert_ne!(entries[0].modified, UNIX_EPOCH);
+    }
+
+    #[test]
+    fn digest_auth_is_rejected_instead_of_downgraded() {
+        let result = WebDavVfs::new(WebDavConfig {
+            url: "https://example.test/dav".to_string(),
+            auth: WebDavAuth::Digest {
+                username: "user".to_string(),
+                password: "secret".to_string(),
+            },
+            root_path: PathBuf::from("/"),
+        });
+        assert!(result.is_err());
     }
 }

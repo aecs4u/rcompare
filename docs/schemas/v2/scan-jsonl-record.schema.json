@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RCompare scan JSONL v2 record",
+  "type": "object",
+  "required": ["schema_version", "command", "status", "summary", "data", "warnings", "type"],
+  "properties": {
+    "schema_version": { "const": "2.0.0" },
+    "command": { "const": "scan" },
+    "status": { "enum": ["summary", "entry"] },
+    "summary": { "type": "object" },
+    "data": { "type": "object" },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "type": { "enum": ["summary", "entry"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "summary" } } },
+      "then": { "properties": { "data": { "required": ["left", "right"] } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "entry" } }, "required": ["type"] },
+      "then": { "properties": { "data": { "required": ["path", "status"] } } }
+    }
+  ],
+  "additionalProperties": false
+}

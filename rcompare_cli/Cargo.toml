@@ -16,7 +16,9 @@ repository.workspace = true
 # A minimal build keeps directory/text/binary comparison, hashing, sync and
 # copy; it drops archive sources and the specialized format engines.
 default = ["full"]
-full = ["archives", "specialized"]
+full = ["cloud", "archives", "specialized"]
+
+cloud = ["rcompare_core/cloud"]
 
 archives = ["rcompare_core/archives"]
 
@@ -41,6 +43,8 @@ tracing-subscriber.workspace = true
 directories.workspace = true
 indicatif.workspace = true
 regex.workspace = true
+url.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -59,6 +63,5 @@ pkg-fmt = "tgz"
 pkg-fmt = "zip"
 
 [dev-dependencies]
-tempfile.workspace = true
 filetime.workspace = true
 assert_cmd = "2.0"

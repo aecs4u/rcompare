@@ -23,6 +23,14 @@ pub trait Vfs: Send + Sync {
     /// Removes a file
     fn remove_file(&self, path: &Path) -> Result<(), VfsError>;
 
+    /// Removes an empty directory. Backends may implement recursive removal
+    /// in their higher-level mutation layer when the directory is not empty.
+    fn remove_dir(&self, _path: &Path) -> Result<(), VfsError> {
+        Err(VfsError::Unsupported(
+            "Directory removal not supported".to_string(),
+        ))
+    }
+
     /// Copies a file from src to dest
     fn copy_file(&self, src: &Path, dest: &Path) -> Result<(), VfsError>;
 
@@ -81,6 +89,7 @@ pub trait Vfs: Send + Sync {
     fn write_file(&self, path: &Path, content: &[u8]) -> Result<(), VfsError> {
         let mut writer = self.create_file(path)?;
         writer.write_all(content).map_err(VfsError::Io)?;
+        writer.flush().map_err(VfsError::Io)?;
         Ok(())
     }
 

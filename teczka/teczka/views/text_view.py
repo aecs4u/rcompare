@@ -6,18 +6,26 @@ import difflib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
-    QPushButton, QFileDialog, QMessageBox,
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ..widgets.diff_text_edit import DiffTextEdit, CharHighlights
-from ..widgets.diff_overview_bar import DiffOverviewBar
 from ..utils.cli_bridge import TextDiffReport
+from ..utils.unimportant_text import normalize_lines, validate_rules
+from ..widgets.diff_overview_bar import DiffOverviewBar
+from ..widgets.diff_text_edit import CharHighlights, DiffTextEdit
+from ..widgets.syntax_highlighter import language_for_path
 from ..workers.function_worker import FunctionWorker
-
 
 # Default colors for diff lines
 _DEFAULT_COLORS = {
@@ -77,9 +85,71 @@ class _FileDiffResult:
     nums_right: list[str] = field(default_factory=list)
     char_hl_left: CharHighlights = field(default_factory=list)
     char_hl_right: CharHighlights = field(default_factory=list)
+    diff_rows: list[bool] = field(default_factory=list)
 
 
-def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> _FileDiffResult:
+def _with_context(
+    result: _FileDiffResult, context_lines: int | None
+) -> _FileDiffResult:
+    """Return a display copy with distant unchanged runs collapsed."""
+    if context_lines is None or not result.display_left:
+        return result
+
+    row_count = len(result.display_left)
+    if len(result.diff_rows) != row_count:
+        return result
+
+    keep = [False] * row_count
+    for index, is_diff in enumerate(result.diff_rows):
+        if is_diff:
+            start = max(0, index - context_lines)
+            end = min(row_count, index + context_lines + 1)
+            for context_index in range(start, end):
+                keep[context_index] = True
+
+    filtered = _FileDiffResult()
+    equal = _color_equal()
+    index = 0
+    while index < row_count:
+        if keep[index]:
+            filtered.display_left.append(result.display_left[index])
+            filtered.display_right.append(result.display_right[index])
+            filtered.colors_left.append(result.colors_left[index])
+            filtered.colors_right.append(result.colors_right[index])
+            filtered.nums_left.append(result.nums_left[index])
+            filtered.nums_right.append(result.nums_right[index])
+            filtered.char_hl_left.append(result.char_hl_left[index])
+            filtered.char_hl_right.append(result.char_hl_right[index])
+            filtered.diff_rows.append(result.diff_rows[index])
+            index += 1
+            continue
+
+        end = index + 1
+        while end < row_count and not keep[end]:
+            end += 1
+        hidden_count = end - index
+        noun = "line" if hidden_count == 1 else "lines"
+        marker = f"… {hidden_count} unchanged {noun} hidden …"
+        filtered.display_left.append(marker)
+        filtered.display_right.append(marker)
+        filtered.colors_left.append(equal)
+        filtered.colors_right.append(equal)
+        filtered.nums_left.append("")
+        filtered.nums_right.append("")
+        filtered.char_hl_left.append([])
+        filtered.char_hl_right.append([])
+        filtered.diff_rows.append(False)
+        index = end
+
+    return filtered
+
+
+def _compute_file_diff(
+    left_path: str,
+    right_path: str,
+    color_equal: QColor,
+    unimportant_rules: list[dict[str, str]] | None = None,
+) -> _FileDiffResult:
     """Read both files and compute the side-by-side diff (runs off the GUI thread).
 
     Raises ``OSError`` if either file can't be read; the caller (FunctionWorker)
@@ -90,8 +160,10 @@ def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> 
 
     left_lines = left_text.splitlines()
     right_lines = right_text.splitlines()
+    left_compare_lines = normalize_lines(left_text, unimportant_rules or [])
+    right_compare_lines = normalize_lines(right_text, unimportant_rules or [])
 
-    matcher = difflib.SequenceMatcher(None, left_lines, right_lines)
+    matcher = difflib.SequenceMatcher(None, left_compare_lines, right_compare_lines)
     result = _FileDiffResult()
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -105,6 +177,7 @@ def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> 
                 result.nums_right.append(str(j + 1))
                 result.char_hl_left.append([])
                 result.char_hl_right.append([])
+                result.diff_rows.append(False)
         elif tag == "replace":
             max_len = max(i2 - i1, j2 - j1)
             for k in range(max_len):
@@ -128,6 +201,7 @@ def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> 
                 else:
                     result.char_hl_left.append([])
                     result.char_hl_right.append([])
+                result.diff_rows.append(True)
         elif tag == "delete":
             for i in range(i1, i2):
                 result.display_left.append(left_lines[i])
@@ -138,6 +212,7 @@ def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> 
                 result.nums_right.append("")
                 result.char_hl_left.append([])
                 result.char_hl_right.append([])
+                result.diff_rows.append(True)
         elif tag == "insert":
             for j in range(j1, j2):
                 result.display_left.append("")
@@ -148,6 +223,7 @@ def _compute_file_diff(left_path: str, right_path: str, color_equal: QColor) -> 
                 result.nums_right.append(str(j + 1))
                 result.char_hl_left.append([])
                 result.char_hl_right.append([])
+                result.diff_rows.append(True)
 
     return result
 
@@ -163,6 +239,13 @@ class TextView(QWidget):
         self._edit_mode = False
         self._pending_diff_paths: tuple[str, str] | None = None
         self._diff_worker: FunctionWorker | None = None
+        self._diff_workers: set[FunctionWorker] = set()
+        self._diff_worker_paths: dict[FunctionWorker, tuple[str, str]] = {}
+        self._has_comparison_data = False
+        self._unimportant_rules: list[dict[str, str]] = []
+        self._apply_unimportant_rules = True
+        self._context_lines: int | None = None
+        self._latest_diff_result: _FileDiffResult | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -289,6 +372,44 @@ class TextView(QWidget):
                 QFontMetricsF(font).horizontalAdvance(" ") * int(tab_width)
             )
 
+    def set_word_wrap(self, enabled: bool) -> None:
+        """Apply the same visual wrapping mode to both diff panes."""
+        self._left_editor.set_word_wrap(enabled)
+        self._right_editor.set_word_wrap(enabled)
+
+    def set_context_lines(self, context_lines: int | None) -> bool:
+        """Show all lines, or collapse unchanged runs beyond the chosen context."""
+        if context_lines is not None:
+            context_lines = max(0, int(context_lines))
+        if self._edit_mode and context_lines != self._context_lines:
+            return False
+        self._context_lines = context_lines
+        self._edit_toggle.setEnabled(context_lines is None)
+        self._edit_toggle.setToolTip(
+            "Toggle inline editing mode"
+            if context_lines is None
+            else "Choose All Lines before editing"
+        )
+        if self._latest_diff_result is not None and not self._edit_mode:
+            self._render_diff_result(self._latest_diff_result)
+        return True
+
+    def _render_diff_result(self, result: _FileDiffResult) -> None:
+        visible = _with_context(result, self._context_lines)
+        self._left_editor.set_content(
+            visible.display_left,
+            visible.colors_left,
+            visible.nums_left,
+            visible.char_hl_left,
+        )
+        self._right_editor.set_content(
+            visible.display_right,
+            visible.colors_right,
+            visible.nums_right,
+            visible.char_hl_right,
+        )
+        self._update_overview_bars(visible.colors_left, visible.colors_right)
+
     def _on_left_scroll(self, value: int) -> None:
         if self._syncing:
             return
@@ -322,7 +443,14 @@ class TextView(QWidget):
         """Compute character-level diff highlights for a pair of changed lines."""
         return _char_highlights(left_line, right_line)
 
-    def compare_files(self, left_path: str, right_path: str) -> None:
+    def compare_files(
+        self,
+        left_path: str,
+        right_path: str,
+        unimportant_rules: list[dict[str, str]] | None = None,
+        *,
+        apply_unimportant_rules: bool | None = None,
+    ) -> None:
         """Compare two text files using Python difflib.
 
         File reads and the difflib computation run on a background thread
@@ -333,33 +461,69 @@ class TextView(QWidget):
         self._left_path_label.setText(left_path)
         self._right_path_label.setText(right_path)
         self._pending_diff_paths = (left_path, right_path)
+        self._has_comparison_data = False
+        self._latest_diff_result = None
+        self._left_editor.set_syntax_language(language_for_path(left_path))
+        self._right_editor.set_syntax_language(language_for_path(right_path))
+        if apply_unimportant_rules is not None:
+            self._apply_unimportant_rules = apply_unimportant_rules
+        if unimportant_rules is not None:
+            self._unimportant_rules = validate_rules(unimportant_rules)
+        rules = self._unimportant_rules if self._apply_unimportant_rules else []
 
-        worker = FunctionWorker(_compute_file_diff, left_path, right_path, _color_equal(), parent=self)
-        worker.finished_with_result.connect(
-            lambda result, lp=left_path, rp=right_path: self._on_file_diff_computed(lp, rp, result)
+        worker = FunctionWorker(
+            _compute_file_diff,
+            left_path,
+            right_path,
+            _color_equal(),
+            rules,
+            parent=QApplication.instance(),
         )
-        worker.error.connect(
-            lambda msg, lp=left_path, rp=right_path: self._on_file_diff_error(lp, rp, msg)
-        )
+        worker.finished_with_result.connect(self._on_file_diff_worker_result)
+        worker.error.connect(self._on_file_diff_worker_error)
+        worker.finished.connect(self._on_file_diff_worker_finished)
         worker.finished.connect(worker.deleteLater)
         self._diff_worker = worker
+        self._diff_workers.add(worker)
+        self._diff_worker_paths[worker] = (left_path, right_path)
         worker.start()
+
+    @Slot(object)
+    def _on_file_diff_worker_result(self, result: _FileDiffResult) -> None:
+        worker = self.sender()
+        paths = self._diff_worker_paths.get(worker)
+        if paths is not None:
+            self._on_file_diff_computed(*paths, result)
+
+    @Slot(str)
+    def _on_file_diff_worker_error(self, message: str) -> None:
+        worker = self.sender()
+        paths = self._diff_worker_paths.get(worker)
+        if paths is not None:
+            self._on_file_diff_error(*paths, message)
+
+    @Slot()
+    def _on_file_diff_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is None:
+            return
+        self._diff_worker_paths.pop(worker, None)
+        self._diff_workers.discard(worker)
+        if self._diff_worker is worker:
+            self._diff_worker = None
 
     def _on_file_diff_computed(self, left_path: str, right_path: str, result: _FileDiffResult) -> None:
         """Apply a background diff computation, if it's still the active request."""
         if self._pending_diff_paths != (left_path, right_path):
             return  # a newer compare_files() call superseded this one
-        self._left_editor.set_content(
-            result.display_left, result.colors_left, result.nums_left, result.char_hl_left
-        )
-        self._right_editor.set_content(
-            result.display_right, result.colors_right, result.nums_right, result.char_hl_right
-        )
-        self._update_overview_bars(result.colors_left, result.colors_right)
+        self._latest_diff_result = result
+        self._render_diff_result(result)
+        self._has_comparison_data = True
 
     def _on_file_diff_error(self, left_path: str, right_path: str, message: str) -> None:
         if self._pending_diff_paths != (left_path, right_path):
             return
+        self._has_comparison_data = False
         self._left_editor.setPlainText(f"Error reading file: {message}")
 
     @staticmethod
@@ -379,6 +543,8 @@ class TextView(QWidget):
         self._right_path = str(Path(right_root) / report.path)
         self._left_path_label.setText(self._left_path)
         self._right_path_label.setText(self._right_path)
+        self._left_editor.set_syntax_language(language_for_path(self._left_path))
+        self._right_editor.set_syntax_language(language_for_path(self._right_path))
 
         display_left: list[str] = []
         display_right: list[str] = []
@@ -388,6 +554,7 @@ class TextView(QWidget):
         nums_right: list[str] = []
         char_hl_left: CharHighlights = []
         char_hl_right: CharHighlights = []
+        diff_rows: list[bool] = []
 
         for line in report.lines:
             if line.change_type == "Equal":
@@ -399,6 +566,7 @@ class TextView(QWidget):
                 nums_right.append(str(line.line_number_right) if line.line_number_right else "")
                 char_hl_left.append([])
                 char_hl_right.append([])
+                diff_rows.append(False)
             elif line.change_type == "Delete":
                 display_left.append(line.content)
                 display_right.append("")
@@ -411,6 +579,7 @@ class TextView(QWidget):
                     self._parse_cli_segments(line.highlighted_segments, COLOR_CHAR_DELETE)
                 )
                 char_hl_right.append([])
+                diff_rows.append(True)
             elif line.change_type == "Insert":
                 display_left.append("")
                 display_right.append(line.content)
@@ -422,15 +591,34 @@ class TextView(QWidget):
                 char_hl_right.append(
                     self._parse_cli_segments(line.highlighted_segments, COLOR_CHAR_INSERT)
                 )
+                diff_rows.append(True)
 
-        self._left_editor.set_content(display_left, colors_left, nums_left, char_hl_left)
-        self._right_editor.set_content(display_right, colors_right, nums_right, char_hl_right)
-        self._update_overview_bars(colors_left, colors_right)
+        result = _FileDiffResult(
+            display_left=display_left,
+            display_right=display_right,
+            colors_left=colors_left,
+            colors_right=colors_right,
+            nums_left=nums_left,
+            nums_right=nums_right,
+            char_hl_left=char_hl_left,
+            char_hl_right=char_hl_right,
+            diff_rows=diff_rows,
+        )
+        self._latest_diff_result = result
+        self._render_diff_result(result)
+        self._has_comparison_data = True
 
     def show_diff_text(self, content: str, title: str = "Diff") -> None:
         """Display raw diff/patch text content in the left editor."""
+        self._left_path = ""
+        self._right_path = ""
+        self._pending_diff_paths = None
+        self._has_comparison_data = False
+        self._latest_diff_result = None
         self._left_path_label.setText(title)
         self._right_path_label.setText("")
+        self._left_editor.set_syntax_language(None)
+        self._right_editor.set_syntax_language(None)
 
         lines = content.splitlines()
         display: list[str] = []
@@ -453,10 +641,31 @@ class TextView(QWidget):
         self._right_editor.clear_content()
 
     def clear_content(self) -> None:
+        self._left_path = ""
+        self._right_path = ""
+        self._pending_diff_paths = None
+        self._has_comparison_data = False
+        self._latest_diff_result = None
         self._left_editor.clear_content()
         self._right_editor.clear_content()
+        self._left_editor.set_syntax_language(None)
+        self._right_editor.set_syntax_language(None)
         self._left_path_label.setText("Left file")
         self._right_path_label.setText("Right file")
+
+    @property
+    def has_comparison_data(self) -> bool:
+        """Whether this view contains a completed two-sided comparison."""
+        return self._has_comparison_data and bool(self._left_path and self._right_path)
+
+    def export_diff_rows(self) -> tuple[str, str, list[str], list[str]]:
+        """Return labels and the currently displayed aligned rows."""
+        return (
+            self._left_path_label.text(),
+            self._right_path_label.text(),
+            self._left_editor.get_lines(),
+            self._right_editor.get_lines(),
+        )
 
     def _browse_left(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select Left File")

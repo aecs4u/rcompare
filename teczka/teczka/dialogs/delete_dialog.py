@@ -17,7 +17,14 @@ from PySide6.QtWidgets import (
 class DeleteDialog(QDialog):
     """Confirmation dialog that lists items to delete with trash/dry-run options."""
 
-    def __init__(self, items: list[str], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        items: list[str],
+        parent: QWidget | None = None,
+        *,
+        warning: str = "",
+        dry_run_default: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._items = items
         self._confirmed = False
@@ -35,6 +42,12 @@ class DeleteDialog(QDialog):
         count_label.setObjectName("deleteTitle")
         layout.addWidget(count_label)
 
+        if warning:
+            warn = QLabel(warning)
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: #b35c00;")
+            layout.addWidget(warn)
+
         item_list = QListWidget()
         item_list.addItems(items)
         item_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
@@ -45,7 +58,7 @@ class DeleteDialog(QDialog):
         layout.addWidget(self._trash_check)
 
         self._dry_run_check = QCheckBox("Dry run (preview only)")
-        self._dry_run_check.setChecked(False)
+        self._dry_run_check.setChecked(dry_run_default)
         layout.addWidget(self._dry_run_check)
 
         buttons = QDialogButtonBox(
